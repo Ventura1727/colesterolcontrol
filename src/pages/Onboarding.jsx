@@ -52,30 +52,13 @@ export default function Onboarding() {
     if (step < questions.length) {
       setStep(step + 1);
     } else {
-      // Quiz completo - salvar e redirecionar
+      // Quiz completo - salvar localmente e redirecionar para página de vendas
       setIsLoading(true);
-      try {
-        const user = await base44.auth.me();
-        const profiles = await base44.entities.UserProfile.filter({ created_by: user.email });
-        
-        if (profiles.length > 0) {
-          await base44.entities.UserProfile.update(profiles[0].id, {
-            ...newAnswers,
-            quiz_completo: true
-          });
-        } else {
-          await base44.entities.UserProfile.create({
-            ...newAnswers,
-            quiz_completo: true,
-            plano_ativo: false
-          });
-        }
-        
-        window.location.href = createPageUrl('Diagnostico');
-      } catch (error) {
-        console.error(error);
-      }
-      setIsLoading(false);
+      localStorage.setItem('heartbalance_quiz', JSON.stringify({
+        ...newAnswers,
+        quiz_completo: true
+      }));
+      window.location.href = createPageUrl('Vendas');
     }
   };
 

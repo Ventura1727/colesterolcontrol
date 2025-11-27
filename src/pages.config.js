@@ -6,6 +6,9 @@ import Home from './pages/Home';
 import Exercicios from './pages/Exercicios';
 import Alimentacao from './pages/Alimentacao';
 import Progresso from './pages/Progresso';
+import Vendas from './pages/Vendas';
+import Checkout from './pages/Checkout';
+import FinalizarCompra from './pages/FinalizarCompra';
 
 
 export const PAGES = {
@@ -17,6 +20,9 @@ export const PAGES = {
     "Exercicios": Exercicios,
     "Alimentacao": Alimentacao,
     "Progresso": Progresso,
+    "Vendas": Vendas,
+    "Checkout": Checkout,
+    "FinalizarCompra": FinalizarCompra,
 }
 
 export const pagesConfig = {
