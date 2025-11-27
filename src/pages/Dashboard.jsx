@@ -1,74 +1,46 @@
 import React, { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
-import { Heart, Crown, Lock, Salad, Dumbbell, Droplets, BookOpen, TrendingDown, Calendar, MessageCircle } from 'lucide-react';
+import { Heart, Crown, Lock, Salad, Dumbbell, Droplets, BookOpen, TrendingDown, Calendar, Target, Zap } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { base44 } from '@/api/base44Client';
 import { createPageUrl } from '@/utils';
+import RankCard from '@/components/dashboard/RankCard';
+import ColesterolTracker from '@/components/dashboard/ColesterolTracker';
 
 const features = [
-  {
-    id: 'plano-alimentar',
-    title: 'Plano Alimentar',
-    desc: 'Receitas e cardápios personalizados',
-    icon: Salad,
-    premium: true
-  },
-  {
-    id: 'exercicios',
-    title: 'Exercícios',
-    desc: 'Rotinas leves para o dia a dia',
-    icon: Dumbbell,
-    premium: true
-  },
-  {
-    id: 'hidratacao',
-    title: 'Hidratação',
-    desc: 'Lembretes e metas de água',
-    icon: Droplets,
-    premium: true
-  },
-  {
-    id: 'educacao',
-    title: 'Conteúdo Educativo',
-    desc: 'Artigos sobre colesterol e saúde',
-    icon: BookOpen,
-    premium: false
-  },
-  {
-    id: 'progresso',
-    title: 'Meu Progresso',
-    desc: 'Acompanhe sua evolução',
-    icon: TrendingDown,
-    premium: true
-  },
-  {
-    id: 'lembretes',
-    title: 'Lembretes',
-    desc: 'Notificações personalizadas',
-    icon: Calendar,
-    premium: true
-  }
+  { id: 'exercicios', title: 'Exercícios', desc: 'Treinos que liberam XP', icon: Dumbbell, premium: true, page: 'Exercicios' },
+  { id: 'alimentacao', title: 'Alimentação', desc: 'Receitas anti-colesterol', icon: Salad, premium: true, page: 'Alimentacao' },
+  { id: 'progresso', title: 'Meu Progresso', desc: 'Acompanhe sua evolução', icon: TrendingDown, premium: true, page: 'Progresso' },
+  { id: 'hidratacao', title: 'Hidratação', desc: 'Lembretes de água', icon: Droplets, premium: true, page: null },
+  { id: 'educacao', title: 'Conteúdo', desc: 'Artigos sobre saúde', icon: BookOpen, premium: false, page: null },
+  { id: 'lembretes', title: 'Lembretes', desc: 'Notificações diárias', icon: Calendar, premium: true, page: null }
 ];
 
 export default function Dashboard() {
   const [profile, setProfile] = useState(null);
+  const [colesterolRecords, setColesterolRecords] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [showLockedModal, setShowLockedModal] = useState(false);
 
   useEffect(() => {
-    loadProfile();
+    loadData();
   }, []);
 
-  const loadProfile = async () => {
+  const loadData = async () => {
     try {
       const user = await base44.auth.me();
-      const profiles = await base44.entities.UserProfile.filter({ created_by: user.email });
+      const [profiles, records] = await Promise.all([
+        base44.entities.UserProfile.filter({ created_by: user.email }),
+        base44.entities.ColesterolRecord.list('-data_exame', 10)
+      ]);
       
       if (profiles.length > 0) {
         setProfile(profiles[0]);
       } else {
         window.location.href = createPageUrl('Onboarding');
+        return;
       }
+      setColesterolRecords(records);
     } catch (error) {
       console.error(error);
     }
@@ -78,19 +50,15 @@ export default function Dashboard() {
   const handleFeatureClick = (feature) => {
     if (feature.premium && !profile?.plano_ativo) {
       setShowLockedModal(true);
-    } else {
-      // Navegar para a funcionalidade
+    } else if (feature.page) {
+      window.location.href = createPageUrl(feature.page);
     }
   };
 
   if (isLoading) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-emerald-50 via-white to-teal-50 flex items-center justify-center">
-        <motion.div
-          animate={{ rotate: 360 }}
-          transition={{ repeat: Infinity, duration: 1, ease: 'linear' }}
-          className="w-8 h-8 border-3 border-emerald-600 border-t-transparent rounded-full"
-        />
+        <motion.div animate={{ rotate: 360 }} transition={{ repeat: Infinity, duration: 1, ease: 'linear' }} className="w-8 h-8 border-3 border-emerald-600 border-t-transparent rounded-full" />
       </div>
     );
   }
@@ -99,7 +67,7 @@ export default function Dashboard() {
     <div className="min-h-screen bg-gradient-to-br from-emerald-50 via-white to-teal-50 p-4 pb-24">
       <div className="max-w-lg mx-auto pt-6">
         {/* Header */}
-        <div className="flex items-center justify-between mb-8">
+        <div className="flex items-center justify-between mb-6">
           <div className="flex items-center gap-3">
             <div className="w-12 h-12 bg-gradient-to-br from-emerald-500 to-teal-600 rounded-xl flex items-center justify-center shadow-lg shadow-emerald-200">
               <Heart className="w-6 h-6 text-white" fill="white" />
@@ -118,31 +86,55 @@ export default function Dashboard() {
               </p>
             </div>
           </div>
+          {profile?.plano_ativo && (
+            <div className="flex items-center gap-1 bg-yellow-100 text-yellow-700 px-3 py-1.5 rounded-full text-sm font-medium">
+              <Zap className="w-4 h-4" />
+              {profile.xp_total || 0} XP
+            </div>
+          )}
         </div>
 
+        {/* Rank Card - Apenas Premium */}
+        {profile?.plano_ativo && (
+          <RankCard 
+            profile={profile} 
+            onViewProgress={() => window.location.href = createPageUrl('Progresso')}
+          />
+        )}
+
+        {/* Colesterol Tracker - Apenas Premium */}
+        {profile?.plano_ativo && (
+          <ColesterolTracker 
+            records={colesterolRecords} 
+            onRecordAdded={loadData}
+          />
+        )}
+
         {/* Resumo do Perfil */}
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="bg-white rounded-2xl p-5 mb-6 border border-gray-100 shadow-sm"
-        >
-          <h2 className="font-semibold text-gray-900 mb-3">Seu Perfil</h2>
+        <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="bg-white rounded-2xl p-5 mb-6 border border-gray-100 shadow-sm">
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="font-semibold text-gray-900 flex items-center gap-2">
+              <Target className="w-5 h-5 text-emerald-600" />
+              Seu Perfil
+            </h2>
+            <span className="text-xs text-emerald-600 bg-emerald-50 px-2 py-1 rounded-full">{profile?.objetivo}</span>
+          </div>
           <div className="grid grid-cols-2 gap-3 text-sm">
             <div className="bg-gray-50 rounded-lg p-3">
-              <div className="text-gray-500">Idade</div>
+              <div className="text-gray-500 text-xs">Idade</div>
               <div className="font-medium">{profile?.idade} anos</div>
             </div>
             <div className="bg-gray-50 rounded-lg p-3">
-              <div className="text-gray-500">Alimentação</div>
+              <div className="text-gray-500 text-xs">Alimentação</div>
               <div className="font-medium">{profile?.alimentacao}</div>
             </div>
             <div className="bg-gray-50 rounded-lg p-3">
-              <div className="text-gray-500">Exercícios</div>
+              <div className="text-gray-500 text-xs">Exercícios</div>
               <div className="font-medium">{profile?.exercicios}</div>
             </div>
             <div className="bg-gray-50 rounded-lg p-3">
-              <div className="text-gray-500">Objetivo</div>
-              <div className="font-medium text-xs">{profile?.objetivo}</div>
+              <div className="text-gray-500 text-xs">Dias seguidos</div>
+              <div className="font-medium">{profile?.dias_consecutivos || 0} dias 🔥</div>
             </div>
           </div>
         </motion.div>
@@ -169,14 +161,10 @@ export default function Dashboard() {
                 </div>
               )}
               <div className={`w-10 h-10 rounded-xl mb-3 flex items-center justify-center ${
-                feature.premium && !profile?.plano_ativo
-                  ? 'bg-gray-100'
-                  : 'bg-emerald-100'
+                feature.premium && !profile?.plano_ativo ? 'bg-gray-100' : 'bg-emerald-100'
               }`}>
                 <feature.icon className={`w-5 h-5 ${
-                  feature.premium && !profile?.plano_ativo
-                    ? 'text-gray-400'
-                    : 'text-emerald-600'
+                  feature.premium && !profile?.plano_ativo ? 'text-gray-400' : 'text-emerald-600'
                 }`} />
               </div>
               <div className="font-medium text-gray-900 text-sm mb-1">{feature.title}</div>
@@ -214,8 +202,7 @@ export default function Dashboard() {
                   Funcionalidade Premium
                 </h3>
                 <p className="text-gray-600 mb-6">
-                  Este recurso está disponível apenas para assinantes do plano Premium. 
-                  Desbloqueie todo o potencial do HeartBalance!
+                  Desbloqueie treinos gamificados, receitas exclusivas e acompanhamento de colesterol!
                 </p>
                 <div className="space-y-3">
                   <Button

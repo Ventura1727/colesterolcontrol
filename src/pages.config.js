@@ -3,6 +3,9 @@ import Diagnostico from './pages/Diagnostico';
 import Dashboard from './pages/Dashboard';
 import Premium from './pages/Premium';
 import Home from './pages/Home';
+import Exercicios from './pages/Exercicios';
+import Alimentacao from './pages/Alimentacao';
+import Progresso from './pages/Progresso';
 
 
 export const PAGES = {
@@ -11,6 +14,9 @@ export const PAGES = {
     "Dashboard": Dashboard,
     "Premium": Premium,
     "Home": Home,
+    "Exercicios": Exercicios,
+    "Alimentacao": Alimentacao,
+    "Progresso": Progresso,
 }
 
 export const pagesConfig = {
