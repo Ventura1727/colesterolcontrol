@@ -11,18 +11,31 @@ export default function Home() {
 
   const checkUserStatus = async () => {
     try {
-      const user = await base44.auth.me();
-      const profiles = await base44.entities.UserProfile.filter({ created_by: user.email });
+      // Verificar se está autenticado primeiro
+      const isAuth = await base44.auth.isAuthenticated();
       
-      if (profiles.length > 0 && profiles[0].quiz_completo) {
-        // Usuário já completou o quiz
-        window.location.href = createPageUrl('Dashboard');
+      if (isAuth) {
+        const user = await base44.auth.me();
+        const profiles = await base44.entities.UserProfile.filter({ created_by: user.email });
+        
+        if (profiles.length > 0 && profiles[0].plano_ativo) {
+          // Usuário premium - vai para Dashboard
+          window.location.href = createPageUrl('Dashboard');
+          return;
+        }
+      }
+      
+      // Verificar se tem quiz salvo localmente
+      const savedQuiz = localStorage.getItem('heartbalance_quiz');
+      if (savedQuiz) {
+        // Já fez o quiz, vai para página de vendas
+        window.location.href = createPageUrl('Vendas');
       } else {
-        // Novo usuário ou não completou o quiz
+        // Novo visitante - vai para o quiz
         window.location.href = createPageUrl('Onboarding');
       }
     } catch (error) {
-      // Se não estiver logado, redireciona para onboarding
+      // Qualquer erro, redireciona para onboarding
       window.location.href = createPageUrl('Onboarding');
     }
   };
