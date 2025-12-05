@@ -33,14 +33,21 @@ export default function ColesterolTracker({ records, onRecordAdded }) {
 
   const handleSubmit = async () => {
     setIsLoading(true);
-    await base44.entities.ColesterolRecord.create({
-      ldl: parseFloat(form.ldl) || null,
-      hdl: parseFloat(form.hdl) || null,
-      total: parseFloat(form.total) || null,
-      triglicerides: parseFloat(form.triglicerides) || null,
-      data_exame: form.data_exame
-    });
-    setIsOpen(false);
+    try {
+      const payload = {
+        data_exame: form.data_exame
+      };
+      if (form.ldl) payload.ldl = parseFloat(form.ldl);
+      if (form.hdl) payload.hdl = parseFloat(form.hdl);
+      if (form.total) payload.total = parseFloat(form.total);
+      if (form.triglicerides) payload.triglicerides = parseFloat(form.triglicerides);
+
+      await base44.entities.ColesterolRecord.create(payload);
+      setIsOpen(false);
+    } catch (error) {
+      console.error("Erro ao salvar exame:", error);
+      alert("Erro ao salvar exame. Verifique se você está logado.");
+    }
     setForm({ ldl: '', hdl: '', total: '', triglicerides: '', data_exame: new Date().toISOString().split('T')[0] });
     setIsLoading(false);
     onRecordAdded?.();
