@@ -46,7 +46,7 @@ export default function ColesterolTracker({ records, onRecordAdded }) {
       setIsOpen(false);
     } catch (error) {
       console.error("Erro ao salvar exame:", error);
-      alert("Erro ao salvar exame. Verifique se você está logado.");
+      alert(`Erro ao salvar exame: ${error.message || JSON.stringify(error)}`);
     }
     setForm({ ldl: '', hdl: '', total: '', triglicerides: '', data_exame: new Date().toISOString().split('T')[0] });
     setIsLoading(false);
