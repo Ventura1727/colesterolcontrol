@@ -9,6 +9,7 @@ import Progresso from './pages/Progresso';
 import Vendas from './pages/Vendas';
 import Checkout from './pages/Checkout';
 import FinalizarCompra from './pages/FinalizarCompra';
+import Nutricionista from './pages/Nutricionista';
 
 
 export const PAGES = {
@@ -23,6 +24,7 @@ export const PAGES = {
     "Vendas": Vendas,
     "Checkout": Checkout,
     "FinalizarCompra": FinalizarCompra,
+    "Nutricionista": Nutricionista,
 }
 
 export const pagesConfig = {

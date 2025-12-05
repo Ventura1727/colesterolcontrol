@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
-import { Heart, Crown, Lock, Salad, Dumbbell, Droplets, BookOpen, TrendingDown, Calendar, Target, Zap } from 'lucide-react';
+import { Heart, Crown, Lock, Salad, Dumbbell, Droplets, BookOpen, TrendingDown, Calendar, Target, Zap, Bot } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { base44 } from '@/api/base44Client';
 import { createPageUrl } from '@/utils';
@@ -8,13 +8,13 @@ import RankCard from '@/components/dashboard/RankCard';
 import ColesterolTracker from '@/components/dashboard/ColesterolTracker';
 
 const features = [
+  { id: 'nutricionista', title: 'Nutricionista IA', desc: 'Planos e análise de pratos', icon: Bot, premium: true, page: 'Nutricionista' },
   { id: 'exercicios', title: 'Exercícios', desc: 'Treinos que liberam XP', icon: Dumbbell, premium: true, page: 'Exercicios' },
-  { id: 'alimentacao', title: 'Alimentação', desc: 'Receitas anti-colesterol', icon: Salad, premium: true, page: 'Alimentacao' },
+  { id: 'alimentacao', title: 'Receitas', desc: 'Pratos anti-colesterol', icon: Salad, premium: true, page: 'Alimentacao' },
   { id: 'progresso', title: 'Meu Progresso', desc: 'Acompanhe sua evolução', icon: TrendingDown, premium: true, page: 'Progresso' },
   { id: 'hidratacao', title: 'Hidratação', desc: 'Lembretes de água', icon: Droplets, premium: true, page: null },
-  { id: 'educacao', title: 'Conteúdo', desc: 'Artigos sobre saúde', icon: BookOpen, premium: false, page: null },
-  { id: 'lembretes', title: 'Lembretes', desc: 'Notificações diárias', icon: Calendar, premium: true, page: null }
-];
+  { id: 'educacao', title: 'Conteúdo', desc: 'Artigos sobre saúde', icon: BookOpen, premium: false, page: null }
+  ];
 
 export default function Dashboard() {
   const [profile, setProfile] = useState(null);
