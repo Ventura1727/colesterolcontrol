@@ -32,8 +32,13 @@ export default function Dashboard() {
       let user;
       try {
         user = await base44.auth.me();
+        // Garantir que não é guest
+        if (!user || user.role === 'guest') {
+          base44.auth.redirectToLogin(createPageUrl('Dashboard'));
+          return;
+        }
       } catch (e) {
-        // Se não estiver logado, redirecionar para login
+        // Se der erro, redirecionar para login
         base44.auth.redirectToLogin(createPageUrl('Dashboard'));
         return;
       }
