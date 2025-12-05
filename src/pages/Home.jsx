@@ -28,8 +28,8 @@ export default function Home() {
       // Verificar se tem quiz salvo localmente
       const savedQuiz = localStorage.getItem('heartbalance_quiz');
       if (savedQuiz) {
-        // Já fez o quiz, vai para página de vendas
-        window.location.href = createPageUrl('Vendas');
+        // Já fez o quiz, vai para o Dashboard (modo teste)
+        window.location.href = createPageUrl('Dashboard');
       } else {
         // Novo visitante - vai para o quiz
         window.location.href = createPageUrl('Onboarding');

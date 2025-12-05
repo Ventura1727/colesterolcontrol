@@ -28,17 +28,43 @@ export default function Dashboard() {
 
   const loadData = async () => {
     try {
-      const user = await base44.auth.me();
+      // Verificar autenticação
+      let user;
+      try {
+        user = await base44.auth.me();
+      } catch (e) {
+        // Se não estiver logado, redirecionar para login
+        base44.auth.redirectToLogin(createPageUrl('Dashboard'));
+        return;
+      }
+
       const [profiles, records] = await Promise.all([
         base44.entities.UserProfile.filter({ created_by: user.email }),
         base44.entities.ColesterolRecord.list('-data_exame', 10)
       ]);
-      
+
       if (profiles.length > 0) {
         setProfile(profiles[0]);
       } else {
-        window.location.href = createPageUrl('Onboarding');
-        return;
+        // Se não tem perfil, verificar se veio do quiz
+        const quizData = localStorage.getItem('heartbalance_quiz');
+        if (quizData) {
+          // Criar perfil automaticamente (Modo Teste: Premium Ativo)
+          const newProfile = await base44.entities.UserProfile.create({
+            ...JSON.parse(quizData),
+            plano_ativo: true,
+            data_inicio_plano: new Date().toISOString().split('T')[0],
+            rank: 'Iniciante',
+            xp_total: 0,
+            metas_concluidas: 0,
+            dias_consecutivos: 0
+          });
+          setProfile(newProfile);
+          localStorage.removeItem('heartbalance_quiz');
+        } else {
+          window.location.href = createPageUrl('Onboarding');
+          return;
+        }
       }
       setColesterolRecords(records);
     } catch (error) {

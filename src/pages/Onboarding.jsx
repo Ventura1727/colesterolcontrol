@@ -52,13 +52,13 @@ export default function Onboarding() {
     if (step < questions.length) {
       setStep(step + 1);
     } else {
-      // Quiz completo - salvar localmente e redirecionar para página de vendas
+      // Quiz completo - salvar localmente e redirecionar para o Dashboard
       setIsLoading(true);
       localStorage.setItem('heartbalance_quiz', JSON.stringify({
         ...newAnswers,
         quiz_completo: true
       }));
-      window.location.href = createPageUrl('Vendas');
+      window.location.href = createPageUrl('Dashboard');
     }
   };
 
