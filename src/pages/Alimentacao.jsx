@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { ArrowLeft, Salad, Lock, Check, Zap, Trophy, Clock, Flame, Star, ChevronRight, Heart } from 'lucide-react';
+import { ArrowLeft, Salad, Lock, Check, Zap, Trophy, Clock, Flame, Star, ChevronRight, Heart, Camera, Upload, X, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { base44 } from '@/api/base44Client';
 import { createPageUrl } from '@/utils';
@@ -111,6 +111,11 @@ export default function Alimentacao() {
   const [isLoading, setIsLoading] = useState(true);
   const [selectedReceita, setSelectedReceita] = useState(null);
   const [completing, setCompleting] = useState(false);
+  const [showPhotoModal, setShowPhotoModal] = useState(false);
+  const [photoFile, setPhotoFile] = useState(null);
+  const [photoPreview, setPhotoPreview] = useState(null);
+  const [analyzing, setAnalyzing] = useState(false);
+  const fileInputRef = React.useRef(null);
 
   useEffect(() => {
     loadData();
@@ -162,6 +167,115 @@ export default function Alimentacao() {
     setSelectedReceita(null);
   };
 
+  const handlePhotoSelect = (e) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      setPhotoFile(file);
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setPhotoPreview(reader.result);
+      };
+      reader.readAsDataURL(file);
+      setShowPhotoModal(true);
+    }
+  };
+
+  const analyzeFood = async () => {
+    if (!photoFile) return;
+    
+    setAnalyzing(true);
+    try {
+      // Upload da imagem
+      const { file_url } = await base44.integrations.Core.UploadFile({ file: photoFile });
+      
+      // Buscar dados do colesterol para contexto
+      const colesterolRecords = await base44.entities.ColesterolRecord.list('-data_exame', 1);
+      const latestColesterol = colesterolRecords[0];
+      
+      const colesterolContext = latestColesterol 
+        ? `O usuário tem os seguintes níveis de colesterol mais recentes: LDL ${latestColesterol.ldl || 'não informado'}, HDL ${latestColesterol.hdl || 'não informado'}, Total ${latestColesterol.total || 'não informado'}.`
+        : 'Não há dados de colesterol disponíveis.';
+      
+      // Análise com IA
+      const analysis = await base44.integrations.Core.InvokeLLM({
+        prompt: `Analise esta imagem de alimento e forneça:
+1. Uma descrição do que está na imagem
+2. Estimativa de calorias totais
+3. Se é saudável para quem precisa controlar colesterol (sim/não)
+4. Feedback sobre como isso afeta o colesterol (LDL/HDL)
+5. Dicas para melhorar a refeição se necessário
+
+Contexto do usuário: ${colesterolContext}
+Objetivo: ${profile?.objetivo || 'Reduzir colesterol'}
+
+Seja objetivo, motivador e educativo.`,
+        response_json_schema: {
+          type: "object",
+          properties: {
+            descricao: { type: "string" },
+            calorias: { type: "number" },
+            saudavel: { type: "boolean" },
+            feedback: { type: "string" }
+          },
+          required: ["descricao", "calorias", "saudavel", "feedback"]
+        },
+        file_urls: [file_url]
+      });
+
+      // Salvar no MealLog
+      await base44.entities.MealLog.create({
+        description: analysis.descricao,
+        image_url: file_url,
+        calories: analysis.calorias,
+        is_healthy: analysis.saudavel,
+        ai_feedback: analysis.feedback,
+        date: new Date().toISOString()
+      });
+
+      // Se for saudável, dar XP
+      if (analysis.saudavel) {
+        const xpGanho = 20; // XP padrão para refeição saudável
+        
+        await base44.entities.ActivityLog.create({
+          tipo: 'alimentacao',
+          descricao: `Refeição saudável: ${analysis.descricao}`,
+          xp_ganho: xpGanho,
+          data: new Date().toISOString().split('T')[0]
+        });
+
+        const newXp = (profile.xp_total || 0) + xpGanho;
+        const newMetas = (profile.metas_concluidas || 0) + 1;
+        
+        let newRank = profile.rank || 'Iniciante';
+        if (newXp >= 1500) newRank = 'Mestre';
+        else if (newXp >= 1000) newRank = 'Diamante';
+        else if (newXp >= 600) newRank = 'Ouro';
+        else if (newXp >= 300) newRank = 'Prata';
+        else if (newXp >= 100) newRank = 'Bronze';
+
+        await base44.entities.UserProfile.update(profile.id, {
+          xp_total: newXp,
+          metas_concluidas: newMetas,
+          rank: newRank
+        });
+
+        setProfile({ ...profile, xp_total: newXp, metas_concluidas: newMetas, rank: newRank });
+      }
+
+      // Mostrar resultado
+      alert(`✅ ${analysis.feedback}\n\n${analysis.saudavel ? `🎉 +20 XP por refeição saudável!\nCalorias: ${analysis.calorias}` : `Calorias: ${analysis.calorias}`}`);
+      
+      setShowPhotoModal(false);
+      setPhotoFile(null);
+      setPhotoPreview(null);
+      
+    } catch (error) {
+      console.error("Erro ao analisar foto:", error);
+      alert("Erro ao analisar a foto. Tente novamente.");
+    }
+    setAnalyzing(false);
+  };
+
   if (isLoading) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-emerald-50 via-white to-teal-50 flex items-center justify-center">
@@ -201,6 +315,28 @@ export default function Alimentacao() {
             <div className="font-bold text-gray-900">{receitas.filter(r => isUnlocked(r)).length}</div>
             <div className="text-xs text-gray-500">Liberadas</div>
           </div>
+        </div>
+
+        {/* Botão de Análise de Foto */}
+        <div className="mb-6">
+          <input
+            type="file"
+            ref={fileInputRef}
+            onChange={handlePhotoSelect}
+            accept="image/*"
+            capture="environment"
+            className="hidden"
+          />
+          <Button
+            onClick={() => fileInputRef.current?.click()}
+            className="w-full bg-gradient-to-r from-blue-500 to-indigo-600 hover:from-blue-600 hover:to-indigo-700 text-white py-5 rounded-2xl shadow-lg"
+          >
+            <Camera className="w-5 h-5 mr-2" />
+            Analisar Minha Refeição com IA
+          </Button>
+          <p className="text-xs text-gray-500 text-center mt-2">
+            Tire uma foto do seu prato e ganhe XP se for saudável!
+          </p>
         </div>
 
         {/* Lista de Receitas */}
@@ -256,6 +392,69 @@ export default function Alimentacao() {
             );
           })}
         </div>
+
+        {/* Modal de Análise de Foto */}
+        <AnimatePresence>
+          {showPhotoModal && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4"
+              onClick={() => !analyzing && setShowPhotoModal(false)}
+            >
+              <motion.div
+                initial={{ scale: 0.9, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                exit={{ scale: 0.9, opacity: 0 }}
+                onClick={(e) => e.stopPropagation()}
+                className="bg-white rounded-3xl w-full max-w-md overflow-hidden"
+              >
+                <div className="p-6">
+                  <div className="flex items-center justify-between mb-4">
+                    <h3 className="text-lg font-bold text-gray-900">Análise de Refeição</h3>
+                    {!analyzing && (
+                      <button onClick={() => setShowPhotoModal(false)} className="text-gray-400 hover:text-gray-600">
+                        <X className="w-6 h-6" />
+                      </button>
+                    )}
+                  </div>
+
+                  {photoPreview && (
+                    <div className="mb-4 rounded-xl overflow-hidden">
+                      <img src={photoPreview} alt="Prévia" className="w-full h-64 object-cover" />
+                    </div>
+                  )}
+
+                  <div className="bg-blue-50 rounded-xl p-4 mb-4">
+                    <div className="flex items-start gap-2 text-sm text-blue-700">
+                      <Heart className="w-5 h-5 flex-shrink-0 mt-0.5" />
+                      <p>A IA vai analisar sua refeição e te dar feedback sobre calorias, impacto no colesterol, e se for saudável você ganha +20 XP!</p>
+                    </div>
+                  </div>
+
+                  <Button
+                    onClick={analyzeFood}
+                    disabled={analyzing}
+                    className="w-full bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 text-white py-5 rounded-xl text-lg font-semibold"
+                  >
+                    {analyzing ? (
+                      <span className="flex items-center gap-2">
+                        <Loader2 className="w-5 h-5 animate-spin" />
+                        Analisando...
+                      </span>
+                    ) : (
+                      <span className="flex items-center gap-2">
+                        <Zap className="w-5 h-5" />
+                        Analisar Agora
+                      </span>
+                    )}
+                  </Button>
+                </div>
+              </motion.div>
+            </motion.div>
+          )}
+        </AnimatePresence>
 
         {/* Modal de Receita */}
         <AnimatePresence>
