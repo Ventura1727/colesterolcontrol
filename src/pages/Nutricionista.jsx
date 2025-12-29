@@ -11,16 +11,25 @@ export default function Nutricionista() {
     const [messages, setMessages] = useState([]);
     const [inputValue, setInputValue] = useState("");
     const [isLoading, setIsLoading] = useState(false);
-    const [conversationId, setConversationId] = useState(null);
+    const [conversation, setConversation] = useState(null);
     const [selectedFile, setSelectedFile] = useState(null);
     const [isUploading, setIsUploading] = useState(false);
     const messagesEndRef = useRef(null);
     const fileInputRef = useRef(null);
 
     useEffect(() => {
-        // Inicializar conversa ou carregar existente
         initializeConversation();
     }, []);
+
+    useEffect(() => {
+        if (conversation?.id) {
+            const unsubscribe = base44.agents.subscribeToConversation(conversation.id, (data) => {
+                setMessages(data.messages || []);
+                setIsLoading(false);
+            });
+            return () => unsubscribe();
+        }
+    }, [conversation?.id]);
 
     useEffect(() => {
         scrollToBottom();
@@ -32,19 +41,16 @@ export default function Nutricionista() {
 
     const initializeConversation = async () => {
         try {
-            // Verifica se já existe uma conversa ativa (poderia salvar no localStorage ou buscar do backend)
-            // Por simplificação, cria uma nova a cada sessão ou recupera a última se implementarmos essa lógica
             const savedConvId = localStorage.getItem('heartbalance_nutrition_chat_id');
             
             if (savedConvId) {
                 try {
                     const conv = await base44.agents.getConversation(savedConvId);
-                    setConversationId(savedConvId);
+                    setConversation(conv);
                     setMessages(conv.messages || []);
-                    subscribeToConversation(savedConvId);
                     return;
                 } catch (e) {
-                    console.log("Conversa anterior não encontrada ou erro, criando nova.");
+                    console.log("Conversa anterior não encontrada, criando nova.");
                 }
             }
 
@@ -56,26 +62,13 @@ export default function Nutricionista() {
                 }
             });
             
-            setConversationId(newConv.id);
-            setMessages([]);
+            setConversation(newConv);
+            setMessages(newConv.messages || []);
             localStorage.setItem('heartbalance_nutrition_chat_id', newConv.id);
-            subscribeToConversation(newConv.id);
-            
-            // Mensagem inicial do bot (simulada se não vier do agente)
-            if (!newConv.messages || newConv.messages.length === 0) {
-                // O agente tem whatsapp_greeting mas aqui podemos forçar uma msg inicial visual
-            }
 
         } catch (error) {
             console.error("Erro ao inicializar conversa:", error);
         }
-    };
-
-    const subscribeToConversation = (id) => {
-        return base44.agents.subscribeToConversation(id, (data) => {
-            setMessages(data.messages);
-            setIsLoading(false);
-        });
     };
 
     const handleFileSelect = (e) => {
@@ -86,7 +79,7 @@ export default function Nutricionista() {
 
     const handleSendMessage = async (e) => {
         e.preventDefault();
-        if ((!inputValue.trim() && !selectedFile) || !conversationId) return;
+        if ((!inputValue.trim() && !selectedFile) || !conversation) return;
 
         const content = inputValue;
         setInputValue("");
@@ -97,33 +90,19 @@ export default function Nutricionista() {
             
             if (selectedFile) {
                 setIsUploading(true);
-                // Upload do arquivo
-                // Converter File para base64 ou enviar diretamente se a integração suportar,
-                // mas a integração UploadFile espera 'file'. O SDK frontend geralmente abstrai isso
-                // mas aqui vamos assumir que precisamos enviar o arquivo para obter a URL.
-                
-                // Nota: A integração UploadFile espera um arquivo. O SDK base44.integrations.Core.UploadFile
-                // deve lidar com o objeto File.
-                
                 try {
-                    // Convertendo para base64 se necessário ou passando o blob. 
-                    // Base44 client usually handles file uploads via integration
                     const result = await base44.integrations.Core.UploadFile({ file: selectedFile });
                     if (result && result.file_url) {
                         fileUrls.push(result.file_url);
                     }
                 } catch (uploadError) {
                     console.error("Erro no upload:", uploadError);
-                    // Tentar continuar sem o arquivo ou avisar user
                 }
                 setIsUploading(false);
                 setSelectedFile(null);
             }
-
-            // Adicionar mensagem localmente para feedback instantâneo (opcional, o subscribe vai atualizar)
-            // Mas o subscribe é rápido.
             
-            await base44.agents.addMessage(conversationId, {
+            await base44.agents.addMessage(conversation, {
                 role: "user",
                 content: content,
                 file_urls: fileUrls.length > 0 ? fileUrls : undefined
