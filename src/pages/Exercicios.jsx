@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { ArrowLeft, Dumbbell, Lock, Check, Zap, Trophy, Play, Clock, Flame, Star, ChevronRight, Target } from 'lucide-react';
+import { ArrowLeft, Dumbbell, Lock, Check, Zap, Trophy, Play, Clock, Flame, Star, ChevronRight, Target, Plus } from 'lucide-react';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { base44 } from '@/api/base44Client';
 import { createPageUrl } from '@/utils';
@@ -108,6 +110,13 @@ export default function Exercicios() {
   const [isLoading, setIsLoading] = useState(true);
   const [selectedTreino, setSelectedTreino] = useState(null);
   const [completingWorkout, setCompletingWorkout] = useState(false);
+  const [showLogModal, setShowLogModal] = useState(false);
+  const [logForm, setLogForm] = useState({
+    tipo: '',
+    intensidade: 'media',
+    tempo: ''
+  });
+  const [isLogging, setIsLogging] = useState(false);
 
   useEffect(() => {
     loadData();
@@ -131,7 +140,6 @@ export default function Exercicios() {
   const completeWorkout = async (treino) => {
     setCompletingWorkout(true);
     
-    // Registrar atividade
     await base44.entities.ActivityLog.create({
       tipo: 'exercicio',
       descricao: `Completou: ${treino.name}`,
@@ -140,7 +148,6 @@ export default function Exercicios() {
       treino_id: treino.id
     });
 
-    // Atualizar XP e verificar rank
     const newXp = (profile.xp_total || 0) + treino.xp;
     const newMetas = (profile.metas_concluidas || 0) + 1;
     
@@ -161,6 +168,53 @@ export default function Exercicios() {
     setProfile({ ...profile, xp_total: newXp, metas_concluidas: newMetas, rank: newRank });
     setCompletingWorkout(false);
     setSelectedTreino(null);
+  };
+
+  const handleLogWorkout = async () => {
+    if (!logForm.tipo || !logForm.tempo) return;
+    
+    setIsLogging(true);
+    
+    // Calcular XP baseado na intensidade e tempo
+    const intensidadeMultiplicador = {
+      baixa: 0.5,
+      media: 1,
+      alta: 1.5
+    };
+    
+    const tempoMinutos = parseInt(logForm.tempo);
+    const baseXP = Math.round((tempoMinutos / 5) * 10); // 10 XP a cada 5 min
+    const xpGanho = Math.round(baseXP * intensidadeMultiplicador[logForm.intensidade]);
+    
+    await base44.entities.ActivityLog.create({
+      tipo: 'exercicio',
+      descricao: `${logForm.tipo} - Intensidade ${logForm.intensidade} - ${tempoMinutos} min`,
+      xp_ganho: xpGanho,
+      data: new Date().toISOString().split('T')[0]
+    });
+
+    const newXp = (profile.xp_total || 0) + xpGanho;
+    const newMetas = (profile.metas_concluidas || 0) + 1;
+    
+    let newRank = profile.rank || 'Iniciante';
+    if (newXp >= 1500) newRank = 'Mestre';
+    else if (newXp >= 1000) newRank = 'Diamante';
+    else if (newXp >= 600) newRank = 'Ouro';
+    else if (newXp >= 300) newRank = 'Prata';
+    else if (newXp >= 100) newRank = 'Bronze';
+
+    await base44.entities.UserProfile.update(profile.id, {
+      xp_total: newXp,
+      metas_concluidas: newMetas,
+      rank: newRank
+    });
+
+    setProfile({ ...profile, xp_total: newXp, metas_concluidas: newMetas, rank: newRank });
+    setIsLogging(false);
+    setShowLogModal(false);
+    setLogForm({ tipo: '', intensidade: 'media', tempo: '' });
+    
+    alert(`🎉 Treino registrado! +${xpGanho} XP ganhos!`);
   };
 
   if (isLoading) {
@@ -204,8 +258,22 @@ export default function Exercicios() {
           </div>
         </div>
 
+        {/* Botão de Registro Rápido */}
+        <div className="mb-6">
+          <Button
+            onClick={() => setShowLogModal(true)}
+            className="w-full bg-gradient-to-r from-blue-500 to-indigo-600 hover:from-blue-600 hover:to-indigo-700 text-white py-5 rounded-2xl shadow-lg"
+          >
+            <Plus className="w-5 h-5 mr-2" />
+            Registrar Meu Treino
+          </Button>
+          <p className="text-xs text-gray-500 text-center mt-2">
+            Registre qualquer treino e ganhe XP instantaneamente!
+          </p>
+        </div>
+
         {/* Lista de Treinos */}
-        <h2 className="font-semibold text-gray-900 mb-4">Treinos Disponíveis</h2>
+        <h2 className="font-semibold text-gray-900 mb-4">Treinos Guiados</h2>
         <div className="space-y-3">
           {treinos.map((treino, idx) => {
             const unlocked = isUnlocked(treino);
@@ -261,6 +329,115 @@ export default function Exercicios() {
             );
           })}
         </div>
+
+        {/* Modal de Registro de Treino */}
+        <AnimatePresence>
+          {showLogModal && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4"
+              onClick={() => !isLogging && setShowLogModal(false)}
+            >
+              <motion.div
+                initial={{ scale: 0.9, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                exit={{ scale: 0.9, opacity: 0 }}
+                onClick={(e) => e.stopPropagation()}
+                className="bg-white rounded-3xl w-full max-w-md p-6"
+              >
+                <h3 className="text-xl font-bold text-gray-900 mb-2">Registrar Treino</h3>
+                <p className="text-sm text-gray-500 mb-6">Preencha os dados do seu treino</p>
+
+                <div className="space-y-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Tipo de Treino</label>
+                    <Select value={logForm.tipo} onValueChange={(value) => setLogForm({...logForm, tipo: value})}>
+                      <SelectTrigger className="w-full">
+                        <SelectValue placeholder="Selecione o tipo" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="Caminhada">🚶 Caminhada</SelectItem>
+                        <SelectItem value="Corrida">🏃 Corrida</SelectItem>
+                        <SelectItem value="Ciclismo">🚴 Ciclismo</SelectItem>
+                        <SelectItem value="Natação">🏊 Natação</SelectItem>
+                        <SelectItem value="Musculação">💪 Musculação</SelectItem>
+                        <SelectItem value="Yoga">🧘 Yoga</SelectItem>
+                        <SelectItem value="Dança">💃 Dança</SelectItem>
+                        <SelectItem value="Futebol">⚽ Futebol</SelectItem>
+                        <SelectItem value="Outro">🏋️ Outro</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Intensidade</label>
+                    <Select value={logForm.intensidade} onValueChange={(value) => setLogForm({...logForm, intensidade: value})}>
+                      <SelectTrigger className="w-full">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="baixa">🟢 Baixa (leve, confortável)</SelectItem>
+                        <SelectItem value="media">🟡 Média (moderado esforço)</SelectItem>
+                        <SelectItem value="alta">🔴 Alta (máximo esforço)</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Tempo (minutos)</label>
+                    <Input
+                      type="number"
+                      placeholder="Ex: 30"
+                      value={logForm.tempo}
+                      onChange={(e) => setLogForm({...logForm, tempo: e.target.value})}
+                      min="1"
+                      className="w-full"
+                    />
+                  </div>
+
+                  {logForm.tipo && logForm.tempo && (
+                    <div className="bg-emerald-50 rounded-xl p-4 border border-emerald-200">
+                      <div className="flex items-center justify-between text-sm">
+                        <span className="text-gray-700">XP estimado:</span>
+                        <span className="font-bold text-emerald-600 flex items-center gap-1">
+                          <Zap className="w-4 h-4" />
+                          +{Math.round((parseInt(logForm.tempo) / 5) * 10 * (logForm.intensidade === 'baixa' ? 0.5 : logForm.intensidade === 'alta' ? 1.5 : 1))} XP
+                        </span>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                <div className="flex gap-3 mt-6">
+                  <Button
+                    onClick={() => setShowLogModal(false)}
+                    variant="outline"
+                    className="flex-1"
+                    disabled={isLogging}
+                  >
+                    Cancelar
+                  </Button>
+                  <Button
+                    onClick={handleLogWorkout}
+                    className="flex-1 bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 text-white"
+                    disabled={!logForm.tipo || !logForm.tempo || isLogging}
+                  >
+                    {isLogging ? (
+                      <motion.div animate={{ rotate: 360 }} transition={{ repeat: Infinity, duration: 1, ease: 'linear' }} className="w-5 h-5 border-2 border-white border-t-transparent rounded-full" />
+                    ) : (
+                      <>
+                        <Check className="w-4 h-4 mr-1" />
+                        Registrar
+                      </>
+                    )}
+                  </Button>
+                </div>
+              </motion.div>
+            </motion.div>
+          )}
+        </AnimatePresence>
 
         {/* Modal de Treino */}
         <AnimatePresence>
