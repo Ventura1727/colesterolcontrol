@@ -88,19 +88,19 @@ export default function Dashboard() {
 
   if (isLoading) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-emerald-50 via-white to-teal-50 flex items-center justify-center">
-        <motion.div animate={{ rotate: 360 }} transition={{ repeat: Infinity, duration: 1, ease: 'linear' }} className="w-8 h-8 border-3 border-emerald-600 border-t-transparent rounded-full" />
+      <div className="min-h-screen bg-gradient-to-br from-red-50 via-white to-rose-50 flex items-center justify-center">
+        <motion.div animate={{ rotate: 360 }} transition={{ repeat: Infinity, duration: 1, ease: 'linear' }} className="w-8 h-8 border-3 border-red-600 border-t-transparent rounded-full" />
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-emerald-50 via-white to-teal-50 p-4 pb-24">
+    <div className="min-h-screen bg-gradient-to-br from-red-50 via-white to-rose-50 p-4 pb-24">
       <div className="max-w-lg mx-auto pt-6">
         {/* Header */}
         <div className="flex items-center justify-between mb-6">
           <div className="flex items-center gap-3">
-            <div className="w-12 h-12 bg-gradient-to-br from-emerald-500 to-teal-600 rounded-xl flex items-center justify-center shadow-lg shadow-emerald-200">
+            <div className="w-12 h-12 bg-gradient-to-br from-red-500 to-rose-600 rounded-xl flex items-center justify-center shadow-lg shadow-red-200">
               <Heart className="w-6 h-6 text-white" fill="white" />
             </div>
             <div>
@@ -148,7 +148,7 @@ export default function Dashboard() {
               <Target className="w-5 h-5 text-emerald-600" />
               Seu Perfil
             </h2>
-            <span className="text-xs text-emerald-600 bg-emerald-50 px-2 py-1 rounded-full">{profile?.objetivo}</span>
+            <span className="text-xs text-red-600 bg-red-50 px-2 py-1 rounded-full">{profile?.objetivo}</span>
           </div>
           <div className="grid grid-cols-2 gap-3 text-sm">
             <div className="bg-gray-50 rounded-lg p-3">
@@ -183,7 +183,7 @@ export default function Dashboard() {
               className={`relative bg-white rounded-xl p-4 border text-left transition-all hover:shadow-md ${
                 feature.premium && !profile?.plano_ativo
                   ? 'border-gray-200 opacity-75'
-                  : 'border-emerald-100 hover:border-emerald-300'
+                  : 'border-red-100 hover:border-red-300'
               }`}
             >
               {feature.premium && !profile?.plano_ativo && (
@@ -192,10 +192,10 @@ export default function Dashboard() {
                 </div>
               )}
               <div className={`w-10 h-10 rounded-xl mb-3 flex items-center justify-center ${
-                feature.premium && !profile?.plano_ativo ? 'bg-gray-100' : 'bg-emerald-100'
+                feature.premium && !profile?.plano_ativo ? 'bg-gray-100' : 'bg-red-100'
               }`}>
                 <feature.icon className={`w-5 h-5 ${
-                  feature.premium && !profile?.plano_ativo ? 'text-gray-400' : 'text-emerald-600'
+                  feature.premium && !profile?.plano_ativo ? 'text-gray-400' : 'text-red-600'
                 }`} />
               </div>
               <div className="font-medium text-gray-900 text-sm mb-1">{feature.title}</div>
@@ -209,7 +209,7 @@ export default function Dashboard() {
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.3 }}
-          className="mt-6 bg-gradient-to-r from-emerald-500 to-teal-600 rounded-2xl p-5 text-white"
+          className="mt-6 bg-gradient-to-r from-red-500 to-rose-600 rounded-2xl p-5 text-white"
         >
           <div className="text-sm opacity-90 mb-1">💡 Dica do dia</div>
           <p className="font-medium">
@@ -238,7 +238,7 @@ export default function Dashboard() {
                 <div className="space-y-3">
                   <Button
                     onClick={() => window.location.href = createPageUrl('Premium')}
-                    className="w-full bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 text-white py-5 rounded-xl"
+                    className="w-full bg-gradient-to-r from-red-500 to-rose-600 hover:from-red-600 hover:to-rose-700 text-white py-5 rounded-xl"
                   >
                     Ver Plano Premium
                   </Button>
