@@ -34,8 +34,8 @@ const plans = [
     id: 'mensal',
     name: 'Plano Mensal',
     duration: '1 mês',
-    price: 49.90,
-    pricePixDiscount: 44.90,
+    price: 24.90,
+    pricePixDiscount: 21.00,
     totalSavings: 0,
     recommended: false,
     color: 'from-gray-500 to-gray-600'
@@ -44,9 +44,9 @@ const plans = [
     id: 'trimestral',
     name: 'Plano Trimestral',
     duration: '3 meses',
-    price: 119.90,
-    pricePixDiscount: 99.90,
-    totalSavings: 29.80,
+    price: 59.90,
+    pricePixDiscount: 50.00,
+    totalSavings: 24.70,
     recommended: true,
     color: 'from-red-500 to-rose-600'
   },
@@ -54,9 +54,9 @@ const plans = [
     id: 'anual',
     name: 'Plano Anual',
     duration: '12 meses',
-    price: 399.90,
-    pricePixDiscount: 349.90,
-    totalSavings: 149.90,
+    price: 199.90,
+    pricePixDiscount: 170.00,
+    totalSavings: 128.80,
     recommended: false,
     color: 'from-amber-500 to-orange-600'
   }
@@ -252,7 +252,7 @@ export default function Vendas() {
           </div>
         </motion.div>
 
-        {/* Garantias */}
+        {/* Segurança e Benefícios */}
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
@@ -261,13 +261,9 @@ export default function Vendas() {
         >
           <h3 className="font-semibold text-gray-900 mb-4 flex items-center gap-2">
             <Shield className="w-5 h-5 text-green-600" />
-            Garantias e Segurança
+            Segurança e Benefícios
           </h3>
           <div className="space-y-3 text-sm text-gray-700">
-            <div className="flex items-start gap-2">
-              <Check className="w-4 h-4 text-green-600 mt-0.5 flex-shrink-0" />
-              <span>7 dias de garantia - satisfação ou devolução do dinheiro</span>
-            </div>
             <div className="flex items-start gap-2">
               <Check className="w-4 h-4 text-green-600 mt-0.5 flex-shrink-0" />
               <span>Pagamento 100% seguro e criptografado</span>
@@ -279,6 +275,10 @@ export default function Vendas() {
             <div className="flex items-start gap-2">
               <Check className="w-4 h-4 text-green-600 mt-0.5 flex-shrink-0" />
               <span>Cancele quando quiser, sem multas ou taxas</span>
+            </div>
+            <div className="flex items-start gap-2">
+              <Check className="w-4 h-4 text-green-600 mt-0.5 flex-shrink-0" />
+              <span>Suporte dedicado para assinantes premium</span>
             </div>
           </div>
         </motion.div>

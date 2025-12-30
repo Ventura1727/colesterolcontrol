@@ -7,9 +7,9 @@ import { createPageUrl } from '@/utils';
 import { base44 } from '@/api/base44Client';
 
 const plans = {
-  mensal: { name: 'Mensal', price: 49.90, pricePix: 44.90, duration: 30 },
-  trimestral: { name: 'Trimestral', price: 119.90, pricePix: 99.90, duration: 90 },
-  anual: { name: 'Anual', price: 399.90, pricePix: 349.90, duration: 365 }
+  mensal: { name: 'Mensal', price: 24.90, pricePix: 21.00, duration: 30 },
+  trimestral: { name: 'Trimestral', price: 59.90, pricePix: 50.00, duration: 90 },
+  anual: { name: 'Anual', price: 199.90, pricePix: 170.00, duration: 365 }
 };
 
 export default function Checkout() {
