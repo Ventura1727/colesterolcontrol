@@ -1,376 +1,411 @@
 import React, { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
-import { Heart, ArrowLeft, CreditCard, Lock, Check, Shield, Zap, Crown } from 'lucide-react';
+import { ArrowLeft, CreditCard, Smartphone, Lock, Check, AlertCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { base44 } from '@/api/base44Client';
 import { createPageUrl } from '@/utils';
+import { base44 } from '@/api/base44Client';
+
+const plans = {
+  mensal: { name: 'Mensal', price: 49.90, pricePix: 44.90, duration: 30 },
+  trimestral: { name: 'Trimestral', price: 119.90, pricePix: 99.90, duration: 90 },
+  anual: { name: 'Anual', price: 399.90, pricePix: 349.90, duration: 365 }
+};
 
 export default function Checkout() {
-  const [selectedPlan, setSelectedPlan] = useState('anual');
-  const [step, setStep] = useState(1); // 1 = dados pessoais, 2 = pagamento
-  const [isLoading, setIsLoading] = useState(false);
-  const [form, setForm] = useState({
+  const [step, setStep] = useState(1); // 1 = método, 2 = dados pessoais, 3 = pagamento
+  const [selectedPlan, setSelectedPlan] = useState(null);
+  const [paymentMethod, setPaymentMethod] = useState(null); // 'pix' ou 'card'
+  const [isProcessing, setIsProcessing] = useState(false);
+  
+  const [personalData, setPersonalData] = useState({
     nome: '',
     email: '',
-    senha: '',
-    confirmarSenha: '',
-    cartao: '',
-    validade: '',
-    cvv: '',
-    nomeTitular: ''
+    cpf: '',
+    telefone: ''
   });
-  const [errors, setErrors] = useState({});
+
+  const [cardData, setCardData] = useState({
+    numero: '',
+    nome: '',
+    validade: '',
+    cvv: ''
+  });
 
   useEffect(() => {
-    const urlParams = new URLSearchParams(window.location.search);
-    const plano = urlParams.get('plano');
-    if (plano) setSelectedPlan(plano);
+    const planId = localStorage.getItem('heartbalance_selected_plan');
+    if (!planId || !plans[planId]) {
+      window.location.href = createPageUrl('Vendas');
+      return;
+    }
+    setSelectedPlan(plans[planId]);
   }, []);
 
-  const planos = {
-    mensal: { nome: 'Mensal', preco: 'R$ 29,90', periodo: '/mês' },
-    anual: { nome: 'Anual', preco: 'R$ 179,00', periodo: '/ano', economia: 'Economia de R$ 179,80' }
-  };
-
-  const validateStep1 = () => {
-    const newErrors = {};
-    if (!form.nome.trim()) newErrors.nome = 'Nome é obrigatório';
-    if (!form.email.trim()) newErrors.email = 'Email é obrigatório';
-    else if (!/\S+@\S+\.\S+/.test(form.email)) newErrors.email = 'Email inválido';
-    if (!form.senha) newErrors.senha = 'Senha é obrigatória';
-    else if (form.senha.length < 6) newErrors.senha = 'Mínimo 6 caracteres';
-    if (form.senha !== form.confirmarSenha) newErrors.confirmarSenha = 'Senhas não conferem';
-    
-    setErrors(newErrors);
-    return Object.keys(newErrors).length === 0;
-  };
-
-  const validateStep2 = () => {
-    const newErrors = {};
-    if (!form.cartao.trim()) newErrors.cartao = 'Número do cartão é obrigatório';
-    if (!form.validade.trim()) newErrors.validade = 'Validade é obrigatória';
-    if (!form.cvv.trim()) newErrors.cvv = 'CVV é obrigatório';
-    if (!form.nomeTitular.trim()) newErrors.nomeTitular = 'Nome do titular é obrigatório';
-    
-    setErrors(newErrors);
-    return Object.keys(newErrors).length === 0;
-  };
-
-  const handleStep1 = () => {
-    if (validateStep1()) {
-      setStep(2);
+  const handlePersonalDataSubmit = () => {
+    if (!personalData.nome || !personalData.email || !personalData.cpf) {
+      alert('Por favor, preencha todos os campos obrigatórios');
+      return;
     }
+    setStep(3);
   };
 
-  const handleFinalizarCompra = async () => {
-    if (!validateStep2()) return;
-    
-    setIsLoading(true);
+  const handleFinalizePurchase = async () => {
+    setIsProcessing(true);
     
     try {
-      // Verificar se usuário está logado, senão redirecionar para login
-      const isAuth = await base44.auth.isAuthenticated();
-      
-      if (!isAuth) {
-        // Salvar dados do quiz + info de compra para depois do login
-        const quizData = localStorage.getItem('heartbalance_quiz');
-        localStorage.setItem('heartbalance_pending_purchase', JSON.stringify({
-          plano: selectedPlan,
-          quiz: quizData ? JSON.parse(quizData) : null
-        }));
-        
-        // Redirecionar para login
-        base44.auth.redirectToLogin(createPageUrl('FinalizarCompra'));
+      // Verificar se usuário está autenticado
+      let user;
+      try {
+        user = await base44.auth.me();
+      } catch (e) {
+        // Redirecionar para login e voltar após autenticação
+        const returnUrl = createPageUrl('FinalizarCompra');
+        base44.auth.redirectToLogin(returnUrl);
         return;
       }
 
-      // Usuário já está logado, finalizar compra
-      await finalizarCompra();
-      
+      // Salvar dados da compra no localStorage para processar após login
+      localStorage.setItem('heartbalance_purchase_data', JSON.stringify({
+        plan: selectedPlan,
+        paymentMethod,
+        personalData,
+        timestamp: Date.now()
+      }));
+
+      // Redirecionar para finalização
+      window.location.href = createPageUrl('FinalizarCompra');
     } catch (error) {
-      console.error(error);
-      setIsLoading(false);
+      console.error('Erro ao processar pagamento:', error);
+      alert('Erro ao processar pagamento. Tente novamente.');
+      setIsProcessing(false);
     }
   };
 
-  const finalizarCompra = async () => {
-    try {
-      const user = await base44.auth.me();
-      const quizData = JSON.parse(localStorage.getItem('heartbalance_quiz') || '{}');
-      
-      // Verificar se já tem perfil
-      const profiles = await base44.entities.UserProfile.filter({ created_by: user.email });
-      
-      if (profiles.length > 0) {
-        await base44.entities.UserProfile.update(profiles[0].id, {
-          ...quizData,
-          plano_ativo: true,
-          data_inicio_plano: new Date().toISOString().split('T')[0],
-          rank: 'Iniciante',
-          xp_total: 0,
-          metas_concluidas: 0,
-          dias_consecutivos: 0
-        });
-      } else {
-        await base44.entities.UserProfile.create({
-          ...quizData,
-          plano_ativo: true,
-          data_inicio_plano: new Date().toISOString().split('T')[0],
-          rank: 'Iniciante',
-          xp_total: 0,
-          metas_concluidas: 0,
-          dias_consecutivos: 0
-        });
-      }
+  const formatCardNumber = (value) => {
+    return value.replace(/\s/g, '').match(/.{1,4}/g)?.join(' ') || value;
+  };
 
-      // Limpar dados locais
-      localStorage.removeItem('heartbalance_quiz');
-      localStorage.removeItem('heartbalance_pending_purchase');
-
-      // Redirecionar para dashboard
-      window.location.href = createPageUrl('Dashboard');
-      
-    } catch (error) {
-      console.error(error);
-      setIsLoading(false);
+  const formatExpiry = (value) => {
+    const cleaned = value.replace(/\D/g, '');
+    if (cleaned.length >= 2) {
+      return cleaned.slice(0, 2) + '/' + cleaned.slice(2, 4);
     }
+    return cleaned;
   };
 
-  const formatCartao = (value) => {
-    const nums = value.replace(/\D/g, '');
-    return nums.replace(/(\d{4})(?=\d)/g, '$1 ').slice(0, 19);
-  };
+  if (!selectedPlan) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-red-50 via-white to-rose-50 flex items-center justify-center">
+        <motion.div animate={{ rotate: 360 }} transition={{ repeat: Infinity, duration: 1, ease: 'linear' }} className="w-8 h-8 border-3 border-red-600 border-t-transparent rounded-full" />
+      </div>
+    );
+  }
 
-  const formatValidade = (value) => {
-    const nums = value.replace(/\D/g, '');
-    if (nums.length >= 2) {
-      return nums.slice(0, 2) + '/' + nums.slice(2, 4);
-    }
-    return nums;
-  };
+  const currentPrice = paymentMethod === 'pix' ? selectedPlan.pricePix : selectedPlan.price;
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-gray-50 to-gray-100">
+    <div className="min-h-screen bg-gradient-to-br from-red-50 via-white to-rose-50">
       <div className="max-w-lg mx-auto px-4 py-6">
         {/* Header */}
         <div className="flex items-center gap-3 mb-6">
-          <button onClick={() => window.history.back()} className="w-10 h-10 rounded-xl bg-white border border-gray-200 flex items-center justify-center">
+          <button 
+            onClick={() => {
+              if (step > 1) {
+                setStep(step - 1);
+              } else {
+                window.location.href = createPageUrl('Vendas');
+              }
+            }}
+            className="w-10 h-10 rounded-xl bg-white border border-gray-200 flex items-center justify-center"
+          >
             <ArrowLeft className="w-5 h-5 text-gray-600" />
           </button>
           <div>
             <h1 className="text-xl font-bold text-gray-900">Finalizar Compra</h1>
-            <p className="text-sm text-gray-500">Passo {step} de 2</p>
+            <p className="text-sm text-gray-500">Plano {selectedPlan.name}</p>
           </div>
         </div>
 
-        {/* Progress */}
+        {/* Progress Bar */}
         <div className="flex gap-2 mb-8">
-          <div className={`h-1.5 flex-1 rounded-full ${step >= 1 ? 'bg-emerald-500' : 'bg-gray-200'}`} />
-          <div className={`h-1.5 flex-1 rounded-full ${step >= 2 ? 'bg-emerald-500' : 'bg-gray-200'}`} />
+          {[1, 2, 3].map((s) => (
+            <div
+              key={s}
+              className={`h-2 flex-1 rounded-full transition-all ${
+                s <= step ? 'bg-red-500' : 'bg-gray-200'
+              }`}
+            />
+          ))}
         </div>
 
-        {/* Resumo do Plano */}
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="bg-gradient-to-br from-gray-900 to-gray-800 rounded-2xl p-5 mb-6 text-white"
-        >
-          <div className="flex items-center gap-3 mb-3">
-            <div className="w-12 h-12 bg-gradient-to-br from-yellow-400 to-amber-500 rounded-xl flex items-center justify-center">
-              <Crown className="w-6 h-6 text-white" />
-            </div>
-            <div>
-              <div className="text-sm text-gray-400">HeartBalance Premium</div>
-              <div className="font-bold text-lg">Plano {planos[selectedPlan].nome}</div>
-            </div>
-          </div>
-          <div className="flex items-end justify-between pt-3 border-t border-gray-700">
-            <div>
-              <span className="text-3xl font-bold">{planos[selectedPlan].preco}</span>
-              <span className="text-gray-400">{planos[selectedPlan].periodo}</span>
-            </div>
-            {planos[selectedPlan].economia && (
-              <span className="text-xs text-emerald-400 bg-emerald-400/20 px-2 py-1 rounded-full">
-                {planos[selectedPlan].economia}
-              </span>
-            )}
-          </div>
-        </motion.div>
-
-        {/* Step 1: Dados Pessoais */}
+        {/* Step 1: Escolher Método */}
         {step === 1 && (
           <motion.div
             initial={{ opacity: 0, x: 20 }}
             animate={{ opacity: 1, x: 0 }}
-            className="bg-white rounded-2xl p-6 border border-gray-100 shadow-sm"
+            className="space-y-4"
           >
-            <h2 className="font-semibold text-gray-900 mb-4 flex items-center gap-2">
-              <Lock className="w-5 h-5 text-emerald-600" />
-              Crie sua conta
-            </h2>
+            <h2 className="text-lg font-semibold text-gray-900 mb-4">Escolha a Forma de Pagamento</h2>
 
-            <div className="space-y-4">
-              <div>
-                <label className="text-sm font-medium text-gray-700 mb-1 block">Nome completo</label>
-                <Input
-                  placeholder="Seu nome"
-                  value={form.nome}
-                  onChange={(e) => setForm({...form, nome: e.target.value})}
-                  className={errors.nome ? 'border-red-500' : ''}
-                />
-                {errors.nome && <span className="text-xs text-red-500">{errors.nome}</span>}
+            {/* PIX - Recomendado */}
+            <button
+              onClick={() => {
+                setPaymentMethod('pix');
+                setStep(2);
+              }}
+              className="w-full bg-gradient-to-br from-green-500 to-emerald-600 rounded-2xl p-6 text-white text-left relative overflow-hidden group hover:shadow-lg transition-shadow"
+            >
+              <div className="absolute top-3 right-3 bg-yellow-400 text-yellow-900 px-3 py-1 rounded-full text-xs font-bold">
+                💰 DESCONTO
               </div>
-
-              <div>
-                <label className="text-sm font-medium text-gray-700 mb-1 block">E-mail</label>
-                <Input
-                  type="email"
-                  placeholder="seu@email.com"
-                  value={form.email}
-                  onChange={(e) => setForm({...form, email: e.target.value})}
-                  className={errors.email ? 'border-red-500' : ''}
-                />
-                {errors.email && <span className="text-xs text-red-500">{errors.email}</span>}
+              <div className="flex items-center gap-4 mb-3">
+                <div className="w-14 h-14 bg-white/20 backdrop-blur-sm rounded-xl flex items-center justify-center">
+                  <Smartphone className="w-7 h-7" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-lg">Pagar com PIX</h3>
+                  <p className="text-sm text-green-100">Aprovação instantânea</p>
+                </div>
               </div>
-
-              <div>
-                <label className="text-sm font-medium text-gray-700 mb-1 block">Senha</label>
-                <Input
-                  type="password"
-                  placeholder="Mínimo 6 caracteres"
-                  value={form.senha}
-                  onChange={(e) => setForm({...form, senha: e.target.value})}
-                  className={errors.senha ? 'border-red-500' : ''}
-                />
-                {errors.senha && <span className="text-xs text-red-500">{errors.senha}</span>}
+              <div className="flex items-baseline gap-2 mb-2">
+                <span className="text-sm line-through opacity-75">R$ {selectedPlan.price.toFixed(2)}</span>
+                <span className="text-3xl font-bold">R$ {selectedPlan.pricePix.toFixed(2)}</span>
               </div>
+              <p className="text-sm text-green-100">
+                ✓ Economia de R$ {(selectedPlan.price - selectedPlan.pricePix).toFixed(2)} • Acesso imediato
+              </p>
+            </button>
 
-              <div>
-                <label className="text-sm font-medium text-gray-700 mb-1 block">Confirmar senha</label>
-                <Input
-                  type="password"
-                  placeholder="Digite novamente"
-                  value={form.confirmarSenha}
-                  onChange={(e) => setForm({...form, confirmarSenha: e.target.value})}
-                  className={errors.confirmarSenha ? 'border-red-500' : ''}
-                />
-                {errors.confirmarSenha && <span className="text-xs text-red-500">{errors.confirmarSenha}</span>}
+            {/* Cartão */}
+            <button
+              onClick={() => {
+                setPaymentMethod('card');
+                setStep(2);
+              }}
+              className="w-full bg-white rounded-2xl p-6 border-2 border-gray-200 text-left hover:border-red-300 transition-all"
+            >
+              <div className="flex items-center gap-4 mb-3">
+                <div className="w-14 h-14 bg-gray-100 rounded-xl flex items-center justify-center">
+                  <CreditCard className="w-7 h-7 text-gray-600" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-lg text-gray-900">Cartão de Crédito</h3>
+                  <p className="text-sm text-gray-500">Todas as bandeiras</p>
+                </div>
               </div>
-
-              <Button
-                onClick={handleStep1}
-                className="w-full bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 text-white py-6 rounded-xl mt-4"
-              >
-                Continuar para Pagamento
-              </Button>
-            </div>
+              <div className="text-2xl font-bold text-gray-900 mb-2">
+                R$ {selectedPlan.price.toFixed(2)}
+              </div>
+              <p className="text-sm text-gray-500">
+                ✓ Parcelamento disponível • Aprovação em minutos
+              </p>
+            </button>
           </motion.div>
         )}
 
-        {/* Step 2: Pagamento */}
+        {/* Step 2: Dados Pessoais */}
         {step === 2 && (
           <motion.div
             initial={{ opacity: 0, x: 20 }}
             animate={{ opacity: 1, x: 0 }}
-            className="bg-white rounded-2xl p-6 border border-gray-100 shadow-sm"
+            className="space-y-4"
           >
-            <h2 className="font-semibold text-gray-900 mb-4 flex items-center gap-2">
-              <CreditCard className="w-5 h-5 text-emerald-600" />
-              Dados do Cartão
-            </h2>
+            <h2 className="text-lg font-semibold text-gray-900 mb-4">Seus Dados</h2>
 
-            <div className="space-y-4">
-              <div>
-                <label className="text-sm font-medium text-gray-700 mb-1 block">Número do cartão</label>
-                <Input
-                  placeholder="0000 0000 0000 0000"
-                  value={form.cartao}
-                  onChange={(e) => setForm({...form, cartao: formatCartao(e.target.value)})}
-                  className={errors.cartao ? 'border-red-500' : ''}
-                />
-                {errors.cartao && <span className="text-xs text-red-500">{errors.cartao}</span>}
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="text-sm font-medium text-gray-700 mb-1 block">Validade</label>
-                  <Input
-                    placeholder="MM/AA"
-                    value={form.validade}
-                    onChange={(e) => setForm({...form, validade: formatValidade(e.target.value)})}
-                    className={errors.validade ? 'border-red-500' : ''}
-                    maxLength={5}
-                  />
-                  {errors.validade && <span className="text-xs text-red-500">{errors.validade}</span>}
-                </div>
-                <div>
-                  <label className="text-sm font-medium text-gray-700 mb-1 block">CVV</label>
-                  <Input
-                    placeholder="123"
-                    value={form.cvv}
-                    onChange={(e) => setForm({...form, cvv: e.target.value.replace(/\D/g, '').slice(0, 4)})}
-                    className={errors.cvv ? 'border-red-500' : ''}
-                    maxLength={4}
-                  />
-                  {errors.cvv && <span className="text-xs text-red-500">{errors.cvv}</span>}
-                </div>
-              </div>
-
-              <div>
-                <label className="text-sm font-medium text-gray-700 mb-1 block">Nome no cartão</label>
-                <Input
-                  placeholder="Como está no cartão"
-                  value={form.nomeTitular}
-                  onChange={(e) => setForm({...form, nomeTitular: e.target.value.toUpperCase()})}
-                  className={errors.nomeTitular ? 'border-red-500' : ''}
-                />
-                {errors.nomeTitular && <span className="text-xs text-red-500">{errors.nomeTitular}</span>}
-              </div>
-
-              <div className="flex items-center gap-2 text-sm text-gray-500 bg-gray-50 p-3 rounded-xl">
-                <Shield className="w-5 h-5 text-emerald-600" />
-                <span>Pagamento 100% seguro e criptografado</span>
-              </div>
-
-              <div className="flex gap-3 mt-4">
-                <Button
-                  onClick={() => setStep(1)}
-                  variant="outline"
-                  className="flex-1 py-6"
-                >
-                  Voltar
-                </Button>
-                <Button
-                  onClick={handleFinalizarCompra}
-                  disabled={isLoading}
-                  className="flex-1 bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 text-white py-6 rounded-xl"
-                >
-                  {isLoading ? (
-                    <motion.div animate={{ rotate: 360 }} transition={{ repeat: Infinity, duration: 1, ease: 'linear' }} className="w-5 h-5 border-2 border-white border-t-transparent rounded-full" />
-                  ) : (
-                    <>
-                      Pagar {planos[selectedPlan].preco}
-                      <Check className="w-5 h-5 ml-2" />
-                    </>
-                  )}
-                </Button>
-              </div>
+            <div>
+              <label className="text-sm font-medium text-gray-700 mb-1 block">Nome Completo *</label>
+              <Input
+                type="text"
+                placeholder="João Silva"
+                value={personalData.nome}
+                onChange={(e) => setPersonalData({...personalData, nome: e.target.value})}
+                className="w-full"
+              />
             </div>
+
+            <div>
+              <label className="text-sm font-medium text-gray-700 mb-1 block">E-mail *</label>
+              <Input
+                type="email"
+                placeholder="seu@email.com"
+                value={personalData.email}
+                onChange={(e) => setPersonalData({...personalData, email: e.target.value})}
+                className="w-full"
+              />
+            </div>
+
+            <div>
+              <label className="text-sm font-medium text-gray-700 mb-1 block">CPF *</label>
+              <Input
+                type="text"
+                placeholder="000.000.000-00"
+                value={personalData.cpf}
+                onChange={(e) => setPersonalData({...personalData, cpf: e.target.value})}
+                className="w-full"
+              />
+            </div>
+
+            <div>
+              <label className="text-sm font-medium text-gray-700 mb-1 block">Telefone</label>
+              <Input
+                type="tel"
+                placeholder="(11) 99999-9999"
+                value={personalData.telefone}
+                onChange={(e) => setPersonalData({...personalData, telefone: e.target.value})}
+                className="w-full"
+              />
+            </div>
+
+            <Button
+              onClick={handlePersonalDataSubmit}
+              className="w-full bg-red-500 hover:bg-red-600 text-white py-6 rounded-xl text-lg font-semibold"
+            >
+              Continuar
+            </Button>
           </motion.div>
         )}
 
-        {/* Garantias */}
-        <div className="mt-6 flex items-center justify-center gap-4 text-xs text-gray-500">
-          <div className="flex items-center gap-1">
-            <Lock className="w-4 h-4" />
-            <span>SSL Seguro</span>
-          </div>
-          <div className="flex items-center gap-1">
-            <Shield className="w-4 h-4" />
-            <span>Garantia 7 dias</span>
-          </div>
-        </div>
+        {/* Step 3: Finalizar */}
+        {step === 3 && (
+          <motion.div
+            initial={{ opacity: 0, x: 20 }}
+            animate={{ opacity: 1, x: 0 }}
+            className="space-y-6"
+          >
+            {paymentMethod === 'pix' ? (
+              <>
+                <div className="bg-gradient-to-br from-green-500 to-emerald-600 rounded-2xl p-6 text-white text-center">
+                  <Smartphone className="w-16 h-16 mx-auto mb-3" />
+                  <h2 className="text-2xl font-bold mb-2">Pagamento via PIX</h2>
+                  <div className="text-4xl font-bold mb-2">R$ {selectedPlan.pricePix.toFixed(2)}</div>
+                  <p className="text-green-100 text-sm">Após clicar em "Gerar QR Code", você terá 15 minutos para pagar</p>
+                </div>
+
+                <div className="bg-white rounded-2xl p-6 border border-gray-200">
+                  <h3 className="font-semibold text-gray-900 mb-3">Como funciona:</h3>
+                  <div className="space-y-3 text-sm text-gray-700">
+                    <div className="flex gap-3">
+                      <div className="w-6 h-6 rounded-full bg-red-100 text-red-600 flex items-center justify-center font-bold text-xs flex-shrink-0">1</div>
+                      <p>Clique em "Gerar QR Code PIX"</p>
+                    </div>
+                    <div className="flex gap-3">
+                      <div className="w-6 h-6 rounded-full bg-red-100 text-red-600 flex items-center justify-center font-bold text-xs flex-shrink-0">2</div>
+                      <p>Abra o app do seu banco e escolha "Pagar com PIX"</p>
+                    </div>
+                    <div className="flex gap-3">
+                      <div className="w-6 h-6 rounded-full bg-red-100 text-red-600 flex items-center justify-center font-bold text-xs flex-shrink-0">3</div>
+                      <p>Escaneie o QR Code ou copie o código</p>
+                    </div>
+                    <div className="flex gap-3">
+                      <div className="w-6 h-6 rounded-full bg-red-100 text-red-600 flex items-center justify-center font-bold text-xs flex-shrink-0">4</div>
+                      <p>Confirme o pagamento e pronto! Acesso liberado instantaneamente</p>
+                    </div>
+                  </div>
+                </div>
+              </>
+            ) : (
+              <>
+                <h2 className="text-lg font-semibold text-gray-900">Dados do Cartão</h2>
+
+                <div>
+                  <label className="text-sm font-medium text-gray-700 mb-1 block">Número do Cartão</label>
+                  <Input
+                    type="text"
+                    placeholder="0000 0000 0000 0000"
+                    value={cardData.numero}
+                    onChange={(e) => setCardData({...cardData, numero: formatCardNumber(e.target.value)})}
+                    maxLength={19}
+                    className="w-full"
+                  />
+                </div>
+
+                <div>
+                  <label className="text-sm font-medium text-gray-700 mb-1 block">Nome no Cartão</label>
+                  <Input
+                    type="text"
+                    placeholder="NOME COMO NO CARTÃO"
+                    value={cardData.nome}
+                    onChange={(e) => setCardData({...cardData, nome: e.target.value.toUpperCase()})}
+                    className="w-full"
+                  />
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-sm font-medium text-gray-700 mb-1 block">Validade</label>
+                    <Input
+                      type="text"
+                      placeholder="MM/AA"
+                      value={cardData.validade}
+                      onChange={(e) => setCardData({...cardData, validade: formatExpiry(e.target.value)})}
+                      maxLength={5}
+                      className="w-full"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-sm font-medium text-gray-700 mb-1 block">CVV</label>
+                    <Input
+                      type="text"
+                      placeholder="123"
+                      value={cardData.cvv}
+                      onChange={(e) => setCardData({...cardData, cvv: e.target.value.replace(/\D/g, '')})}
+                      maxLength={4}
+                      className="w-full"
+                    />
+                  </div>
+                </div>
+
+                <div className="bg-blue-50 rounded-xl p-4 border border-blue-200 flex gap-3">
+                  <Lock className="w-5 h-5 text-blue-600 flex-shrink-0 mt-0.5" />
+                  <div className="text-sm text-blue-900">
+                    <p className="font-medium mb-1">Seus dados estão seguros</p>
+                    <p className="text-xs text-blue-700">Utilizamos criptografia de nível bancário para proteger suas informações</p>
+                  </div>
+                </div>
+              </>
+            )}
+
+            {/* Resumo */}
+            <div className="bg-gray-50 rounded-2xl p-5 border border-gray-200">
+              <h3 className="font-semibold text-gray-900 mb-3">Resumo da Compra</h3>
+              <div className="space-y-2 text-sm">
+                <div className="flex justify-between">
+                  <span className="text-gray-600">Plano {selectedPlan.name}</span>
+                  <span className="font-medium">R$ {selectedPlan.price.toFixed(2)}</span>
+                </div>
+                {paymentMethod === 'pix' && (
+                  <div className="flex justify-between text-green-600">
+                    <span>Desconto PIX</span>
+                    <span className="font-medium">- R$ {(selectedPlan.price - selectedPlan.pricePix).toFixed(2)}</span>
+                  </div>
+                )}
+                <div className="border-t border-gray-300 pt-2 flex justify-between text-lg font-bold">
+                  <span>Total</span>
+                  <span className="text-red-600">R$ {currentPrice.toFixed(2)}</span>
+                </div>
+              </div>
+            </div>
+
+            <Button
+              onClick={handleFinalizePurchase}
+              disabled={isProcessing}
+              className="w-full bg-gradient-to-r from-red-500 to-rose-600 hover:from-red-600 hover:to-rose-700 text-white py-7 rounded-xl text-lg font-semibold shadow-lg"
+            >
+              {isProcessing ? (
+                <>Processando...</>
+              ) : paymentMethod === 'pix' ? (
+                <>Gerar QR Code PIX</>
+              ) : (
+                <>Finalizar Compra - R$ {currentPrice.toFixed(2)}</>
+              )}
+            </Button>
+
+            <p className="text-xs text-center text-gray-500">
+              <Lock className="w-3 h-3 inline mr-1" />
+              Pagamento 100% seguro e criptografado
+            </p>
+          </motion.div>
+        )}
       </div>
     </div>
   );
