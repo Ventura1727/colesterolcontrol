@@ -10,6 +10,8 @@ import Onboarding from './pages/Onboarding';
 import Premium from './pages/Premium';
 import Progresso from './pages/Progresso';
 import Vendas from './pages/Vendas';
+import Hidratacao from './pages/Hidratacao';
+import Conteudo from './pages/Conteudo';
 
 
 export const PAGES = {
@@ -25,6 +27,8 @@ export const PAGES = {
     "Premium": Premium,
     "Progresso": Progresso,
     "Vendas": Vendas,
+    "Hidratacao": Hidratacao,
+    "Conteudo": Conteudo,
 }
 
 export const pagesConfig = {

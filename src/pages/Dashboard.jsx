@@ -12,8 +12,8 @@ const features = [
   { id: 'exercicios', title: 'Exercícios', desc: 'Treinos que liberam XP', icon: Dumbbell, premium: true, page: 'Exercicios' },
   { id: 'alimentacao', title: 'Receitas', desc: 'Pratos anti-colesterol', icon: Salad, premium: true, page: 'Alimentacao' },
   { id: 'progresso', title: 'Meu Progresso', desc: 'Acompanhe sua evolução', icon: TrendingDown, premium: true, page: 'Progresso' },
-  { id: 'hidratacao', title: 'Hidratação', desc: 'Lembretes de água', icon: Droplets, premium: true, page: null },
-  { id: 'educacao', title: 'Conteúdo', desc: 'Artigos sobre saúde', icon: BookOpen, premium: false, page: null }
+  { id: 'hidratacao', title: 'Hidratação', desc: 'Calcule sua meta diária', icon: Droplets, premium: true, page: 'Hidratacao' },
+  { id: 'educacao', title: 'Conteúdo', desc: 'Artigos sobre saúde', icon: BookOpen, premium: false, page: 'Conteudo' }
   ];
 
 export default function Dashboard() {
