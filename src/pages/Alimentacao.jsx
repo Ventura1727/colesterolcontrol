@@ -1,9 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { ArrowLeft, Salad, Lock, Check, Zap, Trophy, Clock, Flame, Star, ChevronRight, Heart, Camera, Upload, X, Loader2 } from 'lucide-react';
+import { ArrowLeft, Salad, Lock, Check, Zap, Trophy, Clock, Flame, Star, ChevronRight, Heart, Camera, Upload, X, Loader2, BarChart3 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { base44 } from '@/api/base44Client';
 import { createPageUrl } from '@/utils';
+import CaloriesChart from '@/components/analytics/CaloriesChart';
+import AIInsights from '@/components/analytics/AIInsights';
 
 const receitas = [
   {
@@ -115,6 +117,10 @@ export default function Alimentacao() {
   const [photoFile, setPhotoFile] = useState(null);
   const [photoPreview, setPhotoPreview] = useState(null);
   const [analyzing, setAnalyzing] = useState(false);
+  const [mealLogs, setMealLogs] = useState([]);
+  const [activities, setActivities] = useState([]);
+  const [colesterolRecords, setColesterolRecords] = useState([]);
+  const [showAnalytics, setShowAnalytics] = useState(false);
   const fileInputRef = React.useRef(null);
 
   useEffect(() => {
@@ -123,10 +129,18 @@ export default function Alimentacao() {
 
   const loadData = async () => {
     const user = await base44.auth.me();
-    const profiles = await base44.entities.UserProfile.filter({ created_by: user.email });
+    const [profiles, meals, acts, colesterol] = await Promise.all([
+      base44.entities.UserProfile.filter({ created_by: user.email }),
+      base44.entities.MealLog.list('-created_date', 30),
+      base44.entities.ActivityLog.list('-created_date', 30),
+      base44.entities.ColesterolRecord.list('-data_exame', 5)
+    ]);
     if (profiles.length > 0) {
       setProfile(profiles[0]);
     }
+    setMealLogs(meals);
+    setActivities(acts);
+    setColesterolRecords(colesterol);
     setIsLoading(false);
   };
 
@@ -317,8 +331,8 @@ Seja objetivo, motivador e educativo.`,
           </div>
         </div>
 
-        {/* Botão de Análise de Foto */}
-        <div className="mb-6">
+        {/* Botões de Ação */}
+        <div className="grid grid-cols-2 gap-3 mb-6">
           <input
             type="file"
             ref={fileInputRef}
@@ -329,15 +343,38 @@ Seja objetivo, motivador e educativo.`,
           />
           <Button
             onClick={() => fileInputRef.current?.click()}
-            className="w-full bg-gradient-to-r from-blue-500 to-indigo-600 hover:from-blue-600 hover:to-indigo-700 text-white py-5 rounded-2xl shadow-lg"
+            className="bg-gradient-to-r from-blue-500 to-indigo-600 hover:from-blue-600 hover:to-indigo-700 text-white py-5 rounded-xl shadow-md"
           >
             <Camera className="w-5 h-5 mr-2" />
-            Analisar Minha Refeição com IA
+            Analisar Refeição
           </Button>
-          <p className="text-xs text-gray-500 text-center mt-2">
-            Tire uma foto do seu prato e ganhe XP se for saudável!
-          </p>
+          <Button
+            onClick={() => setShowAnalytics(!showAnalytics)}
+            variant="outline"
+            className="border-2 border-purple-200 hover:bg-purple-50 text-purple-700 py-5 rounded-xl"
+          >
+            <BarChart3 className="w-5 h-5 mr-2" />
+            {showAnalytics ? 'Ocultar' : 'Ver'} Análises
+          </Button>
         </div>
+
+        {/* Análises e Insights */}
+        {showAnalytics && (
+          <motion.div
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: 'auto' }}
+            exit={{ opacity: 0, height: 0 }}
+            className="space-y-4 mb-6"
+          >
+            <CaloriesChart mealLogs={mealLogs} />
+            <AIInsights 
+              profile={profile}
+              activities={activities.filter(a => a.tipo === 'alimentacao')}
+              colesterolRecords={colesterolRecords}
+              mealLogs={mealLogs}
+            />
+          </motion.div>
+        )}
 
         {/* Lista de Receitas */}
         <h2 className="font-semibold text-gray-900 mb-4">Receitas Saudáveis</h2>

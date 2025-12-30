@@ -5,6 +5,10 @@ import { base44 } from '@/api/base44Client';
 import { createPageUrl } from '@/utils';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
+import ColesterolChart from '@/components/analytics/ColesterolChart';
+import ActivityChart from '@/components/analytics/ActivityChart';
+import AIInsights from '@/components/analytics/AIInsights';
+import CaloriesChart from '@/components/analytics/CaloriesChart';
 
 const ranks = [
   { name: 'Iniciante', min: 0, max: 100, color: 'from-gray-400 to-gray-500', icon: '🌱', desc: 'Começando a jornada' },
@@ -18,6 +22,8 @@ const ranks = [
 export default function Progresso() {
   const [profile, setProfile] = useState(null);
   const [activities, setActivities] = useState([]);
+  const [colesterolRecords, setColesterolRecords] = useState([]);
+  const [mealLogs, setMealLogs] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
@@ -26,15 +32,19 @@ export default function Progresso() {
 
   const loadData = async () => {
     const user = await base44.auth.me();
-    const [profiles, logs] = await Promise.all([
+    const [profiles, logs, colesterol, meals] = await Promise.all([
       base44.entities.UserProfile.filter({ created_by: user.email }),
-      base44.entities.ActivityLog.list('-created_date', 20)
+      base44.entities.ActivityLog.list('-created_date', 50),
+      base44.entities.ColesterolRecord.list('-data_exame', 10),
+      base44.entities.MealLog.list('-created_date', 30)
     ]);
     
     if (profiles.length > 0) {
       setProfile(profiles[0]);
     }
     setActivities(logs);
+    setColesterolRecords(colesterol);
+    setMealLogs(meals);
     setIsLoading(false);
   };
 
@@ -143,8 +153,23 @@ export default function Progresso() {
           })}
         </div>
 
+        {/* Gráficos e Análises */}
+        <div className="space-y-4 mb-8">
+          <ColesterolChart records={colesterolRecords} />
+          <ActivityChart activities={activities} />
+          <CaloriesChart mealLogs={mealLogs} />
+        </div>
+
+        {/* Insights da IA */}
+        <AIInsights 
+          profile={profile}
+          activities={activities}
+          colesterolRecords={colesterolRecords}
+          mealLogs={mealLogs}
+        />
+
         {/* Histórico de Atividades */}
-        <h2 className="font-semibold text-gray-900 mb-4">Atividades Recentes</h2>
+        <h2 className="font-semibold text-gray-900 mb-4 mt-8">Atividades Recentes</h2>
         {activities.length > 0 ? (
           <div className="space-y-3">
             {activities.map((activity, idx) => (
