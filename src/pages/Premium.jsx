@@ -190,7 +190,7 @@ export default function Premium() {
           <Button
             onClick={handleActivate}
             disabled={isActivating}
-            className="w-full bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-600 hover:to-teal-600 text-white py-7 rounded-2xl text-lg font-semibold shadow-lg shadow-emerald-500/30 transition-all"
+            className="w-full bg-gradient-to-r from-red-500 to-rose-500 hover:from-red-600 hover:to-rose-600 text-white py-7 rounded-2xl text-lg font-semibold shadow-lg shadow-red-500/30 transition-all"
           >
             {isActivating ? (
               <motion.div

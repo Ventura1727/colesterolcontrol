@@ -78,7 +78,7 @@ export default function ColesterolTracker({ records, onRecordAdded }) {
         </div>
         <Dialog open={isOpen} onOpenChange={setIsOpen}>
           <DialogTrigger asChild>
-            <Button size="sm" className="bg-emerald-500 hover:bg-emerald-600 text-white">
+            <Button size="sm" className="bg-red-500 hover:bg-red-600 text-white">
               <Plus className="w-4 h-4 mr-1" />
               Registrar
             </Button>
@@ -133,7 +133,7 @@ export default function ColesterolTracker({ records, onRecordAdded }) {
                 />
               </div>
               <Button 
-                className="w-full bg-emerald-500 hover:bg-emerald-600" 
+                className="w-full bg-red-500 hover:bg-red-600" 
                 onClick={handleSubmit}
                 disabled={isLoading}
               >

@@ -302,7 +302,7 @@ Seja objetivo, motivador e educativo.`,
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-emerald-50 via-white to-teal-50">
+    <div className="min-h-screen bg-gradient-to-br from-red-50 via-white to-rose-50">
       <div className="max-w-lg mx-auto px-4 pt-6 pb-24">
         {/* Header */}
         <div className="flex items-center gap-3 mb-6">
@@ -396,12 +396,12 @@ Seja objetivo, motivador e educativo.`,
                   disabled={!unlocked}
                   className={`w-full text-left bg-white rounded-2xl p-4 border transition-all ${
                     unlocked 
-                      ? 'border-emerald-100 hover:border-emerald-300 hover:shadow-md cursor-pointer' 
+                      ? 'border-red-100 hover:border-red-300 hover:shadow-md cursor-pointer' 
                       : 'border-gray-200 opacity-60 cursor-not-allowed'
                   }`}
                 >
                   <div className="flex items-center gap-4">
-                    <div className={`w-14 h-14 rounded-xl flex items-center justify-center text-3xl ${unlocked ? 'bg-emerald-50' : 'bg-gray-100'}`}>
+                    <div className={`w-14 h-14 rounded-xl flex items-center justify-center text-3xl ${unlocked ? 'bg-red-50' : 'bg-gray-100'}`}>
                       {unlocked ? receita.image : <Lock className="w-6 h-6 text-gray-400" />}
                     </div>
                     <div className="flex-1">
@@ -476,7 +476,7 @@ Seja objetivo, motivador e educativo.`,
                   <Button
                     onClick={analyzeFood}
                     disabled={analyzing}
-                    className="w-full bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 text-white py-5 rounded-xl text-lg font-semibold"
+                    className="w-full bg-gradient-to-r from-red-500 to-rose-600 hover:from-red-600 hover:to-rose-700 text-white py-5 rounded-xl text-lg font-semibold"
                   >
                     {analyzing ? (
                       <span className="flex items-center gap-2">
@@ -560,7 +560,7 @@ Seja objetivo, motivador e educativo.`,
                   <Button
                     onClick={() => completeReceita(selectedReceita)}
                     disabled={completing}
-                    className="w-full bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 text-white py-6 rounded-xl text-lg font-semibold"
+                    className="w-full bg-gradient-to-r from-red-500 to-rose-600 hover:from-red-600 hover:to-rose-700 text-white py-6 rounded-xl text-lg font-semibold"
                   >
                     {completing ? (
                       <motion.div animate={{ rotate: 360 }} transition={{ repeat: Infinity, duration: 1, ease: 'linear' }} className="w-6 h-6 border-2 border-white border-t-transparent rounded-full" />

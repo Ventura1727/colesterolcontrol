@@ -240,7 +240,7 @@ export default function Exercicios() {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-emerald-50 via-white to-teal-50">
+    <div className="min-h-screen bg-gradient-to-br from-red-50 via-white to-rose-50">
       <div className="max-w-lg mx-auto px-4 pt-6 pb-24">
         {/* Header */}
         <div className="flex items-center gap-3 mb-6">
@@ -326,14 +326,14 @@ export default function Exercicios() {
                   disabled={!unlocked}
                   className={`w-full text-left bg-white rounded-2xl p-4 border transition-all ${
                     unlocked 
-                      ? 'border-emerald-100 hover:border-emerald-300 hover:shadow-md cursor-pointer' 
+                      ? 'border-red-100 hover:border-red-300 hover:shadow-md cursor-pointer' 
                       : 'border-gray-200 opacity-60 cursor-not-allowed'
                   }`}
                 >
                   <div className="flex items-center gap-4">
-                    <div className={`w-14 h-14 rounded-xl flex items-center justify-center ${unlocked ? 'bg-emerald-100' : 'bg-gray-100'}`}>
+                    <div className={`w-14 h-14 rounded-xl flex items-center justify-center ${unlocked ? 'bg-red-100' : 'bg-gray-100'}`}>
                       {unlocked ? (
-                        <Dumbbell className="w-7 h-7 text-emerald-600" />
+                        <Dumbbell className="w-7 h-7 text-red-600" />
                       ) : (
                         <Lock className="w-6 h-6 text-gray-400" />
                       )}
@@ -435,10 +435,10 @@ export default function Exercicios() {
                   </div>
 
                   {logForm.tipo && logForm.tempo && (
-                    <div className="bg-emerald-50 rounded-xl p-4 border border-emerald-200">
+                    <div className="bg-red-50 rounded-xl p-4 border border-red-200">
                       <div className="flex items-center justify-between text-sm">
                         <span className="text-gray-700">XP estimado:</span>
-                        <span className="font-bold text-emerald-600 flex items-center gap-1">
+                        <span className="font-bold text-red-600 flex items-center gap-1">
                           <Zap className="w-4 h-4" />
                           +{Math.round((parseInt(logForm.tempo) / 5) * 10 * (logForm.intensidade === 'baixa' ? 0.5 : logForm.intensidade === 'alta' ? 1.5 : 1))} XP
                         </span>
@@ -458,7 +458,7 @@ export default function Exercicios() {
                   </Button>
                   <Button
                     onClick={handleLogWorkout}
-                    className="flex-1 bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 text-white"
+                    className="flex-1 bg-gradient-to-r from-red-500 to-rose-600 hover:from-red-600 hover:to-rose-700 text-white"
                     disabled={!logForm.tipo || !logForm.tempo || isLogging}
                   >
                     {isLogging ? (
@@ -532,7 +532,7 @@ export default function Exercicios() {
                   <Button
                     onClick={() => completeWorkout(selectedTreino)}
                     disabled={completingWorkout}
-                    className="w-full bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 text-white py-6 rounded-xl text-lg font-semibold"
+                    className="w-full bg-gradient-to-r from-red-500 to-rose-600 hover:from-red-600 hover:to-rose-700 text-white py-6 rounded-xl text-lg font-semibold"
                   >
                     {completingWorkout ? (
                       <motion.div animate={{ rotate: 360 }} transition={{ repeat: Infinity, duration: 1, ease: 'linear' }} className="w-6 h-6 border-2 border-white border-t-transparent rounded-full" />

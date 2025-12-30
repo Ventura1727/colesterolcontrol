@@ -61,7 +61,7 @@ export default function Progresso() {
   const currentRankIndex = ranks.indexOf(currentRank);
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-emerald-50 via-white to-teal-50">
+    <div className="min-h-screen bg-gradient-to-br from-red-50 via-white to-rose-50">
       <div className="max-w-lg mx-auto px-4 pt-6 pb-24">
         {/* Header */}
         <div className="flex items-center gap-3 mb-6">
