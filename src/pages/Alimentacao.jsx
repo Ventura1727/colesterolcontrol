@@ -121,7 +121,9 @@ export default function Alimentacao() {
   const [activities, setActivities] = useState([]);
   const [colesterolRecords, setColesterolRecords] = useState([]);
   const [showAnalytics, setShowAnalytics] = useState(false);
+  const [showCameraOptions, setShowCameraOptions] = useState(false);
   const fileInputRef = React.useRef(null);
+  const cameraInputRef = React.useRef(null);
 
   useEffect(() => {
     loadData();
@@ -341,11 +343,18 @@ Seja objetivo, motivador e educativo.`,
             ref={fileInputRef}
             onChange={handlePhotoSelect}
             accept="image/*"
+            className="hidden"
+          />
+          <input
+            type="file"
+            ref={cameraInputRef}
+            onChange={handlePhotoSelect}
+            accept="image/*"
             capture="environment"
             className="hidden"
           />
           <Button
-            onClick={() => fileInputRef.current?.click()}
+            onClick={() => setShowCameraOptions(true)}
             className="bg-gradient-to-r from-blue-500 to-indigo-600 hover:from-blue-600 hover:to-indigo-700 text-white py-5 rounded-xl shadow-md"
           >
             <Camera className="w-5 h-5 mr-2" />
@@ -432,6 +441,69 @@ Seja objetivo, motivador e educativo.`,
             );
           })}
         </div>
+
+        {/* Modal de Opções de Câmera */}
+        <AnimatePresence>
+          {showCameraOptions && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4"
+              onClick={() => setShowCameraOptions(false)}
+            >
+              <motion.div
+                initial={{ scale: 0.9, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                exit={{ scale: 0.9, opacity: 0 }}
+                onClick={(e) => e.stopPropagation()}
+                className="bg-white rounded-3xl w-full max-w-sm p-6"
+              >
+                <h3 className="text-xl font-bold text-gray-900 mb-2 text-center">Como deseja adicionar a foto?</h3>
+                <p className="text-sm text-gray-500 mb-6 text-center">Escolha a origem da imagem da sua refeição</p>
+
+                <div className="space-y-3">
+                  <Button
+                    onClick={() => {
+                      setShowCameraOptions(false);
+                      cameraInputRef.current?.click();
+                    }}
+                    className="w-full bg-gradient-to-r from-red-500 to-rose-600 hover:from-red-600 hover:to-rose-700 text-white py-5 rounded-xl flex items-center justify-center gap-3"
+                  >
+                    <Camera className="w-6 h-6" />
+                    <div className="text-left">
+                      <div className="font-semibold">Tirar Foto Agora</div>
+                      <div className="text-xs opacity-90">Abrir câmera</div>
+                    </div>
+                  </Button>
+
+                  <Button
+                    onClick={() => {
+                      setShowCameraOptions(false);
+                      fileInputRef.current?.click();
+                    }}
+                    variant="outline"
+                    className="w-full border-2 border-gray-200 hover:bg-gray-50 py-5 rounded-xl flex items-center justify-center gap-3"
+                  >
+                    <Upload className="w-6 h-6" />
+                    <div className="text-left">
+                      <div className="font-semibold">Escolher da Galeria</div>
+                      <div className="text-xs text-gray-500">Selecionar foto existente</div>
+                    </div>
+                  </Button>
+                </div>
+
+                <Button
+                  onClick={() => setShowCameraOptions(false)}
+                  variant="ghost"
+                  className="w-full mt-4 text-gray-500"
+                >
+                  Cancelar
+                </Button>
+              </motion.div>
+            </motion.div>
+          )}
+        </AnimatePresence>
 
         {/* Modal de Análise de Foto */}
         <AnimatePresence>
