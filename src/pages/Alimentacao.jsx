@@ -276,6 +276,9 @@ Seja objetivo, motivador e educativo.`,
         setProfile({ ...profile, xp_total: newXp, metas_concluidas: newMetas, rank: newRank });
       }
 
+      // Recarregar dados
+      await loadData();
+
       // Mostrar resultado
       alert(`✅ ${analysis.feedback}\n\n${analysis.saudavel ? `🎉 +20 XP por refeição saudável!\nCalorias: ${analysis.calorias}` : `Calorias: ${analysis.calorias}`}`);
       
