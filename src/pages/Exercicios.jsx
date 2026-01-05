@@ -8,6 +8,7 @@ import { base44 } from '@/api/base44Client';
 import { createPageUrl } from '@/utils';
 import ActivityChart from '@/components/analytics/ActivityChart';
 import AIInsights from '@/components/analytics/AIInsights';
+import WorkoutDashboard from '@/components/workout/WorkoutDashboard';
 
 const treinos = [
   {
@@ -294,6 +295,9 @@ export default function Exercicios() {
             <div className="text-xs text-gray-500">Concluídos</div>
           </div>
         </div>
+
+        {/* Dashboard de Treinos */}
+        <WorkoutDashboard activities={activities.filter(a => a.tipo === 'exercicio')} />
 
         {/* Botões de Ação */}
         <div className="grid grid-cols-2 gap-3 mb-6">
