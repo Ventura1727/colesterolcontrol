@@ -180,7 +180,7 @@ export default function Exercicios() {
     
     await base44.entities.ActivityLog.create({
       tipo: 'exercicio',
-      descricao: `Completou: ${treino.name}`,
+      descricao: `Completou: ${treino.name} - ${treino.duration} min`,
       xp_ganho: treino.xp,
       data: new Date().toISOString().split('T')[0],
       treino_id: treino.id
