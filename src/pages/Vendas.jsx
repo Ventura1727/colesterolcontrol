@@ -35,7 +35,6 @@ const plans = [
     name: 'Plano Mensal',
     duration: '1 mês',
     price: 24.90,
-    pricePixDiscount: 21.00,
     totalSavings: 0,
     recommended: false,
     color: 'from-gray-500 to-gray-600'
@@ -45,7 +44,6 @@ const plans = [
     name: 'Plano Trimestral',
     duration: '3 meses',
     price: 59.90,
-    pricePixDiscount: 50.00,
     totalSavings: 24.70,
     recommended: true,
     color: 'from-red-500 to-rose-600'
@@ -55,7 +53,6 @@ const plans = [
     name: 'Plano Anual',
     duration: '12 meses',
     price: 199.90,
-    pricePixDiscount: 170.00,
     totalSavings: 128.80,
     recommended: false,
     color: 'from-amber-500 to-orange-600'
@@ -202,7 +199,7 @@ export default function Vendas() {
           className="mb-8"
         >
           <h2 className="text-2xl font-bold text-center text-gray-900 mb-2">Escolha Seu Plano Premium</h2>
-          <p className="text-center text-gray-600 mb-6">Descontos progressivos + economia extra no PIX</p>
+          <p className="text-center text-gray-600 mb-6">Quanto mais tempo, maior a economia!</p>
 
           <div className="space-y-3">
             {plans.map((plan) => (
@@ -228,12 +225,10 @@ export default function Vendas() {
                     <p className="text-sm text-gray-500 mb-2">{plan.duration} de acesso completo</p>
                     
                     <div className="flex items-baseline gap-2 mb-1">
-                      <span className="text-xs text-gray-400 line-through">R$ {plan.price.toFixed(2)}</span>
-                      <span className="text-2xl font-bold text-gray-900">R$ {plan.pricePixDiscount.toFixed(2)}</span>
+                      <span className="text-2xl font-bold text-gray-900">R$ {plan.price.toFixed(2)}</span>
                     </div>
-                    <p className="text-xs text-green-600 font-medium">💰 Economia de R$ {(plan.price - plan.pricePixDiscount).toFixed(2)} no PIX</p>
                     {plan.totalSavings > 0 && (
-                      <p className="text-xs text-red-600 font-medium mt-1">🔥 {plan.totalSavings.toFixed(2)} de desconto vs planos mensais</p>
+                      <p className="text-xs text-red-600 font-medium">🔥 Economia de R$ {plan.totalSavings.toFixed(2)} vs planos mensais</p>
                     )}
                   </div>
 
@@ -319,8 +314,7 @@ export default function Vendas() {
               <p className="font-bold text-gray-900">{currentPlan.name}</p>
             </div>
             <div className="text-right">
-              <p className="text-sm text-gray-500 line-through">R$ {currentPlan.price.toFixed(2)}</p>
-              <p className="text-2xl font-bold text-red-600">R$ {currentPlan.pricePixDiscount.toFixed(2)}</p>
+              <p className="text-2xl font-bold text-red-600">R$ {currentPlan.price.toFixed(2)}</p>
             </div>
           </div>
           <Button
@@ -331,7 +325,7 @@ export default function Vendas() {
             <Zap className="w-5 h-5 ml-2" />
           </Button>
           <p className="text-xs text-center text-gray-500 mt-3">
-            🔒 Pagamento 100% seguro • PIX ou Cartão
+            🔒 Pagamento 100% seguro
           </p>
         </motion.div>
       </div>
