@@ -6,6 +6,7 @@ import { base44 } from '@/api/base44Client';
 import { createPageUrl } from '@/utils';
 import CaloriesChart from '@/components/analytics/CaloriesChart';
 import AIInsights from '@/components/analytics/AIInsights';
+import CaloriesDashboard from '@/components/nutrition/CaloriesDashboard';
 
 const receitas = [
   {
@@ -335,6 +336,12 @@ Seja objetivo, motivador e educativo.`,
             <div className="text-xs text-gray-500">Liberadas</div>
           </div>
         </div>
+
+        {/* Dashboard de Calorias */}
+        <CaloriesDashboard 
+          mealLogs={mealLogs} 
+          basalRate={profile?.basal_hidratacao || 2000}
+        />
 
         {/* Botões de Ação */}
         <div className="grid grid-cols-2 gap-3 mb-6">
