@@ -178,9 +178,12 @@ export default function Exercicios() {
   const completeWorkout = async (treino) => {
     setCompletingWorkout(true);
     
+    // Extrair número de minutos
+    const minutos = parseInt(treino.duration) || 30;
+    
     await base44.entities.ActivityLog.create({
       tipo: 'exercicio',
-      descricao: `Completou: ${treino.name} - ${treino.duration} min`,
+      descricao: `Completou: ${treino.name} - ${minutos} min`,
       xp_ganho: treino.xp,
       data: new Date().toISOString().split('T')[0],
       treino_id: treino.id
