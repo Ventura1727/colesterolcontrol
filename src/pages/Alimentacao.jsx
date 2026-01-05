@@ -15,6 +15,7 @@ const receitas = [
     desc: 'Café da manhã anti-colesterol',
     time: 10,
     xp: 15,
+    calories: 280,
     benefit: 'Reduz LDL',
     rank_required: 'Iniciante',
     image: '🥣',
@@ -27,6 +28,7 @@ const receitas = [
     desc: 'Almoço rico em Ômega-3',
     time: 25,
     xp: 25,
+    calories: 420,
     benefit: 'Aumenta HDL',
     rank_required: 'Iniciante',
     image: '🥗',
@@ -39,6 +41,7 @@ const receitas = [
     desc: 'Jantar leve e nutritivo',
     time: 30,
     xp: 20,
+    calories: 180,
     benefit: 'Desintoxica',
     rank_required: 'Bronze',
     image: '🍲',
@@ -51,6 +54,7 @@ const receitas = [
     desc: 'Lanche poderoso',
     time: 5,
     xp: 15,
+    calories: 150,
     benefit: 'Fibras e energia',
     rank_required: 'Bronze',
     image: '🥤',
@@ -63,6 +67,7 @@ const receitas = [
     desc: 'Proteína saudável',
     time: 35,
     xp: 35,
+    calories: 320,
     benefit: 'Ômega-3 + Proteína',
     rank_required: 'Prata',
     image: '🐟',
@@ -75,6 +80,7 @@ const receitas = [
     desc: 'Superalimento completo',
     time: 25,
     xp: 40,
+    calories: 480,
     benefit: 'Proteína vegetal',
     rank_required: 'Ouro',
     image: '🥙',
@@ -87,6 +93,7 @@ const receitas = [
     desc: 'Refeição completa',
     time: 15,
     xp: 30,
+    calories: 380,
     benefit: 'Fibras + Proteína',
     rank_required: 'Diamante',
     image: '🌯',
@@ -99,6 +106,7 @@ const receitas = [
     desc: 'Receita gourmet saudável',
     time: 45,
     xp: 60,
+    calories: 520,
     benefit: 'Antioxidantes',
     rank_required: 'Mestre',
     image: '🍚',
@@ -156,6 +164,16 @@ export default function Alimentacao() {
   const completeReceita = async (receita) => {
     setCompleting(true);
     
+    // Registrar no MealLog com calorias
+    await base44.entities.MealLog.create({
+      description: receita.name,
+      calories: receita.calories,
+      is_healthy: true,
+      ai_feedback: `Receita saudável: ${receita.benefit}`,
+      date: new Date().toISOString()
+    });
+
+    // Registrar atividade
     await base44.entities.ActivityLog.create({
       tipo: 'alimentacao',
       descricao: `Preparou: ${receita.name}`,
@@ -180,6 +198,10 @@ export default function Alimentacao() {
     });
 
     setProfile({ ...profile, xp_total: newXp, metas_concluidas: newMetas, rank: newRank });
+    
+    // Recarregar dados para atualizar dashboard
+    await loadData();
+    
     setCompleting(false);
     setSelectedReceita(null);
   };
@@ -427,11 +449,11 @@ Seja objetivo, motivador e educativo.`,
                         <span className="flex items-center gap-1 text-gray-400">
                           <Clock className="w-3 h-3" /> {receita.time} min
                         </span>
+                        <span className="flex items-center gap-1 text-orange-500">
+                          <Flame className="w-3 h-3" /> {receita.calories} kcal
+                        </span>
                         <span className="flex items-center gap-1 text-yellow-500">
                           <Zap className="w-3 h-3" /> +{receita.xp} XP
-                        </span>
-                        <span className="flex items-center gap-1 text-red-400">
-                          <Heart className="w-3 h-3" /> {receita.benefit}
                         </span>
                       </div>
                     </div>
@@ -601,6 +623,9 @@ Seja objetivo, motivador e educativo.`,
                     <div className="flex items-center justify-center gap-4 text-sm text-gray-500 mt-2">
                       <span className="flex items-center gap-1">
                         <Clock className="w-4 h-4" /> {selectedReceita.time} min
+                      </span>
+                      <span className="flex items-center gap-1 text-orange-500">
+                        <Flame className="w-4 h-4" /> {selectedReceita.calories} kcal
                       </span>
                       <span className="flex items-center gap-1 text-yellow-500">
                         <Zap className="w-4 h-4" /> +{selectedReceita.xp} XP
