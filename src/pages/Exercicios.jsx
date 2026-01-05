@@ -18,6 +18,8 @@ const treinos = [
     xp: 20,
     calories: 80,
     rank_required: 'Iniciante',
+    objetivos: ['Reduzir colesterol', 'Melhorar hábitos'],
+    beneficio: 'Saúde cardiovascular',
     exercises: [
       { name: 'Aquecimento', duration: '2 min', desc: 'Alongamentos básicos' },
       { name: 'Caminhada moderada', duration: '10 min', desc: 'Ritmo confortável' },
@@ -32,6 +34,8 @@ const treinos = [
     xp: 35,
     calories: 150,
     rank_required: 'Bronze',
+    objetivos: ['Reduzir colesterol', 'Perder peso', 'Melhorar hábitos'],
+    beneficio: 'Queima calorias e melhora circulação',
     exercises: [
       { name: 'Polichinelos', duration: '3 min', desc: '3 séries de 1 min' },
       { name: 'Marcha no lugar', duration: '5 min', desc: 'Joelhos altos' },
@@ -48,6 +52,8 @@ const treinos = [
     xp: 50,
     calories: 200,
     rank_required: 'Prata',
+    objetivos: ['Perder peso'],
+    beneficio: 'Alta queima calórica',
     exercises: [
       { name: 'Aquecimento', duration: '2 min', desc: 'Preparar o corpo' },
       { name: 'Burpees modificados', duration: '30s trabalho / 30s descanso x4', desc: 'Sem pulo' },
@@ -63,6 +69,8 @@ const treinos = [
     xp: 60,
     calories: 180,
     rank_required: 'Ouro',
+    objetivos: ['Perder peso', 'Melhorar hábitos'],
+    beneficio: 'Aumenta metabolismo',
     exercises: [
       { name: 'Aquecimento dinâmico', duration: '3 min', desc: 'Círculos e movimentos' },
       { name: 'Flexão de braço', duration: '3 séries de 10', desc: 'Pode ser na parede' },
@@ -80,6 +88,8 @@ const treinos = [
     xp: 80,
     calories: 350,
     rank_required: 'Diamante',
+    objetivos: ['Perder peso', 'Reduzir colesterol'],
+    beneficio: 'Perda acelerada de peso',
     exercises: [
       { name: 'Aquecimento progressivo', duration: '5 min', desc: 'Aumentar intensidade' },
       { name: 'Corrida intervalada', duration: '15 min', desc: '1 min forte / 1 min leve' },
@@ -95,6 +105,8 @@ const treinos = [
     xp: 150,
     calories: 500,
     rank_required: 'Mestre',
+    objetivos: ['Perder peso', 'Reduzir colesterol', 'Melhorar hábitos'],
+    beneficio: 'Transformação completa',
     exercises: [
       { name: 'Aquecimento completo', duration: '7 min', desc: 'Preparação total' },
       { name: 'Circuito de força', duration: '15 min', desc: '5 exercícios, 3 rounds' },
@@ -148,6 +160,19 @@ export default function Exercicios() {
   const isUnlocked = (treino) => {
     return true; // Todas as atividades estão liberadas
   };
+
+  // Ordenar treinos por relevância ao objetivo do usuário
+  const treinosOrdenados = [...treinos].sort((a, b) => {
+    const objetivoUsuario = profile?.objetivo;
+    if (!objetivoUsuario) return 0;
+    
+    const aMatch = a.objetivos?.includes(objetivoUsuario);
+    const bMatch = b.objetivos?.includes(objetivoUsuario);
+    
+    if (aMatch && !bMatch) return -1;
+    if (!aMatch && bMatch) return 1;
+    return 0;
+  });
 
   const completeWorkout = async (treino) => {
     setCompletingWorkout(true);
@@ -308,10 +333,18 @@ export default function Exercicios() {
         )}
 
         {/* Lista de Treinos */}
-        <h2 className="font-semibold text-gray-900 mb-4">Treinos Guiados</h2>
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="font-semibold text-gray-900">Treinos Guiados</h2>
+          {profile?.objetivo && (
+            <span className="text-xs text-red-600 bg-red-50 px-2 py-1 rounded-full">
+              Para: {profile.objetivo}
+            </span>
+          )}
+        </div>
         <div className="space-y-3">
-          {treinos.map((treino, idx) => {
+          {treinosOrdenados.map((treino, idx) => {
             const unlocked = isUnlocked(treino);
+            const isRecomendado = profile?.objetivo && treino.objetivos?.includes(profile.objetivo);
             return (
               <motion.div
                 key={treino.id}
@@ -322,23 +355,32 @@ export default function Exercicios() {
                 <button
                   onClick={() => unlocked && setSelectedTreino(treino)}
                   disabled={!unlocked}
-                  className={`w-full text-left bg-white rounded-2xl p-4 border transition-all ${
-                    unlocked 
-                      ? 'border-red-100 hover:border-red-300 hover:shadow-md cursor-pointer' 
-                      : 'border-gray-200 opacity-60 cursor-not-allowed'
+                  className={`w-full text-left bg-white rounded-2xl p-4 border-2 transition-all relative ${
+                    isRecomendado 
+                      ? 'border-red-300 shadow-md hover:shadow-lg cursor-pointer' 
+                      : 'border-gray-100 hover:border-red-200 hover:shadow-md cursor-pointer'
                   }`}
                 >
+                  {isRecomendado && (
+                    <div className="absolute -top-2 -right-2 bg-gradient-to-r from-red-500 to-rose-600 text-white px-2 py-0.5 rounded-full text-[10px] font-bold flex items-center gap-1">
+                      <Target className="w-3 h-3" />
+                      IDEAL PARA VOCÊ
+                    </div>
+                  )}
                   <div className="flex items-center gap-4">
-                    <div className={`w-14 h-14 rounded-xl flex items-center justify-center ${unlocked ? 'bg-red-100' : 'bg-gray-100'}`}>
-                      {unlocked ? (
-                        <Dumbbell className="w-7 h-7 text-red-600" />
-                      ) : (
-                        <Lock className="w-6 h-6 text-gray-400" />
-                      )}
+                    <div className={`w-14 h-14 rounded-xl flex items-center justify-center ${
+                      isRecomendado ? 'bg-gradient-to-br from-red-500 to-rose-600' : 'bg-red-100'
+                    }`}>
+                      <Dumbbell className={`w-7 h-7 ${isRecomendado ? 'text-white' : 'text-red-600'}`} />
                     </div>
                     <div className="flex-1">
                       <div className="font-semibold text-gray-900">{treino.name}</div>
                       <div className="text-sm text-gray-500">{treino.desc}</div>
+                      {treino.beneficio && (
+                        <div className="text-xs text-red-600 font-medium mt-1">
+                          💪 {treino.beneficio}
+                        </div>
+                      )}
                       <div className="flex items-center gap-3 mt-2 text-xs">
                         <span className="flex items-center gap-1 text-gray-400">
                           <Clock className="w-3 h-3" /> {treino.duration} min
