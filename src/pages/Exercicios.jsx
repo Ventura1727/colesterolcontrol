@@ -206,7 +206,7 @@ export default function Exercicios() {
       dias_consecutivos: (profile.dias_consecutivos || 0) + 1
     });
 
-    setProfile({ ...profile, xp_total: newXp, metas_concluidas: newMetas, rank: newRank });
+    await loadData(); // Atualizar dados para refletir no dashboard
     setCompletingWorkout(false);
     setSelectedTreino(null);
   };
