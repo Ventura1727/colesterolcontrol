@@ -5,32 +5,28 @@ import { format, startOfWeek, endOfWeek, eachDayOfInterval } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 
 export default function WorkoutDashboard({ activities }) {
-  // Meta semanal de minutos de treino
-  const metaSemanal = 150; // OMS recomenda 150 min/semana de atividade moderada
+  // Meta diária de minutos de treino
+  const metaDiaria = 30; // OMS recomenda ~21 min/dia em média (150 min/semana)
   
-  // Calcular semana atual
+  // Calcular dia atual
   const hoje = new Date();
-  const inicioSemana = startOfWeek(hoje, { weekStartsOn: 0 });
-  const fimSemana = endOfWeek(hoje, { weekStartsOn: 0 });
+  const hojeDateStr = hoje.toISOString().split('T')[0];
   
-  // Filtrar treinos da semana atual
-  const treinosSemana = activities?.filter(a => {
-    const dataAtividade = new Date(a.data);
-    return dataAtividade >= inicioSemana && dataAtividade <= fimSemana;
-  }) || [];
+  // Filtrar treinos de hoje
+  const treinosHoje = activities?.filter(a => a.data === hojeDateStr) || [];
 
-  // Calcular minutos totais da semana
-  const minutosSemanais = treinosSemana.reduce((total, treino) => {
+  // Calcular minutos totais de hoje
+  const minutosDiarios = treinosHoje.reduce((total, treino) => {
     // Extrair minutos da descrição se existir, senão usar 30 min padrão
     const match = treino.descricao?.match(/(\d+)\s*min/);
     const minutos = match ? parseInt(match[1]) : 30;
     return total + minutos;
   }, 0);
 
-  const percentualMeta = Math.min((minutosSemanais / metaSemanal) * 100, 100);
-  const minutosRestantes = Math.max(metaSemanal - minutosSemanais, 0);
+  const percentualMeta = Math.min((minutosDiarios / metaDiaria) * 100, 100);
+  const minutosRestantes = Math.max(metaDiaria - minutosDiarios, 0);
 
-  // Calcular treinos hoje
+  // Calcular histórico de 7 dias
   const hoje7dias = [];
   for (let i = 6; i >= 0; i--) {
     const date = new Date();
@@ -52,9 +48,8 @@ export default function WorkoutDashboard({ activities }) {
     });
   }
 
-  const maxMinutos = Math.max(...hoje7dias.map(d => d.minutos), 40);
-  const hojeDateStr = new Date().toISOString().split('T')[0];
-  const treinosHoje = hoje7dias.find(d => d.date === hojeDateStr);
+  const maxMinutos = Math.max(...hoje7dias.map(d => d.minutos), metaDiaria);
+  const infoHoje = hoje7dias.find(d => d.date === hojeDateStr);
 
   return (
     <motion.div
@@ -66,11 +61,11 @@ export default function WorkoutDashboard({ activities }) {
       <div className="flex items-center justify-between mb-5">
         <div className="flex items-center gap-2">
           <Dumbbell className="w-5 h-5 text-blue-500" />
-          <h3 className="font-semibold text-gray-900">Meta Semanal de Treino</h3>
+          <h3 className="font-semibold text-gray-900">Meta Diária de Treino</h3>
         </div>
         <div className="text-xs text-gray-500">
           <Calendar className="w-4 h-4 inline mr-1" />
-          Semana atual
+          Hoje
         </div>
       </div>
 
@@ -78,8 +73,8 @@ export default function WorkoutDashboard({ activities }) {
       <div className="bg-gradient-to-br from-blue-50 to-indigo-50 rounded-xl p-5 mb-5">
         <div className="flex items-end justify-between mb-3">
           <div>
-            <div className="text-4xl font-bold text-gray-900">{minutosSemanais}</div>
-            <div className="text-sm text-gray-600">de {metaSemanal} minutos</div>
+            <div className="text-4xl font-bold text-gray-900">{minutosDiarios}</div>
+            <div className="text-sm text-gray-600">de {metaDiaria} minutos</div>
           </div>
           <div className="text-right">
             <div className="text-2xl font-bold text-blue-600">{minutosRestantes}</div>
@@ -111,19 +106,19 @@ export default function WorkoutDashboard({ activities }) {
         </div>
       </div>
 
-      {/* Treinos de Hoje */}
-      {treinosHoje && treinosHoje.sessoes > 0 && (
+      {/* Resumo de Hoje */}
+      {infoHoje && infoHoje.sessoes > 0 && (
         <div className="mb-5">
-          <h4 className="text-sm font-semibold text-gray-700 mb-3">Treinos de Hoje</h4>
+          <h4 className="text-sm font-semibold text-gray-700 mb-3">Sessões Hoje</h4>
           <div className="bg-gradient-to-r from-blue-500 to-indigo-600 rounded-xl p-4 text-white">
             <div className="flex items-center justify-between">
               <div>
                 <div className="text-xs opacity-80 mb-1">Total hoje</div>
-                <div className="text-2xl font-bold">{treinosHoje.minutos} min</div>
+                <div className="text-2xl font-bold">{infoHoje.minutos} min</div>
               </div>
               <div className="text-right">
                 <div className="text-xs opacity-80 mb-1">Sessões</div>
-                <div className="text-2xl font-bold">{treinosHoje.sessoes}</div>
+                <div className="text-2xl font-bold">{infoHoje.sessoes}</div>
               </div>
             </div>
           </div>
@@ -172,15 +167,15 @@ export default function WorkoutDashboard({ activities }) {
 
         <div className="flex items-center justify-center gap-1 mt-3 text-xs text-gray-500">
           <Target className="w-3 h-3" />
-          Meta: {metaSemanal} min/semana (OMS)
+          Meta: {metaDiaria} min/dia (OMS)
         </div>
       </div>
 
       {/* Dica */}
-      {percentualMeta < 50 && treinosSemana.length < 3 && (
+      {percentualMeta < 50 && treinosHoje.length === 0 && (
         <div className="mt-4 bg-amber-50 rounded-lg p-3 border border-amber-200">
           <p className="text-xs text-amber-800">
-            💡 <strong>Dica:</strong> A OMS recomenda pelo menos 150 minutos de atividade física por semana. Que tal adicionar mais {Math.ceil(minutosRestantes / 30)} treinos de 30 min?
+            💡 <strong>Dica:</strong> A OMS recomenda pelo menos 30 minutos de atividade física por dia. Que tal começar com uma caminhada leve?
           </p>
         </div>
       )}
