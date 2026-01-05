@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { base44 } from '@/api/base44Client';
 import { createPageUrl } from '@/utils';
+import HydrationDashboard from '@/components/hydration/HydrationDashboard';
 
 export default function Hidratacao() {
   const [profile, setProfile] = useState(null);
@@ -15,6 +16,7 @@ export default function Hidratacao() {
     basal: ''
   });
   const [waterNeeded, setWaterNeeded] = useState(null);
+  const [waterLogs, setWaterLogs] = useState([]);
 
   useEffect(() => {
     loadData();
@@ -22,7 +24,10 @@ export default function Hidratacao() {
 
   const loadData = async () => {
     const user = await base44.auth.me();
-    const profiles = await base44.entities.UserProfile.filter({ created_by: user.email });
+    const [profiles, logs] = await Promise.all([
+      base44.entities.UserProfile.filter({ created_by: user.email }),
+      base44.entities.WaterLog.list('-created_date', 100)
+    ]);
     
     if (profiles.length > 0) {
       setProfile(profiles[0]);
@@ -36,6 +41,7 @@ export default function Hidratacao() {
         calculateWater(profiles[0].peso_hidratacao, profiles[0].basal_hidratacao);
       }
     }
+    setWaterLogs(logs);
     setIsLoading(false);
   };
 
@@ -170,6 +176,22 @@ export default function Hidratacao() {
             <div className="text-5xl font-bold mb-2">{waterNeeded}L</div>
             <p className="text-blue-100">Meta diária de água recomendada</p>
             <p className="text-sm text-blue-100 mt-2">Aproximadamente {Math.ceil(waterNeeded / 0.25)} copos de 250ml</p>
+          </motion.div>
+        )}
+
+        {/* Dashboard de Hidratação */}
+        {waterNeeded && (
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.1 }}
+            className="bg-white rounded-2xl p-6 mb-6 border border-gray-100 shadow-sm"
+          >
+            <HydrationDashboard 
+              waterLogs={waterLogs} 
+              metaDiaria={waterNeeded}
+              onLogAdded={loadData}
+            />
           </motion.div>
         )}
 
