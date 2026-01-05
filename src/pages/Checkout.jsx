@@ -7,9 +7,9 @@ import { createPageUrl } from '@/utils';
 import { base44 } from '@/api/base44Client';
 
 const plans = {
-  mensal: { name: 'Mensal', price: 24.90, pricePix: 21.00, duration: 30 },
-  trimestral: { name: 'Trimestral', price: 59.90, pricePix: 50.00, duration: 90 },
-  anual: { name: 'Anual', price: 199.90, pricePix: 170.00, duration: 365 }
+  mensal: { name: 'Mensal', price: 24.90, duration: 30 },
+  trimestral: { name: 'Trimestral', price: 59.90, duration: 90 },
+  anual: { name: 'Anual', price: 199.90, duration: 365 }
 };
 
 export default function Checkout() {
@@ -101,7 +101,7 @@ export default function Checkout() {
     );
   }
 
-  const currentPrice = paymentMethod === 'pix' ? selectedPlan.pricePix : selectedPlan.price;
+  const currentPrice = selectedPlan.price;
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-red-50 via-white to-rose-50">
@@ -147,7 +147,7 @@ export default function Checkout() {
           >
             <h2 className="text-lg font-semibold text-gray-900 mb-4">Escolha a Forma de Pagamento</h2>
 
-            {/* PIX - Recomendado */}
+            {/* PIX */}
             <button
               onClick={() => {
                 setPaymentMethod('pix');
@@ -155,9 +155,6 @@ export default function Checkout() {
               }}
               className="w-full bg-gradient-to-br from-green-500 to-emerald-600 rounded-2xl p-6 text-white text-left relative overflow-hidden group hover:shadow-lg transition-shadow"
             >
-              <div className="absolute top-3 right-3 bg-yellow-400 text-yellow-900 px-3 py-1 rounded-full text-xs font-bold">
-                💰 DESCONTO
-              </div>
               <div className="flex items-center gap-4 mb-3">
                 <div className="w-14 h-14 bg-white/20 backdrop-blur-sm rounded-xl flex items-center justify-center">
                   <Smartphone className="w-7 h-7" />
@@ -167,12 +164,9 @@ export default function Checkout() {
                   <p className="text-sm text-green-100">Aprovação instantânea</p>
                 </div>
               </div>
-              <div className="flex items-baseline gap-2 mb-2">
-                <span className="text-sm line-through opacity-75">R$ {selectedPlan.price.toFixed(2)}</span>
-                <span className="text-3xl font-bold">R$ {selectedPlan.pricePix.toFixed(2)}</span>
-              </div>
+              <div className="text-3xl font-bold mb-2">R$ {selectedPlan.price.toFixed(2)}</div>
               <p className="text-sm text-green-100">
-                ✓ Economia de R$ {(selectedPlan.price - selectedPlan.pricePix).toFixed(2)} • Acesso imediato
+                ✓ Acesso imediato após pagamento
               </p>
             </button>
 
@@ -277,7 +271,7 @@ export default function Checkout() {
                 <div className="bg-gradient-to-br from-green-500 to-emerald-600 rounded-2xl p-6 text-white text-center">
                   <Smartphone className="w-16 h-16 mx-auto mb-3" />
                   <h2 className="text-2xl font-bold mb-2">Pagamento via PIX</h2>
-                  <div className="text-4xl font-bold mb-2">R$ {selectedPlan.pricePix.toFixed(2)}</div>
+                  <div className="text-4xl font-bold mb-2">R$ {selectedPlan.price.toFixed(2)}</div>
                   <p className="text-green-100 text-sm">Após clicar em "Gerar QR Code", você terá 15 minutos para pagar</p>
                 </div>
 
@@ -369,17 +363,7 @@ export default function Checkout() {
             <div className="bg-gray-50 rounded-2xl p-5 border border-gray-200">
               <h3 className="font-semibold text-gray-900 mb-3">Resumo da Compra</h3>
               <div className="space-y-2 text-sm">
-                <div className="flex justify-between">
-                  <span className="text-gray-600">Plano {selectedPlan.name}</span>
-                  <span className="font-medium">R$ {selectedPlan.price.toFixed(2)}</span>
-                </div>
-                {paymentMethod === 'pix' && (
-                  <div className="flex justify-between text-green-600">
-                    <span>Desconto PIX</span>
-                    <span className="font-medium">- R$ {(selectedPlan.price - selectedPlan.pricePix).toFixed(2)}</span>
-                  </div>
-                )}
-                <div className="border-t border-gray-300 pt-2 flex justify-between text-lg font-bold">
+                <div className="flex justify-between text-lg font-bold">
                   <span>Total</span>
                   <span className="text-red-600">R$ {currentPrice.toFixed(2)}</span>
                 </div>
