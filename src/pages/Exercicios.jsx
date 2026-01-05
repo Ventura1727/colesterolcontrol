@@ -130,7 +130,8 @@ export default function Exercicios() {
   const [logForm, setLogForm] = useState({
     tipo: '',
     intensidade: 'media',
-    tempo: ''
+    tempo: '',
+    data: new Date().toISOString().split('T')[0]
   });
   const [isLogging, setIsLogging] = useState(false);
   const [showAnalytics, setShowAnalytics] = useState(false);
@@ -212,7 +213,7 @@ export default function Exercicios() {
   };
 
   const handleLogWorkout = async () => {
-    if (!logForm.tipo || !logForm.tempo) return;
+    if (!logForm.tipo || !logForm.tempo || !logForm.data) return;
     
     setIsLogging(true);
     
@@ -231,7 +232,7 @@ export default function Exercicios() {
       tipo: 'exercicio',
       descricao: `${logForm.tipo} - Intensidade ${logForm.intensidade} - ${tempoMinutos} min`,
       xp_ganho: xpGanho,
-      data: new Date().toISOString().split('T')[0]
+      data: logForm.data
     });
 
     const newXp = (profile.xp_total || 0) + xpGanho;
@@ -253,7 +254,7 @@ export default function Exercicios() {
     setProfile({ ...profile, xp_total: newXp, metas_concluidas: newMetas, rank: newRank });
     setIsLogging(false);
     setShowLogModal(false);
-    setLogForm({ tipo: '', intensidade: 'media', tempo: '' });
+    setLogForm({ tipo: '', intensidade: 'media', tempo: '', data: new Date().toISOString().split('T')[0] });
     await loadData();
     alert(`🎉 Treino registrado! +${xpGanho} XP ganhos!`);
   };
@@ -475,6 +476,17 @@ export default function Exercicios() {
                     />
                   </div>
 
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Data do Treino</label>
+                    <Input
+                      type="date"
+                      value={logForm.data}
+                      onChange={(e) => setLogForm({...logForm, data: e.target.value})}
+                      max={new Date().toISOString().split('T')[0]}
+                      className="w-full"
+                    />
+                  </div>
+
                   {logForm.tipo && logForm.tempo && (
                     <div className="bg-red-50 rounded-xl p-4 border border-red-200">
                       <div className="flex items-center justify-between text-sm">
@@ -500,7 +512,7 @@ export default function Exercicios() {
                   <Button
                     onClick={handleLogWorkout}
                     className="flex-1 bg-gradient-to-r from-red-500 to-rose-600 hover:from-red-600 hover:to-rose-700 text-white"
-                    disabled={!logForm.tipo || !logForm.tempo || isLogging}
+                    disabled={!logForm.tipo || !logForm.tempo || !logForm.data || isLogging}
                   >
                     {isLogging ? (
                       <motion.div animate={{ rotate: 360 }} transition={{ repeat: Infinity, duration: 1, ease: 'linear' }} className="w-5 h-5 border-2 border-white border-t-transparent rounded-full" />
