@@ -6,7 +6,7 @@ import { Input } from '@/components/ui/input';
 import { createPageUrl } from '@/utils';
 
 export default function Checkout() {
-  const [step, setStep] = useState(1); // 1 = método, 2 = dados pessoais, 3 = pagamento
+  const [step, setStep] = useState(1);
   const [selectedPlan, setSelectedPlan] = useState(null);
 
   useEffect(() => {
@@ -18,8 +18,9 @@ export default function Checkout() {
     }
   }, []);
 
-  // ... resto do código
+  // ... o restante do seu código continua aqui
 }
+
 const plans = {
   mensal: { name: 'Mensal', price: 24.90, duration: 30 },
   trimestral: { name: 'Trimestral', price: 59.90, duration: 90 },
