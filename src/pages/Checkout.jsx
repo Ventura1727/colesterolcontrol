@@ -4,7 +4,6 @@ import { ArrowLeft, CreditCard, Smartphone, Lock, Check, AlertCircle } from 'luc
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { createPageUrl } from '@/utils';
-import { base44 } from '@/api/base44Client';
 
 const plans = {
   mensal: { name: 'Mensal', price: 24.90, duration: 30 },
