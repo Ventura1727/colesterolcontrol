@@ -8,7 +8,15 @@ import { createPageUrl } from '@/utils';
 export default function Checkout() {
   const [step, setStep] = useState(1);
   const [selectedPlan, setSelectedPlan] = useState(null);
-
+const handleCheckout = async () => {
+  try {
+    const returnUrl = createPageUrl('FinalizarCompra');
+    window.location.href = `/login?returnUrl=${encodeURIComponent(returnUrl)}`;
+  } catch (error) {
+    console.error('Erro ao processar pagamento:', error);
+    alert('Erro ao processar pagamento. Tente novamente.');
+  }
+};
   useEffect(() => {
     const returnUrl = createPageUrl('FinalizarCompra');
     const userIsAuthenticated = false; // placeholder
