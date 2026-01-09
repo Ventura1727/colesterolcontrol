@@ -5,8 +5,16 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { createPageUrl } from '@/utils';
 
-const returnUrl = createPageUrl('FinalizarCompra');
-window.location.href = `/login?returnUrl=${encodeURIComponent(returnUrl)}`;
+export default function Checkout() {
+  useEffect(() => {
+    const returnUrl = createPageUrl('FinalizarCompra');
+    // TODO: aqui você pode verificar autenticação com Supabase
+    const userIsAuthenticated = false; // placeholder
+
+    if (!userIsAuthenticated) {
+      window.location.href = `/login?returnUrl=${encodeURIComponent(returnUrl)}`;
+    }
+  }, []);
 
 const plans = {
   mensal: { name: 'Mensal', price: 24.90, duration: 30 },
