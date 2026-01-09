@@ -3,7 +3,6 @@ import { motion } from 'framer-motion';
 import { CheckCircle2, Loader2, AlertCircle, Zap } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { createPageUrl } from '@/utils';
-import { base44 } from '@/api/base44Client';
 
 export default function FinalizarCompra() {
   const [status, setStatus] = useState('processing'); // processing, success, error
