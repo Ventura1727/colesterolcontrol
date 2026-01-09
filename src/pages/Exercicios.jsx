@@ -4,7 +4,6 @@ import { ArrowLeft, Dumbbell, Lock, Check, Zap, Trophy, Play, Clock, Flame, Star
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
-import { base44 } from '@/api/base44Client';
 import { createPageUrl } from '@/utils';
 import ActivityChart from '@/components/analytics/ActivityChart';
 import AIInsights from '@/components/analytics/AIInsights';
