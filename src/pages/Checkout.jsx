@@ -5,6 +5,9 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { createPageUrl } from '@/utils';
 
+const returnUrl = createPageUrl('FinalizarCompra');
+window.location.href = `/login?returnUrl=${encodeURIComponent(returnUrl)}`;
+
 const plans = {
   mensal: { name: 'Mensal', price: 24.90, duration: 30 },
   trimestral: { name: 'Trimestral', price: 59.90, duration: 90 },
