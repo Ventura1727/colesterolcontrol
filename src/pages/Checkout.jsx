@@ -6,9 +6,11 @@ import { Input } from '@/components/ui/input';
 import { createPageUrl } from '@/utils';
 
 export default function Checkout() {
+  const [step, setStep] = useState(1); // 1 = método, 2 = dados pessoais, 3 = pagamento
+  const [selectedPlan, setSelectedPlan] = useState(null);
+
   useEffect(() => {
     const returnUrl = createPageUrl('FinalizarCompra');
-    // TODO: aqui você pode verificar autenticação com Supabase
     const userIsAuthenticated = false; // placeholder
 
     if (!userIsAuthenticated) {
@@ -16,6 +18,8 @@ export default function Checkout() {
     }
   }, []);
 
+  // ... resto do código
+}
 const plans = {
   mensal: { name: 'Mensal', price: 24.90, duration: 30 },
   trimestral: { name: 'Trimestral', price: 59.90, duration: 90 },
