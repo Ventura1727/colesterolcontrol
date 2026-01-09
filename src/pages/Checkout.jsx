@@ -52,16 +52,25 @@ export default function Checkout() {
     setIsProcessing(true);
     
     try {
-      // Verificar se usuário está autenticado
-      let user;
-      try {
-        user = await base44.auth.me();
-      } catch (e) {
-        // Redirecionar para login e voltar após autenticação
-        const returnUrl = createPageUrl('FinalizarCompra');
-        base44.auth.redirectToLogin(returnUrl);
-        return;
-      }
+  // Verificar se usuário está autenticado
+  let user;
+  try {
+    const { data, error } = await supabase.auth.getUser();
+    if (error) throw error;
+    user = data.user;
+    if (!user) throw new Error("Usuário não autenticado");
+  } catch (e) {
+    // Redirecionar para login e voltar após autenticação
+    const returnUrl = createPageUrl('FinalizarCompra');
+    window.location.href = `/login?returnUrl=${encodeURIComponent(returnUrl)}`;
+    return;
+  }
+
+  // Se chegou aqui, temos um usuário válido
+  console.log("Usuário autenticado:", user);
+} catch (err) {
+  console.error("Erro inesperado:", err);
+}
 
       // Salvar dados da compra no localStorage para processar após login
       localStorage.setItem('heartbalance_purchase_data', JSON.stringify({
