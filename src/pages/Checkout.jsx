@@ -8,15 +8,7 @@ import { createPageUrl } from '@/utils';
 export default function Checkout() {
   const [step, setStep] = useState(1);
   const [selectedPlan, setSelectedPlan] = useState(null);
-const handleCheckout = async () => {
-  try {
-    const returnUrl = createPageUrl('FinalizarCompra');
-    window.location.href = `/login?returnUrl=${encodeURIComponent(returnUrl)}`;
-  } catch (error) {
-    console.error('Erro ao processar pagamento:', error);
-    alert('Erro ao processar pagamento. Tente novamente.');
-  }
-};
+
   useEffect(() => {
     const returnUrl = createPageUrl('FinalizarCompra');
     const userIsAuthenticated = false; // placeholder
@@ -26,8 +18,21 @@ const handleCheckout = async () => {
     }
   }, []);
 
-  // ... o restante do seu código continua aqui
+  const handleCheckout = async () => {
+    try {
+      const returnUrl = createPageUrl('FinalizarCompra');
+      window.location.href = `/login?returnUrl=${encodeURIComponent(returnUrl)}`;
+    } catch (error) {
+      console.error('Erro ao processar pagamento:', error);
+      alert('Erro ao processar pagamento. Tente novamente.');
+    }
+  };
+
+  // ... resto do código, incluindo o JSX
 }
+<Button onClick={handleCheckout}>
+  Finalizar Compra
+</Button>
 
 const plans = {
   mensal: { name: 'Mensal', price: 24.90, duration: 30 },
