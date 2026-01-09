@@ -1,4 +1,5 @@
 import React, { createContext, useState, useContext, useEffect } from 'react';
+import { supabase } from '@/lib/supabaseClient'; // certifique-se de ter criado esse arquivo
 
 const AuthContext = createContext();
 
@@ -6,62 +7,65 @@ export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [isLoadingAuth, setIsLoadingAuth] = useState(true);
-  const [isLoadingPublicSettings, setIsLoadingPublicSettings] = useState(true);
   const [authError, setAuthError] = useState(null);
-  const [appPublicSettings, setAppPublicSettings] = useState(null);
 
   useEffect(() => {
-    checkAppState();
+    const checkUserAuth = async () => {
+      try {
+        setIsLoadingAuth(true);
+        const { data: { user }, error } = await supabase.auth.getUser();
+
+        if (error) {
+          console.error('Auth error:', error);
+          setAuthError({ type: 'auth_error', message: error.message });
+          setUser(null);
+          setIsAuthenticated(false);
+        } else if (user) {
+          setUser(user);
+          setIsAuthenticated(true);
+        } else {
+          setUser(null);
+          setIsAuthenticated(false);
+        }
+      } catch (err) {
+        console.error('Unexpected auth error:', err);
+        setAuthError({ type: 'unknown', message: err.message });
+        setUser(null);
+        setIsAuthenticated(false);
+      } finally {
+        setIsLoadingAuth(false);
+      }
+    };
+
+    checkUserAuth();
+
+    // Listener para mudanças de sessão
+    const { data: subscription } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (session?.user) {
+        setUser(session.user);
+        setIsAuthenticated(true);
+      } else {
+        setUser(null);
+        setIsAuthenticated(false);
+      }
+    });
+
+    return () => {
+      subscription.subscription.unsubscribe();
+    };
   }, []);
 
-  const checkAppState = async () => {
-    try {
-      setIsLoadingPublicSettings(true);
-      setAuthError(null);
-
-      // Placeholder: aqui você pode integrar com Supabase ou outra API
-      // Por enquanto, simulamos que não há autenticação
-      setAppPublicSettings({ id: 'app', public_settings: {} });
-      setIsAuthenticated(false);
-      setIsLoadingAuth(false);
-      setIsLoadingPublicSettings(false);
-    } catch (error) {
-      console.error('Unexpected error:', error);
-      setAuthError({
-        type: 'unknown',
-        message: error.message || 'An unexpected error occurred',
-      });
-      setIsLoadingPublicSettings(false);
-      setIsLoadingAuth(false);
-    }
-  };
-
-  const checkUserAuth = async () => {
-    try {
-      setIsLoadingAuth(true);
-      // Placeholder: substituir por lógica real de autenticação
-      setUser(null);
-      setIsAuthenticated(false);
-      setIsLoadingAuth(false);
-    } catch (error) {
-      console.error('User auth check failed:', error);
-      setIsLoadingAuth(false);
-      setIsAuthenticated(false);
-      setAuthError({
-        type: 'auth_required',
-        message: 'Authentication required',
-      });
-    }
-  };
-
-  const logout = () => {
+  const logout = async () => {
+    await supabase.auth.signOut();
     setUser(null);
     setIsAuthenticated(false);
   };
 
   const navigateToLogin = () => {
-    // Placeholder: redirecionar para página de login real
+    // Exemplo: redirecionar para rota de login própria
     window.location.href = '/login';
+    // ou usar OAuth do Supabase:
+    // supabase.auth.signInWithOAuth({ provider: 'google' });
   };
 
   return (
@@ -70,12 +74,9 @@ export const AuthProvider = ({ children }) => {
         user,
         isAuthenticated,
         isLoadingAuth,
-        isLoadingPublicSettings,
         authError,
-        appPublicSettings,
         logout,
         navigateToLogin,
-        checkAppState,
       }}
     >
       {children}
