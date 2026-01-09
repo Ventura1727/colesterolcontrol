@@ -6,18 +6,20 @@ import { Input } from '@/components/ui/input';
 import { createPageUrl } from '@/utils';
 
 export default function Checkout() {
-  const [step, setStep] = useState(1);
+  const [step, setStep] = useState(1); // 1 = método, 2 = dados pessoais, 3 = pagamento
   const [selectedPlan, setSelectedPlan] = useState(null);
 
+  // Verificação de autenticação
   useEffect(() => {
     const returnUrl = createPageUrl('FinalizarCompra');
-    const userIsAuthenticated = false; // placeholder
+    const userIsAuthenticated = false; // TODO: integrar com Supabase
 
     if (!userIsAuthenticated) {
       window.location.href = `/login?returnUrl=${encodeURIComponent(returnUrl)}`;
     }
   }, []);
 
+  // Função de checkout
   const handleCheckout = async () => {
     try {
       const returnUrl = createPageUrl('FinalizarCompra');
@@ -28,11 +30,17 @@ export default function Checkout() {
     }
   };
 
-  // ... resto do código, incluindo o JSX
+  return (
+    <div className="p-6">
+      <h1 className="text-2xl font-bold mb-4">Checkout</h1>
+
+      {/* Exemplo de botão que chama o checkout */}
+      <Button onClick={handleCheckout}>
+        Finalizar Compra
+      </Button>
+    </div>
+  );
 }
-<Button onClick={handleCheckout}>
-  Finalizar Compra
-</Button>
 
 const plans = {
   mensal: { name: 'Mensal', price: 24.90, duration: 30 },
