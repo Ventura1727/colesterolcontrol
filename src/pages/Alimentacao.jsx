@@ -2,7 +2,6 @@ import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { ArrowLeft, Salad, Lock, Check, Zap, Trophy, Clock, Flame, Star, ChevronRight, Heart, Camera, Upload, X, Loader2, BarChart3 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { base44 } from '@/api/base44Client';
 import { createPageUrl } from '@/utils';
 import CaloriesChart from '@/components/analytics/CaloriesChart';
 import AIInsights from '@/components/analytics/AIInsights';
