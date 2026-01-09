@@ -20,15 +20,15 @@ export default function Checkout() {
   }, []);
 
   // Função de checkout
-  const handleCheckout = async () => {
-    try {
-      const returnUrl = createPageUrl('FinalizarCompra');
-      window.location.href = `/login?returnUrl=${encodeURIComponent(returnUrl)}`;
-    } catch (error) {
-      console.error('Erro ao processar pagamento:', error);
-      alert('Erro ao processar pagamento. Tente novamente.');
-    }
-  };
+ const handleCheckout = async () => {
+  try {
+    const returnUrl = createPageUrl('FinalizarCompra');
+    window.location.href = `/login?returnUrl=${encodeURIComponent(returnUrl)}`;
+  } catch (error) {
+    console.error('Erro ao processar pagamento:', error);
+    alert('Erro ao processar pagamento. Tente novamente.');
+  }
+};
 
   return (
     <div className="p-6">
