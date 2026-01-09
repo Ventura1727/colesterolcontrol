@@ -2,7 +2,6 @@ import React, { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { Heart, Crown, Lock, Salad, Dumbbell, Droplets, BookOpen, TrendingDown, Calendar, Target, Zap, Bot } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { base44 } from '@/api/base44Client';
 import { createPageUrl } from '@/utils';
 import RankCard from '@/components/dashboard/RankCard';
 import ColesterolTracker from '@/components/dashboard/ColesterolTracker';
