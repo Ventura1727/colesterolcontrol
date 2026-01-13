@@ -36,9 +36,17 @@ export default function AIInsights({ profile, activities, colesterolRecords, mea
         data: m.date
       })) || [];
 
-      // Chamar IA para análise
-      const analysis = await base44.integrations.Core.InvokeLLM({
-        prompt: `Você é um especialista em saúde cardiovascular. Analise os dados históricos do usuário e forneça insights personalizados e preditivos.
+      const response = await fetch('/api/invoke-llm', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({
+    prompt: `Você é um especialista em saúde cardiovascular. Analise os dados históricos do usuário e forneça insights personalizados e preditivos.`,
+    profile,
+    colesterolData
+  })
+});
+
+const { analysis } = await response.json();
 
 Dados do perfil:
 - Objetivo: ${profile?.objetivo || 'Reduzir colesterol'}
