@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { Sparkles, TrendingUp, AlertCircle, CheckCircle, Loader2, Brain } from 'lucide-react';
-import { base44 } from '@/api/supabaseClient';
 
 export default function AIInsights({ profile, activities, colesterolRecords, mealLogs }) {
   const [insights, setInsights] = useState(null);
@@ -36,19 +35,8 @@ export default function AIInsights({ profile, activities, colesterolRecords, mea
         data: m.date
       })) || [];
 
-      const response = await fetch('/api/invoke-llm', {
-  method: 'POST',
-  headers: { 'Content-Type': 'application/json' },
-  body: JSON.stringify({
-    prompt: `Você é um especialista em saúde cardiovascular. Analise os dados históricos do usuário e forneça insights personalizados e preditivos.`,
-    profile,
-    colesterolData
-  })
-});
-
-const { analysis } = await response.json();
-
-const prompt = `
+      // Montar prompt completo
+      const prompt = `
 Você é um especialista em saúde cardiovascular. Analise os dados históricos do usuário e forneça insights personalizados e preditivos.
 
 Dados do perfil:
@@ -58,15 +46,6 @@ Dados do perfil:
 
 Histórico de Colesterol:
 ${JSON.stringify(colesterolData, null, 2)}
-`;
-
-const response = await fetch('/api/invoke-llm', {
-  method: 'POST',
-  headers: { 'Content-Type': 'application/json' },
-  body: JSON.stringify({ prompt, profile, colesterolData })
-});
-
-const { analysis } = await response.json();
 
 Atividades recentes (últimas 20):
 ${JSON.stringify(activityData, null, 2)}
@@ -80,35 +59,17 @@ Com base nesses dados, forneça:
 3. Previsão de impacto (ex: "Se manter a rotina atual, seu colesterol pode melhorar X% em Y meses")
 4. Recomendações específicas e acionáveis
 
-Seja específico, motivador e baseie-se nos dados reais fornecidos.`,
-        response_json_schema: {
-          type: "object",
-          properties: {
-            tendencias: { 
-              type: "array", 
-              items: { type: "string" }
-            },
-            correlacoes: { 
-              type: "array", 
-              items: { type: "string" }
-            },
-            previsoes: {
-              type: "object",
-              properties: {
-                colesterol: { type: "string" },
-                peso: { type: "string" },
-                energia: { type: "string" }
-              }
-            },
-            recomendacoes: { 
-              type: "array", 
-              items: { type: "string" }
-            }
-          },
-          required: ["tendencias", "previsoes", "recomendacoes"]
-        }
+Seja específico, motivador e baseie-se nos dados reais fornecidos.
+`;
+
+      // Chamada única para API
+      const response = await fetch('/api/invoke-llm', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prompt, profile, colesterolData, activityData, mealData })
       });
 
+      const { analysis } = await response.json();
       setInsights(analysis);
     } catch (error) {
       console.error("Erro ao gerar insights:", error);
