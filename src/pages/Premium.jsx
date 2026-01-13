@@ -2,7 +2,6 @@ import React, { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { Heart, Crown, Check, Sparkles, ArrowLeft, Shield, Zap } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { base44 } from '@/api/supabaseClient';
 import { createPageUrl } from '@/utils';
 
 const benefits = [
