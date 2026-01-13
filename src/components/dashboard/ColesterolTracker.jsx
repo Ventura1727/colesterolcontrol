@@ -4,7 +4,7 @@ import { Heart, TrendingDown, TrendingUp, Plus, Target, AlertCircle } from 'luci
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
-import { base44 } from '@/api/base44Client';
+import { base44 } from '@/api/supabaseClient';
 
 export default function ColesterolTracker({ records, onRecordAdded }) {
   const [isOpen, setIsOpen] = useState(false);
