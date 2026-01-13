@@ -48,13 +48,25 @@ export default function AIInsights({ profile, activities, colesterolRecords, mea
 
 const { analysis } = await response.json();
 
+const prompt = `
+Você é um especialista em saúde cardiovascular. Analise os dados históricos do usuário e forneça insights personalizados e preditivos.
+
 Dados do perfil:
 - Objetivo: ${profile?.objetivo || 'Reduzir colesterol'}
 - Rank atual: ${profile?.rank || 'Iniciante'}
 - XP total: ${profile?.xp_total || 0}
 
-Histórico de Colesterol (últimos registros):
+Histórico de Colesterol:
 ${JSON.stringify(colesterolData, null, 2)}
+`;
+
+const response = await fetch('/api/invoke-llm', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ prompt, profile, colesterolData })
+});
+
+const { analysis } = await response.json();
 
 Atividades recentes (últimas 20):
 ${JSON.stringify(activityData, null, 2)}
