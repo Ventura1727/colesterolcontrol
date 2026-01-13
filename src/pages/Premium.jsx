@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
-import { Heart, Crown, Check, Sparkles, ArrowLeft, Shield, Zap } from 'lucide-react';
+import { Crown, Check, Sparkles, ArrowLeft, Shield, Zap } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { createPageUrl } from '@/utils';
 
@@ -27,35 +27,44 @@ export default function Premium() {
 
   const loadProfile = async () => {
     try {
-      const user = await base44.auth.me();
-      const profiles = await base44.entities.UserProfile.filter({ created_by: user.email });
-      
-      if (profiles.length > 0) {
-        setProfile(profiles[0]);
-        if (profiles[0].plano_ativo) {
+      const res = await fetch('/api/profile', { method: 'GET' });
+      if (!res.ok) throw new Error('Falha ao carregar perfil');
+      const data = await res.json();
+
+      const perfil = Array.isArray(data?.profiles) ? data.profiles[0] : data?.profile;
+      if (perfil) {
+        setProfile(perfil);
+        if (perfil.plano_ativo) {
           window.location.href = createPageUrl('Dashboard');
+          return;
         }
       }
     } catch (error) {
-      console.error(error);
+      console.error('Erro ao carregar perfil:', error);
+    } finally {
+      setIsLoading(false);
     }
-    setIsLoading(false);
   };
 
   const handleActivate = async () => {
     setIsActivating(true);
     try {
-      if (profile) {
-        await base44.entities.UserProfile.update(profile.id, {
-          plano_ativo: true,
+      const res = await fetch('/api/activate-premium', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          plan: selectedPlan,
           data_inicio_plano: new Date().toISOString().split('T')[0]
-        });
-        window.location.href = createPageUrl('Dashboard');
-      }
+        })
+      });
+      if (!res.ok) throw new Error('Falha ao ativar premium');
+      window.location.href = createPageUrl('Dashboard');
     } catch (error) {
-      console.error(error);
+      console.error('Erro ao ativar premium:', error);
+      alert('Não foi possível ativar seu plano agora. Tente novamente em instantes.');
+    } finally {
+      setIsActivating(false);
     }
-    setIsActivating(false);
   };
 
   if (isLoading) {
@@ -204,7 +213,7 @@ export default function Premium() {
               </>
             )}
           </Button>
-          
+
           <p className="text-center text-xs text-gray-500 mt-4">
             Ao ativar, você concorda com nossos termos de uso e política de privacidade.
           </p>
