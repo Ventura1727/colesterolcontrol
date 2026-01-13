@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { Sparkles, TrendingUp, AlertCircle, CheckCircle, Loader2, Brain } from 'lucide-react';
-import { base44 } from '@/api/base44Client';
+import { base44 } from '@/api/supabaseClient';
 
 export default function AIInsights({ profile, activities, colesterolRecords, mealLogs }) {
   const [insights, setInsights] = useState(null);
