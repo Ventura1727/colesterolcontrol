@@ -1,11 +1,10 @@
 import React, { useState } from 'react';
 import { motion } from 'framer-motion';
 import { Droplets, Target, Plus, TrendingUp, Calendar, Check } from 'lucide-react';
-import { format, startOfDay, subDays } from 'date-fns';
+import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { base44 } from '@/api/supabaseClient';
 
 export default function HydrationDashboard({ waterLogs, metaDiaria, onLogAdded }) {
   const [showAddModal, setShowAddModal] = useState(false);
@@ -18,7 +17,8 @@ export default function HydrationDashboard({ waterLogs, metaDiaria, onLogAdded }
 
   // Calcular consumo de hoje
   const hoje = new Date().toISOString().split('T')[0];
-  const consumoHoje = waterLogs?.filter(log => log.data === hoje).reduce((sum, log) => sum + log.quantidade_ml, 0) || 0;
+  const consumoHoje =
+    waterLogs?.filter(log => log.data === hoje).reduce((sum, log) => sum + log.quantidade_ml, 0) || 0;
 
   const percentualMeta = Math.min((consumoHoje / metaDiariaML) * 100, 100);
   const mlRestantes = Math.max(metaDiariaML - consumoHoje, 0);
@@ -30,9 +30,8 @@ export default function HydrationDashboard({ waterLogs, metaDiaria, onLogAdded }
     date.setDate(date.getDate() - i);
     const dateStr = date.toISOString().split('T')[0];
     const dayLogs = waterLogs?.filter(log => log.data === dateStr) || [];
-    
     const totalML = dayLogs.reduce((sum, log) => sum + log.quantidade_ml, 0);
-    
+
     hoje7dias.push({
       date: dateStr,
       ml: totalML,
@@ -47,15 +46,19 @@ export default function HydrationDashboard({ waterLogs, metaDiaria, onLogAdded }
 
   const handleAddWater = async () => {
     if (!quantidade || !data) return;
-    
+
     setIsLogging(true);
     try {
-      await base44.entities.WaterLog.create({
-        quantidade_ml: parseInt(quantidade),
-        data: data,
-        hora: new Date().toTimeString().split(' ')[0]
+      await fetch('/api/water-log', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          quantidade_ml: parseInt(quantidade),
+          data,
+          hora: new Date().toTimeString().split(' ')[0]
+        })
       });
-      
+
       setShowAddModal(false);
       setQuantidade('');
       setData(new Date().toISOString().split('T')[0]);
@@ -69,10 +72,14 @@ export default function HydrationDashboard({ waterLogs, metaDiaria, onLogAdded }
 
   const quickAdd = async (ml) => {
     try {
-      await base44.entities.WaterLog.create({
-        quantidade_ml: ml,
-        data: hoje,
-        hora: new Date().toTimeString().split(' ')[0]
+      await fetch('/api/water-log', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          quantidade_ml: ml,
+          data: hoje,
+          hora: new Date().toTimeString().split(' ')[0]
+        })
       });
       if (onLogAdded) onLogAdded();
     } catch (error) {
@@ -202,8 +209,8 @@ export default function HydrationDashboard({ waterLogs, metaDiaria, onLogAdded }
               );
             })}
           </div>
-          
-          <div className="flex items-center justify-center gap-1 mt-4 pt-3 border-t border-gray-100 text-xs text-gray-500">
+
+          <div className="flex items-center justify-center gap-1 mt-4 pt-3 border-top border-gray-100 text-xs text-gray-500">
             <TrendingUp className="w-3 h-3" />
             Meta: {(metaDiariaML / 1000).toFixed(1)}L/dia
           </div>
@@ -230,7 +237,10 @@ export default function HydrationDashboard({ waterLogs, metaDiaria, onLogAdded }
 
       {/* Modal de Adicionar Água */}
       {showAddModal && (
-        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4" onClick={() => !isLogging && setShowAddModal(false)}>
+        <div
+          className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4"
+          onClick={() => !isLogging && setShowAddModal(false)}
+        >
           <motion.div
             initial={{ scale: 0.9, opacity: 0 }}
             animate={{ scale: 1, opacity: 1 }}
@@ -238,7 +248,7 @@ export default function HydrationDashboard({ waterLogs, metaDiaria, onLogAdded }
             className="bg-white rounded-3xl w-full max-w-sm p-6"
           >
             <h3 className="text-xl font-bold text-gray-900 mb-4">Registrar Água</h3>
-            
+
             <div className="space-y-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">Quantidade (ml)</label>
@@ -290,7 +300,11 @@ export default function HydrationDashboard({ waterLogs, metaDiaria, onLogAdded }
                 disabled={!quantidade || !data || isLogging}
               >
                 {isLogging ? (
-                  <motion.div animate={{ rotate: 360 }} transition={{ repeat: Infinity, duration: 1, ease: 'linear' }} className="w-5 h-5 border-2 border-white border-t-transparent rounded-full" />
+                  <motion.div
+                    animate={{ rotate: 360 }}
+                    transition={{ repeat: Infinity, duration: 1, ease: 'linear' }}
+                    className="w-5 h-5 border-2 border-white border-t-transparent rounded-full"
+                  />
                 ) : (
                   <>
                     <Check className="w-4 h-4 mr-1" />
