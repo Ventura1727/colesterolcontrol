@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { Heart, ArrowRight, Sparkles, Check } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { base44 } from '@/api/base44Client';
+import { base44 } from '@/api/supabaseClient';
 import { createPageUrl } from '@/utils';
 
 const questions = [
