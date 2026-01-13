@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { Heart, TrendingUp, AlertCircle, Sparkles, Check, Crown, ArrowRight, Salad, Dumbbell, Droplets, Target, Star, Zap, Shield, Gift, Users, Clock, ChevronRight } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { base44 } from '@/api/base44Client';
+import { base44 } from '@/api/supabaseClient';
 import { createPageUrl } from '@/utils';
 
 const getDiagnostico = (profile) => {
