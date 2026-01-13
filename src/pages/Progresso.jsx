@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { ArrowLeft, Trophy, Zap, Star, TrendingUp, Calendar, Target, Flame, Award } from 'lucide-react';
-import { base44 } from '@/api/supabaseClient';
 import { createPageUrl } from '@/utils';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
