@@ -5,7 +5,7 @@ import { format, startOfDay, subDays } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { base44 } from '@/api/base44Client';
+import { base44 } from '@/api/supabaseClient';
 
 export default function HydrationDashboard({ waterLogs, metaDiaria, onLogAdded }) {
   const [showAddModal, setShowAddModal] = useState(false);
