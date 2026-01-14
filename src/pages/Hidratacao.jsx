@@ -19,33 +19,47 @@ export default function Hidratacao() {
   }, []);
 
   const loadData = async () => {
-    const user = await base44.auth.me();
-    const [profiles] = await Promise.all([
-      base44.entities.UserProfile.filter({ created_by: user.email })
-    ]);
+    try {
+      // Usuário logado via Supabase
+      const { data: { user } } = await supabase.auth.getUser();
 
-    if (profiles.length > 0) {
-      setProfile(profiles[0]);
-      if (profiles[0].peso_hidratacao) {
-        setForm({
-          peso: profiles[0].peso_hidratacao,
-          altura: profiles[0].altura_hidratacao || '',
-          basal: profiles[0].basal_hidratacao || ''
-        });
-        calculateWater(profiles[0].peso_hidratacao, profiles[0].basal_hidratacao);
+      if (user) {
+        // Perfil do usuário
+        const { data: profiles, error: profileError } = await supabase
+          .from('user_profiles')
+          .select('*')
+          .eq('created_by', user.email);
+
+        if (profileError) {
+          console.error('Erro ao carregar perfil:', profileError);
+        }
+
+        if (profiles && profiles.length > 0) {
+          setProfile(profiles[0]);
+          if (profiles[0].peso_hidratacao) {
+            setForm({
+              peso: profiles[0].peso_hidratacao,
+              altura: profiles[0].altura_hidratacao || '',
+              basal: profiles[0].basal_hidratacao || ''
+            });
+            calculateWater(profiles[0].peso_hidratacao, profiles[0].basal_hidratacao);
+          }
+        }
       }
+
+      // Logs de água via API
+      const session = await supabase.auth.getSession();
+      const token = session?.data?.session?.access_token;
+      const res = await fetch('/api/water-log', {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const logs = await res.json();
+      setWaterLogs(logs);
+    } catch (err) {
+      console.error('Erro ao carregar dados:', err);
+    } finally {
+      setIsLoading(false);
     }
-
-    // Buscar logs via API Supabase
-    const session = await supabase.auth.getSession();
-    const token = session?.data?.session?.access_token;
-    const res = await fetch('/api/water-log', {
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    const logs = await res.json();
-    setWaterLogs(logs);
-
-    setIsLoading(false);
   };
 
   const calculateWater = (peso, basal) => {
@@ -71,30 +85,45 @@ export default function Hidratacao() {
       return;
     }
     calculateWater(peso, basal);
-    await base44.entities.UserProfile.update(profile.id, {
-      peso_hidratacao: peso,
-      altura_hidratacao: form.altura ? parseFloat(form.altura) : null,
-      basal_hidratacao: basal
-    });
+
+    if (profile) {
+      const { error } = await supabase
+        .from('user_profiles')
+        .update({
+          peso_hidratacao: peso,
+          altura_hidratacao: form.altura ? parseFloat(form.altura) : null,
+          basal_hidratacao: basal
+        })
+        .eq('id', profile.id);
+
+      if (error) {
+        console.error('Erro ao atualizar perfil:', error);
+      }
+    }
   };
 
   const registrarAgua = async (quantidade_ml) => {
-    const session = await supabase.auth.getSession();
-    const token = session?.data?.session?.access_token;
-    const agora = new Date();
-    const data = agora.toISOString().split('T')[0];
-    const hora = agora.toTimeString().split(' ')[0];
+    try {
+      const session = await supabase.auth.getSession();
+      const token = session?.data?.session?.access_token;
+      const agora = new Date();
+      const data = agora.toISOString().split('T')[0];
+      const hora = agora.toTimeString().split(' ')[0];
 
-    await fetch('/api/water-log-post', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${token}`,
-      },
-      body: JSON.stringify({ quantidade_ml, data, hora }),
-    });
+      await fetch('/api/water-log-post', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ quantidade_ml, data, hora }),
+      });
 
-    loadData();
+      await loadData();
+    } catch (err) {
+      console.error('Erro ao registrar água:', err);
+      alert('Não foi possível registrar a água. Tente novamente.');
+    }
   };
 
   if (isLoading) {
