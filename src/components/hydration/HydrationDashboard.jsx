@@ -12,10 +12,10 @@ export default function HydrationDashboard({ waterLogs, metaDiaria, onLogAdded }
   const [data, setData] = useState(new Date().toISOString().split('T')[0]);
   const [isLogging, setIsLogging] = useState(false);
 
-  // Meta diária em ml (ex: 2.5L = 2500ml)
+  // Meta diária em ml
   const metaDiariaML = metaDiaria ? parseFloat(metaDiaria) * 1000 : 2500;
 
-  // Calcular consumo de hoje
+  // Consumo de hoje
   const hoje = new Date().toISOString().split('T')[0];
   const consumoHoje =
     waterLogs?.filter(log => log.data === hoje).reduce((sum, log) => sum + log.quantidade_ml, 0) || 0;
@@ -23,7 +23,7 @@ export default function HydrationDashboard({ waterLogs, metaDiaria, onLogAdded }
   const percentualMeta = Math.min((consumoHoje / metaDiariaML) * 100, 100);
   const mlRestantes = Math.max(metaDiariaML - consumoHoje, 0);
 
-  // Calcular histórico de 7 dias
+  // Histórico de 7 dias
   const hoje7dias = [];
   for (let i = 6; i >= 0; i--) {
     const date = new Date();
@@ -46,23 +46,13 @@ export default function HydrationDashboard({ waterLogs, metaDiaria, onLogAdded }
 
   const handleAddWater = async () => {
     if (!quantidade || !data) return;
-
     setIsLogging(true);
     try {
-      await fetch('/api/water-log', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          quantidade_ml: parseInt(quantidade),
-          data,
-          hora: new Date().toTimeString().split(' ')[0]
-        })
-      });
-
+      // Centraliza a lógica no pai (Hidratacao.jsx)
+      await onLogAdded(parseInt(quantidade, 10));
       setShowAddModal(false);
       setQuantidade('');
       setData(new Date().toISOString().split('T')[0]);
-      if (onLogAdded) onLogAdded();
     } catch (error) {
       console.error('Erro ao registrar água:', error);
       alert('Erro ao registrar. Tente novamente.');
@@ -72,16 +62,7 @@ export default function HydrationDashboard({ waterLogs, metaDiaria, onLogAdded }
 
   const quickAdd = async (ml) => {
     try {
-      await fetch('/api/water-log', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          quantidade_ml: ml,
-          data: hoje,
-          hora: new Date().toTimeString().split(' ')[0]
-        })
-      });
-      if (onLogAdded) onLogAdded();
+      await onLogAdded(ml);
     } catch (error) {
       console.error('Erro ao registrar:', error);
     }
@@ -210,14 +191,14 @@ export default function HydrationDashboard({ waterLogs, metaDiaria, onLogAdded }
             })}
           </div>
 
-          <div className="flex items-center justify-center gap-1 mt-4 pt-3 border-top border-gray-100 text-xs text-gray-500">
+          <div className="flex items-center justify-center gap-1 mt-4 pt-3 border-t border-gray-100 text-xs text-gray-500">
             <TrendingUp className="w-3 h-3" />
             Meta: {(metaDiariaML / 1000).toFixed(1)}L/dia
           </div>
         </div>
       </div>
 
-      {/* Dica */}
+      {/* Dicas e feedback */}
       {percentualMeta < 50 && consumoHoje === 0 && (
         <div className="mt-4 bg-amber-50 rounded-lg p-3 border border-amber-200">
           <p className="text-xs text-amber-800">
@@ -278,7 +259,7 @@ export default function HydrationDashboard({ waterLogs, metaDiaria, onLogAdded }
                   <div className="flex items-center justify-between text-sm">
                     <span className="text-gray-700">Equivalente a:</span>
                     <span className="font-bold text-blue-600">
-                      {(parseInt(quantidade) / 1000).toFixed(2)}L
+                      {(parseInt(quantidade, 10) / 1000).toFixed(2)}L
                     </span>
                   </div>
                 </div>
