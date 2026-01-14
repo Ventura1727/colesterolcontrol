@@ -5,15 +5,12 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { createPageUrl } from '@/utils';
 import HydrationDashboard from '@/components/hydration/HydrationDashboard';
+import { supabase } from '@/lib/supabaseClient';
 
 export default function Hidratacao() {
   const [profile, setProfile] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
-  const [form, setForm] = useState({
-    peso: '',
-    altura: '',
-    basal: ''
-  });
+  const [form, setForm] = useState({ peso: '', altura: '', basal: '' });
   const [waterNeeded, setWaterNeeded] = useState(null);
   const [waterLogs, setWaterLogs] = useState([]);
 
@@ -23,14 +20,12 @@ export default function Hidratacao() {
 
   const loadData = async () => {
     const user = await base44.auth.me();
-    const [profiles, logs] = await Promise.all([
-      base44.entities.UserProfile.filter({ created_by: user.email }),
-      base44.entities.WaterLog.list('-created_date', 100)
+    const [profiles] = await Promise.all([
+      base44.entities.UserProfile.filter({ created_by: user.email })
     ]);
-    
+
     if (profiles.length > 0) {
       setProfile(profiles[0]);
-      // Carregar dados salvos se existirem
       if (profiles[0].peso_hidratacao) {
         setForm({
           peso: profiles[0].peso_hidratacao,
@@ -40,26 +35,30 @@ export default function Hidratacao() {
         calculateWater(profiles[0].peso_hidratacao, profiles[0].basal_hidratacao);
       }
     }
+
+    // Buscar logs via API Supabase
+    const session = await supabase.auth.getSession();
+    const token = session?.data?.session?.access_token;
+    const res = await fetch('/api/water-log', {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    const logs = await res.json();
     setWaterLogs(logs);
+
     setIsLoading(false);
   };
 
   const calculateWater = (peso, basal) => {
     if (!peso) return;
-    
-    // Fórmula base: 35ml por kg de peso
     let waterInMl = peso * 35;
-    
-    // Ajustar por nível de atividade (basal)
     if (basal) {
       const basalNum = parseFloat(basal);
       if (basalNum > 2000) {
-        waterInMl += 500; // Metabolismo alto, mais água
+        waterInMl += 500;
       } else if (basalNum > 1500) {
         waterInMl += 300;
       }
     }
-    
     const waterInLiters = (waterInMl / 1000).toFixed(1);
     setWaterNeeded(waterInLiters);
   };
@@ -67,15 +66,11 @@ export default function Hidratacao() {
   const handleCalculate = async () => {
     const peso = parseFloat(form.peso);
     const basal = form.basal ? parseFloat(form.basal) : null;
-    
     if (!peso || peso <= 0) {
       alert('Por favor, insira um peso válido');
       return;
     }
-    
     calculateWater(peso, basal);
-    
-    // Salvar no perfil
     await base44.entities.UserProfile.update(profile.id, {
       peso_hidratacao: peso,
       altura_hidratacao: form.altura ? parseFloat(form.altura) : null,
@@ -83,10 +78,33 @@ export default function Hidratacao() {
     });
   };
 
+  const registrarAgua = async (quantidade_ml) => {
+    const session = await supabase.auth.getSession();
+    const token = session?.data?.session?.access_token;
+    const agora = new Date();
+    const data = agora.toISOString().split('T')[0];
+    const hora = agora.toTimeString().split(' ')[0];
+
+    await fetch('/api/water-log-post', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ quantidade_ml, data, hora }),
+    });
+
+    loadData();
+  };
+
   if (isLoading) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-red-50 via-white to-rose-50 flex items-center justify-center">
-        <motion.div animate={{ rotate: 360 }} transition={{ repeat: Infinity, duration: 1, ease: 'linear' }} className="w-8 h-8 border-3 border-red-600 border-t-transparent rounded-full" />
+        <motion.div
+          animate={{ rotate: 360 }}
+          transition={{ repeat: Infinity, duration: 1, ease: 'linear' }}
+          className="w-8 h-8 border-3 border-red-600 border-t-transparent rounded-full"
+        />
       </div>
     );
   }
@@ -96,8 +114,8 @@ export default function Hidratacao() {
       <div className="max-w-lg mx-auto px-4 pt-6 pb-24">
         {/* Header */}
         <div className="flex items-center gap-3 mb-6">
-          <button 
-            onClick={() => window.location.href = createPageUrl('Dashboard')} 
+          <button
+            onClick={() => window.location.href = createPageUrl('Dashboard')}
             className="w-10 h-10 rounded-xl bg-white border border-gray-200 flex items-center justify-center"
           >
             <ArrowLeft className="w-5 h-5 text-gray-600" />
@@ -126,7 +144,7 @@ export default function Hidratacao() {
                 type="number"
                 placeholder="Ex: 70"
                 value={form.peso}
-                onChange={(e) => setForm({...form, peso: e.target.value})}
+                onChange={(e) => setForm({ ...form, peso: e.target.value })}
                 className="w-full"
               />
             </div>
@@ -137,7 +155,7 @@ export default function Hidratacao() {
                 type="number"
                 placeholder="Ex: 170"
                 value={form.altura}
-                onChange={(e) => setForm({...form, altura: e.target.value})}
+                onChange={(e) => setForm({ ...form, altura: e.target.value })}
                 className="w-full"
               />
             </div>
@@ -148,7 +166,7 @@ export default function Hidratacao() {
                 type="number"
                 placeholder="Ex: 1800"
                 value={form.basal}
-                onChange={(e) => setForm({...form, basal: e.target.value})}
+                onChange={(e) => setForm({ ...form, basal: e.target.value })}
                 className="w-full"
               />
               <p className="text-xs text-gray-500 mt-1">Opcional: ajuda a personalizar sua meta</p>
@@ -174,7 +192,9 @@ export default function Hidratacao() {
             <Droplets className="w-12 h-12 mx-auto mb-3 opacity-90" />
             <div className="text-5xl font-bold mb-2">{waterNeeded}L</div>
             <p className="text-blue-100">Meta diária de água recomendada</p>
-            <p className="text-sm text-blue-100 mt-2">Aproximadamente {Math.ceil(waterNeeded / 0.25)} copos de 250ml</p>
+            <p className="text-sm text-blue-100 mt-2">
+              Aproximadamente {Math.ceil(waterNeeded / 0.25)} copos de 250ml
+            </p>
           </motion.div>
         )}
 
@@ -186,10 +206,10 @@ export default function Hidratacao() {
             transition={{ delay: 0.1 }}
             className="bg-white rounded-2xl p-6 mb-6 border border-gray-100 shadow-sm"
           >
-            <HydrationDashboard 
-              waterLogs={waterLogs} 
+            <HydrationDashboard
+              waterLogs={waterLogs}
               metaDiaria={waterNeeded}
-              onLogAdded={loadData}
+              onLogAdded={registrarAgua}
             />
           </motion.div>
         )}
@@ -213,7 +233,9 @@ export default function Hidratacao() {
               </div>
               <div>
                 <h3 className="font-medium text-gray-900 mb-1">Saúde Cardiovascular</h3>
-                <p className="text-sm text-gray-600">A água ajuda o sangue a circular melhor, reduzindo a carga no coração e mantendo a pressão arterial equilibrada.</p>
+                <p className="text-sm text-gray-600">
+                  A água ajuda o sangue a circular melhor, reduzindo a carga no coração e mantendo a pressão arterial equilibrada.
+                </p>
               </div>
             </div>
 
@@ -223,7 +245,9 @@ export default function Hidratacao() {
               </div>
               <div>
                 <h3 className="font-medium text-gray-900 mb-1">Controle do Apetite</h3>
-                <p className="text-sm text-gray-600">Beber água regularmente ajuda a saciar e reduz a sensação de fome, evitando excessos alimentares.</p>
+                <p className="text-sm text-gray-600">
+                  Beber água regularmente ajuda a saciar e reduz a sensação de fome, evitando excessos alimentares.
+                </p>
               </div>
             </div>
 
@@ -233,7 +257,9 @@ export default function Hidratacao() {
               </div>
               <div>
                 <h3 className="font-medium text-gray-900 mb-1">Metabolismo Ativo</h3>
-                <p className="text-sm text-gray-600">Estar bem hidratado melhora o metabolismo e facilita a eliminação de toxinas do organismo.</p>
+                <p className="text-sm text-gray-600">
+                  Estar bem hidratado melhora o metabolismo e facilita a eliminação de toxinas do organismo.
+                </p>
               </div>
             </div>
           </div>
