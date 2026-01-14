@@ -1,4 +1,4 @@
-// src/pages/api/water-log-post.js
+// api/water-log-post.js
 import { createClient } from '@supabase/supabase-js';
 
 const supabase = createClient(
