@@ -1,8 +1,20 @@
-import { createClient } from '@supabase/supabase-js';
+import { createClient } from "@supabase/supabase-js";
 
-// Essas variáveis você pega no painel do Supabase (Project Settings > API)
-const supabaseUrl = process.env.VITE_SUPABASE_URL;
-const supabaseAnonKey = process.env.VITE_SUPABASE_ANON_KEY;
+/**
+ * Variáveis de ambiente Vite
+ * Devem estar configuradas no Vercel como:
+ * - VITE_SUPABASE_URL
+ * - VITE_SUPABASE_ANON_KEY
+ */
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
-// Cria o cliente Supabase
+// Proteção para evitar tela branca silenciosa
+if (!supabaseUrl || !supabaseAnonKey) {
+  throw new Error(
+    "Supabase ENV missing: check VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY in Vercel"
+  );
+}
+
+// Cliente Supabase (frontend-safe: usa anon public key)
 export const supabase = createClient(supabaseUrl, supabaseAnonKey);
