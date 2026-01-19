@@ -1,15 +1,16 @@
-import React, { useState, useEffect } from 'react';
-import { motion } from 'framer-motion';
-import { ArrowLeft, CreditCard, Smartphone, Lock } from 'lucide-react';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { createPageUrl } from '@/utils';
+import React, { useState, useEffect } from "react";
+import { motion } from "framer-motion";
+import { ArrowLeft, CreditCard, Smartphone, Lock } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { createPageUrl } from "@/utils";
+import { supabase } from "@/lib/supabaseClient"; // <-- CORRECAO: importar supabase
 
 // Planos disponíveis
 const plans = {
-  mensal: { name: 'Mensal', price: 24.90, duration: 30 },
-  trimestral: { name: 'Trimestral', price: 59.90, duration: 90 },
-  anual: { name: 'Anual', price: 199.90, duration: 365 }
+  mensal: { name: "Mensal", price: 24.9, duration: 30 },
+  trimestral: { name: "Trimestral", price: 59.9, duration: 90 },
+  anual: { name: "Anual", price: 199.9, duration: 365 },
 };
 
 export default function Checkout() {
@@ -19,24 +20,24 @@ export default function Checkout() {
   const [isProcessing, setIsProcessing] = useState(false);
 
   const [personalData, setPersonalData] = useState({
-    nome: '',
-    email: '',
-    cpf: '',
-    telefone: ''
+    nome: "",
+    email: "",
+    cpf: "",
+    telefone: "",
   });
 
   const [cardData, setCardData] = useState({
-    numero: '',
-    nome: '',
-    validade: '',
-    cvv: ''
+    numero: "",
+    nome: "",
+    validade: "",
+    cvv: "",
   });
 
   // Carregar plano selecionado
   useEffect(() => {
-    const planId = localStorage.getItem('heartbalance_selected_plan');
+    const planId = localStorage.getItem("heartbalance_selected_plan");
     if (!planId || !plans[planId]) {
-      window.location.href = createPageUrl('Vendas');
+      window.location.href = createPageUrl("Vendas");
       return;
     }
     setSelectedPlan(plans[planId]);
@@ -45,7 +46,7 @@ export default function Checkout() {
   // Validação dos dados pessoais
   const handlePersonalDataSubmit = () => {
     if (!personalData.nome || !personalData.email || !personalData.cpf) {
-      alert('Por favor, preencha todos os campos obrigatórios');
+      alert("Por favor, preencha todos os campos obrigatórios");
       return;
     }
     setStep(3);
@@ -56,47 +57,51 @@ export default function Checkout() {
     setIsProcessing(true);
 
     try {
-      let user;
-      try {
-        const { data, error } = await supabase.auth.getUser();
-        if (error) throw error;
-        user = data.user;
-        if (!user) throw new Error("Usuário não autenticado");
-      } catch (e) {
-        const returnUrl = createPageUrl('FinalizarCompra');
+      // 1) Checar sessão (mais robusto para fluxo de checkout)
+      const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+      if (sessionError) throw sessionError;
+
+      const session = sessionData?.session;
+
+      // 2) Se não tem sessão, redireciona para login e NÃO deixa tela branca
+      if (!session?.user) {
+        const returnUrl = createPageUrl("FinalizarCompra");
         window.location.href = `/login?returnUrl=${encodeURIComponent(returnUrl)}`;
         return;
       }
 
-      // Usuário autenticado
+      const user = session.user;
       console.log("Usuário autenticado:", user);
 
       // Salvar dados da compra
-      localStorage.setItem('heartbalance_purchase_data', JSON.stringify({
-        plan: selectedPlan,
-        paymentMethod,
-        personalData,
-        timestamp: Date.now()
-      }));
+      localStorage.setItem(
+        "heartbalance_purchase_data",
+        JSON.stringify({
+          plan: selectedPlan,
+          paymentMethod,
+          personalData,
+          timestamp: Date.now(),
+        })
+      );
 
       // Redirecionar para finalização
-      window.location.href = createPageUrl('FinalizarCompra');
+      window.location.href = createPageUrl("FinalizarCompra");
     } catch (error) {
-      console.error('Erro ao processar pagamento:', error);
-      alert('Erro ao processar pagamento. Tente novamente.');
+      console.error("Erro ao processar checkout:", error);
+      alert("Erro ao processar pagamento. Tente novamente.");
       setIsProcessing(false);
     }
   };
 
   // Formatação de cartão
   const formatCardNumber = (value) => {
-    return value.replace(/\s/g, '').match(/.{1,4}/g)?.join(' ') || value;
+    return value.replace(/\s/g, "").match(/.{1,4}/g)?.join(" ") || value;
   };
 
   const formatExpiry = (value) => {
-    const cleaned = value.replace(/\D/g, '');
+    const cleaned = value.replace(/\D/g, "");
     if (cleaned.length >= 2) {
-      return cleaned.slice(0, 2) + '/' + cleaned.slice(2, 4);
+      return cleaned.slice(0, 2) + "/" + cleaned.slice(2, 4);
     }
     return cleaned;
   };
@@ -106,7 +111,7 @@ export default function Checkout() {
       <div className="min-h-screen bg-gradient-to-br from-red-50 via-white to-rose-50 flex items-center justify-center">
         <motion.div
           animate={{ rotate: 360 }}
-          transition={{ repeat: Infinity, duration: 1, ease: 'linear' }}
+          transition={{ repeat: Infinity, duration: 1, ease: "linear" }}
           className="w-8 h-8 border-3 border-red-600 border-t-transparent rounded-full"
         />
       </div>
@@ -125,7 +130,7 @@ export default function Checkout() {
               if (step > 1) {
                 setStep(step - 1);
               } else {
-                window.location.href = createPageUrl('Vendas');
+                window.location.href = createPageUrl("Vendas");
               }
             }}
             className="w-10 h-10 rounded-xl bg-white border border-gray-200 flex items-center justify-center"
@@ -144,7 +149,7 @@ export default function Checkout() {
             <div
               key={s}
               className={`h-2 flex-1 rounded-full transition-all ${
-                s <= step ? 'bg-red-500' : 'bg-gray-200'
+                s <= step ? "bg-red-500" : "bg-gray-200"
               }`}
             />
           ))}
@@ -154,7 +159,7 @@ export default function Checkout() {
         {step === 1 && (
           <motion.div initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} className="space-y-4">
             {/* PIX e Cartão */}
-            {/* ... (como você já enviou) */}
+            {/* ... (mantenha seu conteúdo aqui) */}
           </motion.div>
         )}
 
@@ -171,7 +176,15 @@ export default function Checkout() {
           <motion.div initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} className="space-y-6">
             {/* PIX ou Cartão */}
             {/* Resumo da compra */}
-            {/* Botão Finalizar */}
+
+            {/* Botão Finalizar (exemplo) */}
+            <Button
+              className="w-full"
+              onClick={handleFinalizePurchase}
+              disabled={isProcessing || !paymentMethod}
+            >
+              {isProcessing ? "Processando..." : "Finalizar"}
+            </Button>
           </motion.div>
         )}
       </div>
