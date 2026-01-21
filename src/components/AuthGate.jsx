@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { supabase } from "../supabase";
+import { supabase } from "../supabaseClient";
 
 export default function AuthGate({ onSuccess }) {
   const [email, setEmail] = useState("");
