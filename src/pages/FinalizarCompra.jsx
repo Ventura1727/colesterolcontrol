@@ -16,7 +16,7 @@ export default function FinalizarCompra() {
 
   const activatePlan = async () => {
     try {
-      // 1) Garantir que existe sessão (anônima ou normal)
+      // 1) Garantir sessão
       const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
       if (sessionError) throw sessionError;
 
@@ -29,41 +29,60 @@ export default function FinalizarCompra() {
       }
 
       if (!session?.user) {
-        throw new Error("Sessão não encontrada para ativar o plano.");
+        throw new Error("Sessão não encontrada");
       }
 
       const user = session.user;
+      const createdBy = user.email || user.id;
 
-      // 2) Ler dados da compra e do quiz
-      const purchaseDataRaw = localStorage.getItem("heartbalance_purchase_data");
-      const quizDataRaw = localStorage.getItem("heartbalance_quiz");
-
-      if (!purchaseDataRaw) {
+      // 2) Ler dados do localStorage
+      const purchaseRaw = localStorage.getItem("heartbalance_purchase_data");
+      if (!purchaseRaw) {
         setStatus("error");
         setMessage("Dados de compra não encontrados");
         return;
       }
 
-      const purchase = JSON.parse(purchaseDataRaw);
-      const quiz = quizDataRaw ? JSON.parse(quizDataRaw) : {};
-
-      // 3) Montar payload do perfil
+      const purchase = JSON.parse(purchaseRaw);
       const today = new Date().toISOString().split("T")[0];
 
+      // 3) Payload do perfil
       const profilePayload = {
-  created_by: user.email || user.id,
-  plano_ativo: true,
-  plano_tipo: purchase?.plan?.name ?? "Premium",
-  data_inicio_plano: today
-};
+        created_by: createdBy,
+        plano_ativo: true,
+        plano_tipo: purchase?.plan?.name ?? "Premium",
+        data_inicio_plano: today,
+      };
 
-      // 4) Upsert no Supabase (cria ou atualiza)
-      // IMPORTANT: se sua tabela tiver outro nome, vamos ajustar no próximo passo.
-      const { error: upsertError } = await supabase
-  .from("user_profiles")
-  .upsert(profilePayload, { onConflict: "created_by" });
+      // 4) Verificar se já existe perfil
+      const { data: existing, error: selectError } = await supabase
+        .from("user_profiles")
+        .select("id")
+        .eq("created_by", createdBy)
+        .limit(1);
 
-      if (upsertError) throw upsertError;
+      if (selectError) throw selectError;
+
+      if (existing && existing.length > 0) {
+        // Atualizar
+        const { error: updateError } = await supabase
+          .from("user_profiles")
+          .update({
+            plano_ativo: profilePayload.plano_ativo,
+            plano_tipo: profilePayload.plano_tipo,
+            data_inicio_plano: profilePayload.data_inicio_plano,
+          })
+          .eq("id", existing[0].id);
+
+        if (updateError) throw updateError;
+      } else {
+        // Criar
+        const { error: insertError } = await supabase
+          .from("user_profiles")
+          .insert(profilePayload);
+
+        if (insertError) throw insertError;
+      }
 
       // 5) Limpar dados temporários
       localStorage.removeItem("heartbalance_purchase_data");
@@ -79,9 +98,7 @@ export default function FinalizarCompra() {
     } catch (error) {
       console.error("Erro ao ativar plano:", error);
       setStatus("error");
-      setMessage(
-        "Erro ao ativar plano. Tente novamente."
-      );
+      setMessage("Erro ao ativar plano. Tente novamente.");
     }
   };
 
