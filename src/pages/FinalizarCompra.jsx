@@ -51,22 +51,11 @@ export default function FinalizarCompra() {
       const today = new Date().toISOString().split("T")[0];
 
       const profilePayload = {
-        user_id: user.id, // chave de vínculo
-        plano_ativo: true,
-        data_inicio_plano: today,
-        // defaults (mantidos do seu código)
-        rank: "Iniciante",
-        xp_total: 0,
-        metas_concluidas: 0,
-        dias_consecutivos: 0,
-        // dados do quiz (se houver)
-        ...quiz,
-        // dados de compra (se quiser usar depois)
-        plano_nome: purchase?.plan?.name ?? null,
-        plano_duracao_dias: purchase?.plan?.duration ?? null,
-        plano_preco: purchase?.plan?.price ?? null,
-        metodo_pagamento: purchase?.paymentMethod ?? null,
-      };
+  created_by: user.email || user.id,
+  plano_ativo: true,
+  plano_tipo: purchase?.plan?.name ?? "Premium",
+  data_inicio_plano: today
+};
 
       // 4) Upsert no Supabase (cria ou atualiza)
       // IMPORTANT: se sua tabela tiver outro nome, vamos ajustar no próximo passo.
