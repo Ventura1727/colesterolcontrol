@@ -4,7 +4,6 @@ import { ArrowLeft } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { createPageUrl } from "@/utils";
-import { supabase } from "@/lib/supabaseClient";
 
 // Planos disponíveis
 const plans = {
@@ -26,13 +25,6 @@ export default function Checkout() {
     telefone: "",
   });
 
-  const [cardData, setCardData] = useState({
-    numero: "",
-    nome: "",
-    validade: "",
-    cvv: "",
-  });
-
   // Carregar plano selecionado
   useEffect(() => {
     const planId = localStorage.getItem("heartbalance_selected_plan");
@@ -43,31 +35,28 @@ export default function Checkout() {
     setSelectedPlan(plans[planId]);
   }, []);
 
-  // Finalizar compra (COM SESSÃO ANÔNIMA)
+  const handleContinuePersonalData = () => {
+    if (!personalData.nome || !personalData.email || !personalData.cpf) {
+      alert("Por favor, preencha Nome, Email e CPF.");
+      return;
+    }
+    setStep(3);
+  };
+
   const handleFinalizePurchase = async () => {
+    if (!selectedPlan) return;
+    if (!paymentMethod) {
+      alert("Selecione o método de pagamento.");
+      return;
+    }
+
     setIsProcessing(true);
 
     try {
-      // 1. Verificar sessão atual
-      const { data: sessionData } = await supabase.auth.getSession();
-      let session = sessionData?.session;
-
-      // 2. Se não existir sessão, criar sessão anônima
-      if (!session?.user) {
-        const { data: anonData, error } = await supabase.auth.signInAnonymously();
-        if (error) throw error;
-        session = anonData.session;
-      }
-
-      if (!session?.user) {
-        throw new Error("Falha ao iniciar sessão para pagamento");
-      }
-
-      // 3. Salvar dados da compra
+      // Salvar dados localmente (para uso pós-retorno)
       localStorage.setItem(
         "heartbalance_purchase_data",
         JSON.stringify({
-          userId: session.user.id,
           plan: selectedPlan,
           paymentMethod,
           personalData,
@@ -75,66 +64,158 @@ export default function Checkout() {
         })
       );
 
-      // 4. Redirecionar
-      window.location.href = createPageUrl("FinalizarCompra");
+      // Criar preferência no Mercado Pago (backend)
+      const resp = await fetch("/api/create-payment", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          plan: selectedPlan,
+          userEmail: personalData.email,
+        }),
+      });
+
+      const data = await resp.json();
+
+      if (!resp.ok) {
+        console.error("Erro create-payment:", data);
+        throw new Error(data?.error || "Falha ao criar pagamento");
+      }
+
+      if (!data?.init_point) {
+        throw new Error("Mercado Pago não retornou init_point");
+      }
+
+      // Redirecionar para o checkout do Mercado Pago
+      window.location.href = data.init_point;
     } catch (error) {
-      console.error("Checkout error:", error);
-      alert("Erro ao iniciar pagamento. Tente novamente.");
+      console.error("Erro ao iniciar pagamento:", error);
+      alert("Não foi possível iniciar o pagamento. Tente novamente.");
       setIsProcessing(false);
     }
   };
 
-  if (!selectedPlan) return null;
+  if (!selectedPlan) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-red-50 via-white to-rose-50 flex items-center justify-center">
+        <motion.div
+          animate={{ rotate: 360 }}
+          transition={{ repeat: Infinity, duration: 1, ease: "linear" }}
+          className="w-8 h-8 border-3 border-red-600 border-t-transparent rounded-full"
+        />
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-red-50 via-white to-rose-50">
       <div className="max-w-lg mx-auto px-4 py-6">
-
         {/* Header */}
         <div className="flex items-center gap-3 mb-6">
           <button
-            onClick={() => window.location.href = createPageUrl("Vendas")}
-            className="w-10 h-10 rounded-xl bg-white border flex items-center justify-center"
+            onClick={() => {
+              if (step > 1) setStep(step - 1);
+              else window.location.href = createPageUrl("Vendas");
+            }}
+            className="w-10 h-10 rounded-xl bg-white border border-gray-200 flex items-center justify-center"
           >
-            <ArrowLeft />
+            <ArrowLeft className="w-5 h-5 text-gray-600" />
           </button>
           <div>
-            <h1 className="text-xl font-bold">Finalizar Compra</h1>
+            <h1 className="text-xl font-bold text-gray-900">Finalizar Compra</h1>
             <p className="text-sm text-gray-500">Plano {selectedPlan.name}</p>
           </div>
         </div>
 
-        {/* Etapas */}
+        {/* Progress */}
         <div className="flex gap-2 mb-8">
-          {[1, 2, 3].map(s => (
-            <div key={s} className={`h-2 flex-1 rounded ${s <= step ? "bg-red-500" : "bg-gray-200"}`} />
+          {[1, 2, 3].map((s) => (
+            <div
+              key={s}
+              className={`h-2 flex-1 rounded-full transition-all ${
+                s <= step ? "bg-red-500" : "bg-gray-200"
+              }`}
+            />
           ))}
         </div>
 
+        {/* Step 1 */}
         {step === 1 && (
-          <div>
-            <Button onClick={() => { setPaymentMethod("pix"); setStep(2); }}>PIX</Button>
-            <Button onClick={() => { setPaymentMethod("card"); setStep(2); }}>Cartão</Button>
-          </div>
-        )}
-
-        {step === 2 && (
-          <div className="space-y-2">
-            <Input placeholder="Nome" value={personalData.nome} onChange={e => setPersonalData({ ...personalData, nome: e.target.value })} />
-            <Input placeholder="Email" value={personalData.email} onChange={e => setPersonalData({ ...personalData, email: e.target.value })} />
-            <Input placeholder="CPF" value={personalData.cpf} onChange={e => setPersonalData({ ...personalData, cpf: e.target.value })} />
-            <Button onClick={() => setStep(3)}>Continuar</Button>
-          </div>
-        )}
-
-        {step === 3 && (
-          <div>
-            <Button className="w-full" onClick={handleFinalizePurchase} disabled={isProcessing}>
-              {isProcessing ? "Processando..." : "Finalizar"}
+          <motion.div initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} className="space-y-4">
+            <Button
+              className="w-full"
+              onClick={() => {
+                setPaymentMethod("pix");
+                setStep(2);
+              }}
+            >
+              PIX
             </Button>
-          </div>
+
+            <Button
+              className="w-full"
+              onClick={() => {
+                setPaymentMethod("card");
+                setStep(2);
+              }}
+            >
+              Cartão
+            </Button>
+          </motion.div>
         )}
 
+        {/* Step 2 */}
+        {step === 2 && (
+          <motion.div initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} className="space-y-3">
+            <Input
+              placeholder="Nome"
+              value={personalData.nome}
+              onChange={(e) => setPersonalData({ ...personalData, nome: e.target.value })}
+            />
+            <Input
+              placeholder="Email"
+              value={personalData.email}
+              onChange={(e) => setPersonalData({ ...personalData, email: e.target.value })}
+            />
+            <Input
+              placeholder="CPF"
+              value={personalData.cpf}
+              onChange={(e) => setPersonalData({ ...personalData, cpf: e.target.value })}
+            />
+            <Input
+              placeholder="Telefone (opcional)"
+              value={personalData.telefone}
+              onChange={(e) => setPersonalData({ ...personalData, telefone: e.target.value })}
+            />
+
+            <Button className="w-full" onClick={handleContinuePersonalData}>
+              Continuar
+            </Button>
+          </motion.div>
+        )}
+
+        {/* Step 3 */}
+        {step === 3 && (
+          <motion.div initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} className="space-y-6">
+            <div className="bg-white rounded-2xl p-4 border border-gray-200">
+              <div className="flex items-center justify-between">
+                <span className="text-gray-700">Plano</span>
+                <span className="font-semibold">{selectedPlan.name}</span>
+              </div>
+              <div className="flex items-center justify-between mt-2">
+                <span className="text-gray-700">Valor</span>
+                <span className="font-semibold">R$ {Number(selectedPlan.price).toFixed(2)}</span>
+              </div>
+              <div className="flex items-center justify-between mt-2">
+                <span className="text-gray-700">Método</span>
+                <span className="font-semibold">{paymentMethod === "pix" ? "PIX" : "Cartão"}</span>
+              </div>
+            </div>
+
+            <Button className="w-full" onClick={handleFinalizePurchase} disabled={isProcessing}>
+              {isProcessing ? "Redirecionando..." : "Finalizar e Pagar"}
+            </Button>
+          </motion.div>
+        )}
       </div>
     </div>
   );
