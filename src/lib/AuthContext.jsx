@@ -1,7 +1,7 @@
-import React, { createContext, useState, useContext, useEffect } from 'react';
-import { supabase } from '@/lib/supabaseClient'; // certifique-se de ter criado esse arquivo
+import React, { createContext, useState, useContext, useEffect, useMemo } from "react";
+import { supabase } from "@/lib/supabaseClient";
 
-const AuthContext = createContext();
+const AuthContext = createContext(null);
 
 export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
@@ -10,48 +10,85 @@ export const AuthProvider = ({ children }) => {
   const [authError, setAuthError] = useState(null);
 
   useEffect(() => {
-    const checkUserAuth = async () => {
+    let mounted = true;
+
+    async function bootstrapAuth() {
       try {
         setIsLoadingAuth(true);
-        const { data: { user }, error } = await supabase.auth.getUser();
 
-        if (error) {
-          console.error('Auth error:', error);
-          setAuthError({ type: 'auth_error', message: error.message });
+        // 1) Primeiro: pega sessão (fonte de verdade)
+        const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+
+        if (!mounted) return;
+
+        if (sessionError) {
+          console.error("Auth session error:", sessionError);
+          setAuthError({ type: "auth_error", message: sessionError.message });
           setUser(null);
           setIsAuthenticated(false);
-        } else if (user) {
-          setUser(user);
-          setIsAuthenticated(true);
-        } else {
-          setUser(null);
-          setIsAuthenticated(false);
+          return;
         }
+
+        const session = sessionData?.session;
+
+        // 2) Sem sessão = precisa autenticar
+        if (!session?.user) {
+          setAuthError({ type: "auth_required", message: "Login required" });
+          setUser(null);
+          setIsAuthenticated(false);
+          return;
+        }
+
+        // 3) Com sessão, confirma usuário (opcional, mas bom)
+        const { data: userData, error: userError } = await supabase.auth.getUser();
+
+        if (!mounted) return;
+
+        if (userError) {
+          console.error("Auth getUser error:", userError);
+          // ainda existe sessão, mas se der erro aqui, trate como não autenticado
+          setAuthError({ type: "auth_error", message: userError.message });
+          setUser(null);
+          setIsAuthenticated(false);
+          return;
+        }
+
+        const currentUser = userData?.user ?? session.user;
+        setUser(currentUser);
+        setIsAuthenticated(true);
+        setAuthError(null);
       } catch (err) {
-        console.error('Unexpected auth error:', err);
-        setAuthError({ type: 'unknown', message: err.message });
+        console.error("Unexpected auth error:", err);
+        if (!mounted) return;
+        setAuthError({ type: "unknown", message: err?.message || "Unknown error" });
         setUser(null);
         setIsAuthenticated(false);
       } finally {
+        if (!mounted) return;
         setIsLoadingAuth(false);
       }
-    };
+    }
 
-    checkUserAuth();
+    bootstrapAuth();
 
-    // Listener para mudanças de sessão
-    const { data: subscription } = supabase.auth.onAuthStateChange((_event, session) => {
+    // Listener de sessão: isso é o que vai manter tudo sincronizado
+    const { data } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (!mounted) return;
+
       if (session?.user) {
         setUser(session.user);
         setIsAuthenticated(true);
+        setAuthError(null);
       } else {
         setUser(null);
         setIsAuthenticated(false);
+        setAuthError({ type: "auth_required", message: "Login required" });
       }
     });
 
     return () => {
-      subscription.subscription.unsubscribe();
+      mounted = false;
+      data?.subscription?.unsubscribe();
     };
   }, []);
 
@@ -59,35 +96,30 @@ export const AuthProvider = ({ children }) => {
     await supabase.auth.signOut();
     setUser(null);
     setIsAuthenticated(false);
+    setAuthError({ type: "auth_required", message: "Login required" });
   };
 
   const navigateToLogin = () => {
-    // Exemplo: redirecionar para rota de login própria
-    window.location.href = '/login';
-    // ou usar OAuth do Supabase:
-    // supabase.auth.signInWithOAuth({ provider: 'google' });
+    window.location.href = "/login";
   };
 
-  return (
-    <AuthContext.Provider
-      value={{
-        user,
-        isAuthenticated,
-        isLoadingAuth,
-        authError,
-        logout,
-        navigateToLogin,
-      }}
-    >
-      {children}
-    </AuthContext.Provider>
+  const value = useMemo(
+    () => ({
+      user,
+      isAuthenticated,
+      isLoadingAuth,
+      authError,
+      logout,
+      navigateToLogin,
+    }),
+    [user, isAuthenticated, isLoadingAuth, authError]
   );
+
+  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 };
 
 export const useAuth = () => {
-  const context = useContext(AuthContext);
-  if (!context) {
-    throw new Error('useAuth must be used within an AuthProvider');
-  }
-  return context;
+  const ctx = useContext(AuthContext);
+  if (!ctx) throw new Error("useAuth must be used within an AuthProvider");
+  return ctx;
 };
