@@ -10,8 +10,6 @@ import PageNotFound from "./lib/PageNotFound";
 import { AuthProvider, useAuth } from "@/lib/AuthContext";
 import UserNotRegisteredError from "@/components/UserNotRegisteredError";
 import GerarPix from "@/components/GerarPix";
-
-// ✅ IMPORTA SEU AUTHGATE (ajuste o caminho se necessário)
 import AuthGate from "@/components/AuthGate";
 
 const { Pages, Layout, mainPage } = pagesConfig;
@@ -22,15 +20,10 @@ const LayoutWrapper = ({ children, currentPageName }) =>
   Layout ? <Layout currentPageName={currentPageName}>{children}</Layout> : <>{children}</>;
 
 const AuthenticatedApp = () => {
-  const {
-    isLoadingAuth,
-    isLoadingPublicSettings,
-    authError,
-    isAuthenticated,
-  } = useAuth();
+  const { isLoadingAuth, authError, isAuthenticated } = useAuth();
 
   // Loader
-  if (isLoadingPublicSettings || isLoadingAuth) {
+  if (isLoadingAuth) {
     return (
       <div className="fixed inset-0 flex items-center justify-center">
         <div className="w-8 h-8 border-4 border-slate-200 border-t-slate-800 rounded-full animate-spin"></div>
@@ -38,22 +31,17 @@ const AuthenticatedApp = () => {
     );
   }
 
-  // Erros específicos do seu AuthContext
-  if (authError) {
-    if (authError.type === "user_not_registered") {
-      return <UserNotRegisteredError />;
-    }
-    // Se seu AuthContext insistir em auth_required, cai aqui:
-    if (authError.type === "auth_required") {
-      return <AuthGate onSuccess={() => window.location.reload()} />;
-    }
+  // Erros específicos
+  if (authError?.type === "user_not_registered") {
+    return <UserNotRegisteredError />;
   }
 
-  // ✅ AQUI ESTÁ O “PORTÃO”: SEM LOGIN, NÃO TEM QUIZ, NEM ROTAS
+  // ✅ SEM LOGIN: mostra AuthGate ANTES de qualquer rota (quiz/checkout/etc.)
   if (!isAuthenticated) {
     return <AuthGate onSuccess={() => window.location.reload()} />;
   }
 
+  // ✅ COM LOGIN: libera as rotas
   return (
     <Routes>
       <Route
