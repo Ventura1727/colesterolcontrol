@@ -1,10 +1,10 @@
 import React, { useState, useEffect } from "react";
 import { motion } from "framer-motion";
-import { ArrowLeft, CreditCard, Smartphone, Lock } from "lucide-react";
+import { ArrowLeft } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { createPageUrl } from "@/utils";
-import { supabase } from "@/lib/supabaseClient"; // <-- CORRECAO: importar supabase
+import { supabase } from "@/lib/supabaseClient";
 
 // Planos disponíveis
 const plans = {
@@ -14,9 +14,9 @@ const plans = {
 };
 
 export default function Checkout() {
-  const [step, setStep] = useState(1); // 1 = método, 2 = dados pessoais, 3 = pagamento
+  const [step, setStep] = useState(1);
   const [selectedPlan, setSelectedPlan] = useState(null);
-  const [paymentMethod, setPaymentMethod] = useState(null); // 'pix' ou 'card'
+  const [paymentMethod, setPaymentMethod] = useState(null);
   const [isProcessing, setIsProcessing] = useState(false);
 
   const [personalData, setPersonalData] = useState({
@@ -43,40 +43,31 @@ export default function Checkout() {
     setSelectedPlan(plans[planId]);
   }, []);
 
-  // Validação dos dados pessoais
-  const handlePersonalDataSubmit = () => {
-    if (!personalData.nome || !personalData.email || !personalData.cpf) {
-      alert("Por favor, preencha todos os campos obrigatórios");
-      return;
-    }
-    setStep(3);
-  };
-
-  // Finalização da compra
+  // Finalizar compra (COM SESSÃO ANÔNIMA)
   const handleFinalizePurchase = async () => {
     setIsProcessing(true);
 
     try {
-      // 1) Checar sessão (mais robusto para fluxo de checkout)
-      const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
-      if (sessionError) throw sessionError;
+      // 1. Verificar sessão atual
+      const { data: sessionData } = await supabase.auth.getSession();
+      let session = sessionData?.session;
 
-      const session = sessionData?.session;
-
-      // 2) Se não tem sessão, redireciona para login e NÃO deixa tela branca
+      // 2. Se não existir sessão, criar sessão anônima
       if (!session?.user) {
-        const returnUrl = createPageUrl("FinalizarCompra");
-        window.location.href = `/login?returnUrl=${encodeURIComponent(returnUrl)}`;
-        return;
+        const { data: anonData, error } = await supabase.auth.signInAnonymously();
+        if (error) throw error;
+        session = anonData.session;
       }
 
-      const user = session.user;
-      console.log("Usuário autenticado:", user);
+      if (!session?.user) {
+        throw new Error("Falha ao iniciar sessão para pagamento");
+      }
 
-      // Salvar dados da compra
+      // 3. Salvar dados da compra
       localStorage.setItem(
         "heartbalance_purchase_data",
         JSON.stringify({
+          userId: session.user.id,
           plan: selectedPlan,
           paymentMethod,
           personalData,
@@ -84,109 +75,66 @@ export default function Checkout() {
         })
       );
 
-      // Redirecionar para finalização
+      // 4. Redirecionar
       window.location.href = createPageUrl("FinalizarCompra");
     } catch (error) {
-      console.error("Erro ao processar checkout:", error);
-      alert("Erro ao processar pagamento. Tente novamente.");
+      console.error("Checkout error:", error);
+      alert("Erro ao iniciar pagamento. Tente novamente.");
       setIsProcessing(false);
     }
   };
 
-  // Formatação de cartão
-  const formatCardNumber = (value) => {
-    return value.replace(/\s/g, "").match(/.{1,4}/g)?.join(" ") || value;
-  };
-
-  const formatExpiry = (value) => {
-    const cleaned = value.replace(/\D/g, "");
-    if (cleaned.length >= 2) {
-      return cleaned.slice(0, 2) + "/" + cleaned.slice(2, 4);
-    }
-    return cleaned;
-  };
-
-  if (!selectedPlan) {
-    return (
-      <div className="min-h-screen bg-gradient-to-br from-red-50 via-white to-rose-50 flex items-center justify-center">
-        <motion.div
-          animate={{ rotate: 360 }}
-          transition={{ repeat: Infinity, duration: 1, ease: "linear" }}
-          className="w-8 h-8 border-3 border-red-600 border-t-transparent rounded-full"
-        />
-      </div>
-    );
-  }
-
-  const currentPrice = selectedPlan.price;
+  if (!selectedPlan) return null;
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-red-50 via-white to-rose-50">
       <div className="max-w-lg mx-auto px-4 py-6">
+
         {/* Header */}
         <div className="flex items-center gap-3 mb-6">
           <button
-            onClick={() => {
-              if (step > 1) {
-                setStep(step - 1);
-              } else {
-                window.location.href = createPageUrl("Vendas");
-              }
-            }}
-            className="w-10 h-10 rounded-xl bg-white border border-gray-200 flex items-center justify-center"
+            onClick={() => window.location.href = createPageUrl("Vendas")}
+            className="w-10 h-10 rounded-xl bg-white border flex items-center justify-center"
           >
-            <ArrowLeft className="w-5 h-5 text-gray-600" />
+            <ArrowLeft />
           </button>
           <div>
-            <h1 className="text-xl font-bold text-gray-900">Finalizar Compra</h1>
+            <h1 className="text-xl font-bold">Finalizar Compra</h1>
             <p className="text-sm text-gray-500">Plano {selectedPlan.name}</p>
           </div>
         </div>
 
-        {/* Progress Bar */}
+        {/* Etapas */}
         <div className="flex gap-2 mb-8">
-          {[1, 2, 3].map((s) => (
-            <div
-              key={s}
-              className={`h-2 flex-1 rounded-full transition-all ${
-                s <= step ? "bg-red-500" : "bg-gray-200"
-              }`}
-            />
+          {[1, 2, 3].map(s => (
+            <div key={s} className={`h-2 flex-1 rounded ${s <= step ? "bg-red-500" : "bg-gray-200"}`} />
           ))}
         </div>
 
-        {/* Step 1: Escolher Método */}
         {step === 1 && (
-          <motion.div initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} className="space-y-4">
-            {/* PIX e Cartão */}
-            {/* ... (mantenha seu conteúdo aqui) */}
-          </motion.div>
+          <div>
+            <Button onClick={() => { setPaymentMethod("pix"); setStep(2); }}>PIX</Button>
+            <Button onClick={() => { setPaymentMethod("card"); setStep(2); }}>Cartão</Button>
+          </div>
         )}
 
-        {/* Step 2: Dados Pessoais */}
         {step === 2 && (
-          <motion.div initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} className="space-y-4">
-            {/* Campos Nome, Email, CPF, Telefone */}
-            {/* Botão Continuar */}
-          </motion.div>
+          <div className="space-y-2">
+            <Input placeholder="Nome" value={personalData.nome} onChange={e => setPersonalData({ ...personalData, nome: e.target.value })} />
+            <Input placeholder="Email" value={personalData.email} onChange={e => setPersonalData({ ...personalData, email: e.target.value })} />
+            <Input placeholder="CPF" value={personalData.cpf} onChange={e => setPersonalData({ ...personalData, cpf: e.target.value })} />
+            <Button onClick={() => setStep(3)}>Continuar</Button>
+          </div>
         )}
 
-        {/* Step 3: Finalizar */}
         {step === 3 && (
-          <motion.div initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} className="space-y-6">
-            {/* PIX ou Cartão */}
-            {/* Resumo da compra */}
-
-            {/* Botão Finalizar (exemplo) */}
-            <Button
-              className="w-full"
-              onClick={handleFinalizePurchase}
-              disabled={isProcessing || !paymentMethod}
-            >
+          <div>
+            <Button className="w-full" onClick={handleFinalizePurchase} disabled={isProcessing}>
               {isProcessing ? "Processando..." : "Finalizar"}
             </Button>
-          </motion.div>
+          </div>
         )}
+
       </div>
     </div>
   );
