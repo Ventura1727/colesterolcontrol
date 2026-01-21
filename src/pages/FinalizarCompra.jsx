@@ -60,8 +60,8 @@ export default function FinalizarCompra() {
       // 4) Upsert no Supabase (cria ou atualiza)
       // IMPORTANT: se sua tabela tiver outro nome, vamos ajustar no próximo passo.
       const { error: upsertError } = await supabase
-        .from("user_profiles")
-        .upsert(profilePayload, { onConflict: "user_id" });
+  .from("user_profiles")
+  .upsert(profilePayload, { onConflict: "created_by" });
 
       if (upsertError) throw upsertError;
 
