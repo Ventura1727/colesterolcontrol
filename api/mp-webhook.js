@@ -26,31 +26,35 @@ export default async function handler(req, res) {
       return res.status(200).json({ ok: true });
     }
 
+    // Só processar pagamentos aprovados
     if (payment.status !== "approved") {
       return res.status(200).json({ ok: true, status: payment.status });
     }
 
-    const userEmail =
-      payment.external_reference || payment.payer?.email;
+    // 🔥 ESTE É O UID DO SUPABASE
+    const userId = payment.external_reference;
 
-    if (!userEmail) {
-      console.error("No email found in payment");
+    if (!userId) {
+      console.error("No external_reference (userId) in payment");
       return res.status(200).json({ ok: true });
     }
 
-    // Atualizar Supabase
-    const { error } = await supabase
+    // Atualizar perfil do usuário
+    const { error, data } = await supabase
       .from("user_profiles")
       .update({
         plano_ativo: true,
         plano_tipo: "mensal",
         data_inicio_pl: new Date().toISOString().slice(0, 10),
       })
-      .eq("created_by", userEmail);
+      .eq("id", userId);
 
     if (error) {
       console.error("Supabase update error", error);
+      return res.status(200).json({ ok: true, error: "db_error" });
     }
+
+    console.log("Premium activated for user", userId);
 
     return res.status(200).json({ ok: true, activated: true });
   } catch (err) {
