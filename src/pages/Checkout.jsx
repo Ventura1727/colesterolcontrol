@@ -4,6 +4,8 @@ import { ArrowLeft } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { createPageUrl } from "@/utils";
+import { supabase } from "@/lib/supabaseClient";
+import AuthGate from "@/components/AuthGate";
 
 // Planos disponíveis
 const plans = {
@@ -18,12 +20,25 @@ export default function Checkout() {
   const [paymentMethod, setPaymentMethod] = useState(null);
   const [isProcessing, setIsProcessing] = useState(false);
 
+  const [user, setUser] = useState(null);
+  const [showAuth, setShowAuth] = useState(false);
+
   const [personalData, setPersonalData] = useState({
     nome: "",
     email: "",
     cpf: "",
     telefone: "",
   });
+
+  // Carregar usuário autenticado
+  useEffect(() => {
+    supabase.auth.getUser().then(({ data }) => {
+      if (data?.user) {
+        setUser(data.user);
+        setPersonalData((p) => ({ ...p, email: data.user.email || "" }));
+      }
+    });
+  }, []);
 
   // Carregar plano selecionado
   useEffect(() => {
@@ -50,10 +65,16 @@ export default function Checkout() {
       return;
     }
 
+    // 🔥 Usuário precisa estar autenticado
+    if (!user) {
+      setShowAuth(true);
+      return;
+    }
+
     setIsProcessing(true);
 
     try {
-      // Salvar dados localmente (para uso pós-retorno)
+      // Salvar dados localmente
       localStorage.setItem(
         "heartbalance_purchase_data",
         JSON.stringify({
@@ -64,13 +85,14 @@ export default function Checkout() {
         })
       );
 
-      // Criar preferência no Mercado Pago (backend)
+      // Criar preferência no Mercado Pago
       const resp = await fetch("/api/create-payment", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           plan: selectedPlan,
-          userEmail: personalData.email,
+          userEmail: user.email,
+          userId: user.id, // 🔥 UID do Supabase
         }),
       });
 
@@ -109,6 +131,19 @@ export default function Checkout() {
   return (
     <div className="min-h-screen bg-gradient-to-br from-red-50 via-white to-rose-50">
       <div className="max-w-lg mx-auto px-4 py-6">
+
+        {showAuth && (
+          <div className="mb-6 bg-white p-4 rounded-xl border">
+            <AuthGate
+              onSuccess={(u) => {
+                setUser(u);
+                setPersonalData((p) => ({ ...p, email: u.email || "" }));
+                setShowAuth(false);
+              }}
+            />
+          </div>
+        )}
+
         {/* Header */}
         <div className="flex items-center gap-3 mb-6">
           <button
@@ -211,11 +246,16 @@ export default function Checkout() {
               </div>
             </div>
 
-            <Button className="w-full" onClick={handleFinalizePurchase} disabled={isProcessing}>
+            <Button
+              className="w-full"
+              onClick={handleFinalizePurchase}
+              disabled={isProcessing}
+            >
               {isProcessing ? "Redirecionando..." : "Finalizar e Pagar"}
             </Button>
           </motion.div>
         )}
+
       </div>
     </div>
   );
