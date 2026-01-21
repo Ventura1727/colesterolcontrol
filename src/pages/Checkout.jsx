@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
-import { motion } from "framer-motion";
-import { ArrowLeft } from "lucide-react";
+import { motion, AnimatePresence } from "framer-motion";
+import { ArrowLeft, CreditCard, QrCode } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { createPageUrl } from "@/utils";
@@ -26,7 +26,6 @@ export default function Checkout() {
     nome: "",
     email: "",
     cpf: "",
-    telefone: "",
   });
 
   useEffect(() => {
@@ -47,15 +46,13 @@ export default function Checkout() {
     setSelectedPlan(plans[planId]);
   }, []);
 
-  // 🔥 LOGIN É OBRIGATÓRIO ANTES DE IR PARA O STEP 3
-  const handleContinuePersonalData = async () => {
+  const handleContinue = async () => {
     if (!personalData.nome || !personalData.email || !personalData.cpf) {
-      alert("Por favor, preencha Nome, Email e CPF.");
+      alert("Preencha todos os campos.");
       return;
     }
 
     const { data } = await supabase.auth.getUser();
-
     if (!data?.user) {
       setShowAuth(true);
       return;
@@ -65,123 +62,93 @@ export default function Checkout() {
     setStep(3);
   };
 
-  const handleFinalizePurchase = async () => {
-    if (!selectedPlan) return;
-    if (!paymentMethod) {
-      alert("Selecione o método de pagamento.");
-      return;
-    }
-
-    if (!user) {
-      setShowAuth(true);
-      return;
-    }
+  const handlePay = async () => {
+    if (!user || !paymentMethod) return;
 
     setIsProcessing(true);
 
-    try {
-      localStorage.setItem(
-        "heartbalance_purchase_data",
-        JSON.stringify({
-          plan: selectedPlan,
-          paymentMethod,
-          personalData,
-          timestamp: Date.now(),
-        })
-      );
+    const resp = await fetch("/api/create-payment", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        plan: selectedPlan,
+        userEmail: user.email,
+        userId: user.id,
+      }),
+    });
 
-      const resp = await fetch("/api/create-payment", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          plan: selectedPlan,
-          userEmail: user.email,
-          userId: user.id,
-        }),
-      });
-
-      const data = await resp.json();
-
-      if (!resp.ok || !data?.init_point) {
-        throw new Error("Falha ao criar pagamento");
-      }
-
-      window.location.href = data.init_point;
-    } catch (error) {
-      console.error("Erro ao iniciar pagamento:", error);
-      alert("Não foi possível iniciar o pagamento.");
+    const data = await resp.json();
+    if (!resp.ok || !data?.init_point) {
+      alert("Erro ao iniciar pagamento");
       setIsProcessing(false);
+      return;
     }
+
+    window.location.href = data.init_point;
   };
 
-  if (!selectedPlan) {
-    return (
-      <div className="min-h-screen flex items-center justify-center">
-        <motion.div animate={{ rotate: 360 }} transition={{ repeat: Infinity, duration: 1 }} />
-      </div>
-    );
-  }
+  if (!selectedPlan) return null;
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-red-50 via-white to-rose-50">
-      <div className="max-w-lg mx-auto px-4 py-6">
+    <div className="min-h-screen bg-gradient-to-br from-rose-50 to-white p-6">
+      {showAuth && (
+        <div className="max-w-md mx-auto bg-white p-6 rounded-xl shadow mb-6">
+          <AuthGate onSuccess={(u) => { setUser(u); setShowAuth(false); }} />
+        </div>
+      )}
 
-        {showAuth && (
-          <div className="mb-6 bg-white p-4 rounded-xl border">
-            <AuthGate
-              onSuccess={(u) => {
-                setUser(u);
-                setPersonalData((p) => ({ ...p, email: u.email || "" }));
-                setShowAuth(false);
-              }}
-            />
-          </div>
-        )}
-
+      <div className="max-w-lg mx-auto bg-white p-6 rounded-3xl shadow-xl">
         <div className="flex items-center gap-3 mb-6">
-          <button
-            onClick={() => {
-              if (step > 1) setStep(step - 1);
-              else window.location.href = createPageUrl("Vendas");
-            }}
-            className="w-10 h-10 bg-white border rounded-xl"
-          >
-            <ArrowLeft />
-          </button>
+          <ArrowLeft className="cursor-pointer" onClick={() => setStep(step - 1)} />
           <div>
-            <h1>Finalizar Compra</h1>
-            <p>Plano {selectedPlan.name}</p>
+            <h2 className="text-xl font-bold">Finalizar Compra</h2>
+            <p className="text-sm text-gray-500">{selectedPlan.name}</p>
           </div>
         </div>
 
-        <div className="flex gap-2 mb-8">
+        <div className="flex mb-6 gap-2">
           {[1, 2, 3].map((s) => (
-            <div key={s} className={`h-2 flex-1 ${s <= step ? "bg-red-500" : "bg-gray-200"}`} />
+            <div key={s} className={`h-2 flex-1 rounded-full ${s <= step ? "bg-red-500" : "bg-gray-200"}`} />
           ))}
         </div>
 
-        {step === 1 && (
-          <>
-            <Button onClick={() => { setPaymentMethod("pix"); setStep(2); }}>PIX</Button>
-            <Button onClick={() => { setPaymentMethod("card"); setStep(2); }}>Cartão</Button>
-          </>
-        )}
+        <AnimatePresence mode="wait">
 
-        {step === 2 && (
-          <>
-            <Input placeholder="Nome" value={personalData.nome} onChange={e => setPersonalData({ ...personalData, nome: e.target.value })} />
-            <Input placeholder="Email" value={personalData.email} onChange={e => setPersonalData({ ...personalData, email: e.target.value })} />
-            <Input placeholder="CPF" value={personalData.cpf} onChange={e => setPersonalData({ ...personalData, cpf: e.target.value })} />
-            <Button onClick={handleContinuePersonalData}>Continuar</Button>
-          </>
-        )}
+          {step === 1 && (
+            <motion.div key="step1" initial={{ opacity: 0, x: 50 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0 }}>
+              <Button className="w-full mb-3" onClick={() => { setPaymentMethod("pix"); setStep(2); }}>
+                <QrCode className="mr-2" /> PIX
+              </Button>
+              <Button className="w-full" onClick={() => { setPaymentMethod("card"); setStep(2); }}>
+                <CreditCard className="mr-2" /> Cartão
+              </Button>
+            </motion.div>
+          )}
 
-        {step === 3 && (
-          <Button onClick={handleFinalizePurchase} disabled={isProcessing}>
-            {isProcessing ? "Redirecionando..." : "Finalizar e Pagar"}
-          </Button>
-        )}
+          {step === 2 && (
+            <motion.div key="step2" initial={{ opacity: 0, x: 50 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0 }} className="space-y-3">
+              <Input placeholder="Nome" value={personalData.nome} onChange={(e) => setPersonalData({ ...personalData, nome: e.target.value })} />
+              <Input placeholder="Email" value={personalData.email} onChange={(e) => setPersonalData({ ...personalData, email: e.target.value })} />
+              <Input placeholder="CPF" value={personalData.cpf} onChange={(e) => setPersonalData({ ...personalData, cpf: e.target.value })} />
+              <Button className="w-full" onClick={handleContinue}>Continuar</Button>
+            </motion.div>
+          )}
 
+          {step === 3 && (
+            <motion.div key="step3" initial={{ opacity: 0, x: 50 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0 }} className="space-y-4">
+              <div className="bg-gray-50 p-4 rounded-xl">
+                <p><b>Plano:</b> {selectedPlan.name}</p>
+                <p><b>Valor:</b> R$ {selectedPlan.price.toFixed(2)}</p>
+                <p><b>Método:</b> {paymentMethod === "pix" ? "PIX" : "Cartão"}</p>
+              </div>
+
+              <Button className="w-full" onClick={handlePay} disabled={isProcessing}>
+                {isProcessing ? "Redirecionando..." : "Pagar Agora"}
+              </Button>
+            </motion.div>
+          )}
+
+        </AnimatePresence>
       </div>
     </div>
   );
