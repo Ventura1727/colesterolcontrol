@@ -6,24 +6,18 @@ export default async function handler(req, res) {
   }
 
   try {
-    const { plan, userEmail } = req.body;
+    const { plan, userEmail, userId } = req.body;
 
-    if (!plan || !userEmail) {
-      return res.status(400).json({ error: "Missing plan or userEmail" });
+    if (!plan || !userEmail || !userId) {
+      return res.status(400).json({ error: "Missing plan, userEmail or userId" });
     }
 
-    // Segurança: normaliza preço e evita NaN
+    // Segurança: valida preço
     const price = Number(plan.price);
     if (!Number.isFinite(price) || price <= 0) {
       return res.status(400).json({ error: "Invalid plan.price" });
     }
 
-    // 🔥 IMPORTANTE:
-    // - external_reference será usado no webhook para identificar quem liberar.
-    // - payment_methods: forçar Pix e excluir boleto.
-    // Observação: no Checkout Pro, não existe "only_pix" garantido via API;
-    // mas excluir ticket (boleto) e excluir cartão pode ajudar.
-    // Se você quiser aceitar cartão + pix, não exclua credit_card/debit_card.
     const preference = {
       items: [
         {
@@ -34,14 +28,15 @@ export default async function handler(req, res) {
         },
       ],
 
+      // Email só para o Mercado Pago
       payer: { email: userEmail },
 
-      external_reference: userEmail,
+      // 🔥 ESTE É O VÍNCULO DO PAGAMENTO COM O USUÁRIO
+      external_reference: userId,
 
       notification_url: "https://heartbalance.com.br/api/mp-webhook",
 
       back_urls: {
-        // Ajuste para a rota real do seu app
         success: "https://heartbalance.com.br/finalizarcompra",
         failure: "https://heartbalance.com.br/checkout",
         pending: "https://heartbalance.com.br/checkout",
@@ -49,13 +44,9 @@ export default async function handler(req, res) {
 
       auto_return: "approved",
 
+      // PIX + Cartão (boleto removido)
       payment_methods: {
-        excluded_payment_types: [
-          { id: "ticket" }, // remove boleto
-        ],
-        // Se você quiser PIX + cartão, deixe assim (não exclui cartões).
-        // Se você quiser PIX APENAS, descomente abaixo:
-        // excluded_payment_methods: [{ id: "credit_card" }, { id: "debit_card" }],
+        excluded_payment_types: [{ id: "ticket" }],
       },
     };
 
