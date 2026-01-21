@@ -18,19 +18,34 @@ export default async function handler(req, res) {
           unit_price: Number(plan.price),
         },
       ],
+
       payer: {
         email: userEmail,
       },
+
+      // Força PIX e remove boleto
+      payment_methods: {
+        excluded_payment_types: [
+          { id: "ticket" }, // remove boleto
+        ],
+      },
+
+      // Webhook
+      notification_url: "https://heartbalance.com.br/api/mp-webhook",
+
       back_urls: {
         success: "https://heartbalance.com.br/finalizarcompra",
         failure: "https://heartbalance.com.br/checkout",
         pending: "https://heartbalance.com.br/checkout",
       },
+
       auto_return: "approved",
+
+      // Usamos o email para identificar o usuário no webhook
       external_reference: userEmail,
     };
 
-    const response = await fetch("https://api.mercadopago.com/checkout/preferences", {
+    const mpResp = await fetch("https://api.mercadopago.com/checkout/preferences", {
       method: "POST",
       headers: {
         Authorization: `Bearer ${process.env.MERCADOPAGO_ACCESS_TOKEN}`,
@@ -39,14 +54,19 @@ export default async function handler(req, res) {
       body: JSON.stringify(preference),
     });
 
-    const data = await response.json();
+    const data = await mpResp.json();
+
+    if (!mpResp.ok) {
+      console.error("MercadoPago error:", data);
+      return res.status(500).json({ error: "MercadoPago preference failed" });
+    }
 
     return res.status(200).json({
       init_point: data.init_point,
       id: data.id,
     });
   } catch (err) {
-    console.error("MP error:", err);
-    return res.status(500).json({ error: "Failed to create payment" });
+    console.error("Create payment error:", err);
+    return res.status(500).json({ error: "Internal error" });
   }
 }
