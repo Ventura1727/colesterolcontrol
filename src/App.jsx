@@ -5,20 +5,35 @@ import { queryClientInstance } from "@/lib/query-client";
 import VisualEditAgent from "@/lib/VisualEditAgent";
 import NavigationTracker from "@/lib/NavigationTracker";
 import { pagesConfig } from "./pages.config";
-import { BrowserRouter as Router, Route, Routes, Navigate, useLocation } from "react-router-dom";
+import {
+  BrowserRouter as Router,
+  Route,
+  Routes,
+  Navigate,
+  useLocation,
+} from "react-router-dom";
 import PageNotFound from "./lib/PageNotFound";
 import { AuthProvider, useAuth } from "@/lib/AuthContext";
 import UserNotRegisteredError from "@/components/UserNotRegisteredError";
 import GerarPix from "@/components/GerarPix";
 import AuthGate from "@/components/AuthGate";
-import ResetPassword from "@/components/ResetPassword"; // ✅ NOVO
+
+// ✅ ajuste os imports conforme onde você criou os arquivos:
+// se você criou em /src/pages, use "@/pages/..."
+// se criou em /src/components, use "@/components/..."
+import AuthCallback from "@/pages/AuthCallback"; // ✅ NOVO (callback do Supabase)
+import ResetPassword from "@/pages/ResetPassword"; // ✅ NOVO (tela de redefinir senha)
 
 const { Pages, Layout, mainPage } = pagesConfig;
 const mainPageKey = mainPage ?? Object.keys(Pages)[0];
 const MainPage = mainPageKey ? Pages[mainPageKey] : <></>;
 
 const LayoutWrapper = ({ children, currentPageName }) =>
-  Layout ? <Layout currentPageName={currentPageName}>{children}</Layout> : <>{children}</>;
+  Layout ? (
+    <Layout currentPageName={currentPageName}>{children}</Layout>
+  ) : (
+    <>{children}</>
+  );
 
 /**
  * Guard de autenticação (SaaS): qualquer rota protegida exige login.
@@ -32,7 +47,7 @@ const RequireAuth = ({ children }) => {
   if (isLoadingAuth) {
     return (
       <div className="fixed inset-0 flex items-center justify-center">
-        <div className="w-8 h-8 border-4 border-slate-200 border-t-slate-800 rounded-full animate-spin"></div>
+        <div className="w-8 h-8 border-4 border-slate-200 border-t-slate-800 rounded-full animate-spin" />
       </div>
     );
   }
@@ -62,7 +77,7 @@ const PublicLoginRoute = () => {
   if (isLoadingAuth) {
     return (
       <div className="fixed inset-0 flex items-center justify-center">
-        <div className="w-8 h-8 border-4 border-slate-200 border-t-slate-800 rounded-full animate-spin"></div>
+        <div className="w-8 h-8 border-4 border-slate-200 border-t-slate-800 rounded-full animate-spin" />
       </div>
     );
   }
@@ -78,6 +93,16 @@ const PublicLoginRoute = () => {
 };
 
 const ProtectedRoutes = () => {
+  const location = useLocation();
+  const pathname = location.pathname.toLowerCase();
+
+  // ✅ Regra simples: só mostrar Pix quando estiver em rota de checkout
+  // (ajuste se seu checkout tiver outro nome)
+  const isCheckout =
+    pathname === "/checkout" ||
+    pathname.startsWith("/checkout/") ||
+    pathname.includes("checkout");
+
   return (
     <Routes>
       <Route
@@ -85,7 +110,7 @@ const ProtectedRoutes = () => {
         element={
           <LayoutWrapper currentPageName={mainPageKey}>
             <MainPage />
-            <GerarPix />
+            {/* ❌ NÃO renderiza GerarPix aqui */}
           </LayoutWrapper>
         }
       />
@@ -97,6 +122,10 @@ const ProtectedRoutes = () => {
           element={
             <LayoutWrapper currentPageName={path}>
               <Page />
+              {/* ✅ Só no checkout */}
+              {(path.toLowerCase().includes("checkout") || isCheckout) ? (
+                <GerarPix />
+              ) : null}
             </LayoutWrapper>
           }
         />
@@ -117,7 +146,12 @@ function App() {
           <Routes>
             {/* Públicas */}
             <Route path="/login" element={<PublicLoginRoute />} />
-            <Route path="/reset-password" element={<ResetPassword />} /> {/* ✅ NOVO */}
+
+            {/* ✅ Callback do Supabase (recovery/login/magic link) */}
+            <Route path="/auth/callback" element={<AuthCallback />} />
+
+            {/* ✅ Tela para definir nova senha (recovery) */}
+            <Route path="/reset-password" element={<ResetPassword />} />
 
             {/* Tudo protegido */}
             <Route
