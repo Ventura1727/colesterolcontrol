@@ -11,6 +11,7 @@ import { AuthProvider, useAuth } from "@/lib/AuthContext";
 import UserNotRegisteredError from "@/components/UserNotRegisteredError";
 import GerarPix from "@/components/GerarPix";
 import AuthGate from "@/components/AuthGate";
+import ResetPassword from "@/components/ResetPassword"; // ✅ NOVO
 
 const { Pages, Layout, mainPage } = pagesConfig;
 const mainPageKey = mainPage ?? Object.keys(Pages)[0];
@@ -114,8 +115,9 @@ function App() {
           <NavigationTracker />
 
           <Routes>
-            {/* Pública */}
+            {/* Públicas */}
             <Route path="/login" element={<PublicLoginRoute />} />
+            <Route path="/reset-password" element={<ResetPassword />} /> {/* ✅ NOVO */}
 
             {/* Tudo protegido */}
             <Route
