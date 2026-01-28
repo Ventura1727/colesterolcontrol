@@ -12,6 +12,9 @@ import UserNotRegisteredError from "@/components/UserNotRegisteredError";
 import GerarPix from "@/components/GerarPix";
 import AuthGate from "@/components/AuthGate";
 
+import { useEffect, useState } from "react";
+import { supabase } from "@/lib/supabaseClient";
+
 /**
  * ✅ IMPORTANTE:
  * Use UM padrão e siga:
@@ -58,6 +61,84 @@ const RequireAuth = ({ children }) => {
   }
 
   return children;
+};
+
+/**
+ * Guard de assinatura/pagamento:
+ * - Admin (profiles.role === 'admin') entra direto
+ * - Demais usuários: se não estiver no checkout, manda para /checkout
+ *
+ * Depois você pode substituir a regra do "não-admin" para checar assinatura real.
+ */
+const RequireSubscription = ({ children }) => {
+  const { isLoadingAuth, isAuthenticated } = useAuth();
+  const location = useLocation();
+
+  const [loading, setLoading] = useState(true);
+  const [isAdmin, setIsAdmin] = useState(false);
+
+  useEffect(() => {
+    let mounted = true;
+
+    async function run() {
+      try {
+        if (isLoadingAuth) return;
+        if (!isAuthenticated) return;
+
+        const { data: userData } = await supabase.auth.getUser();
+        const user = userData?.user;
+        if (!user) return;
+
+        const { data, error } = await supabase
+          .from("profiles")
+          .select("role")
+          .eq("id", user.id)
+          .single();
+
+        if (!mounted) return;
+
+        if (!error && data?.role === "admin") {
+          setIsAdmin(true);
+        } else {
+          setIsAdmin(false);
+        }
+      } catch (e) {
+        // Se der erro, assume não-admin (comportamento conservador)
+        if (mounted) setIsAdmin(false);
+      } finally {
+        if (mounted) setLoading(false);
+      }
+    }
+
+    run();
+    return () => {
+      mounted = false;
+    };
+  }, [isLoadingAuth, isAuthenticated]);
+
+  if (isLoadingAuth || loading) {
+    return (
+      <div className="fixed inset-0 flex items-center justify-center">
+        <div className="w-8 h-8 border-4 border-slate-200 border-t-slate-800 rounded-full animate-spin" />
+      </div>
+    );
+  }
+
+  // Se não estiver logado, RequireAuth já cuida
+  if (!isAuthenticated) return null;
+
+  // ✅ Admin: entra direto
+  if (isAdmin) return children;
+
+  // ✅ Não-admin: se já está no checkout, deixa
+  const path = location.pathname.toLowerCase();
+  const isCheckout =
+    path === "/checkout" || path.startsWith("/checkout/") || path.includes("checkout");
+
+  if (isCheckout) return children;
+
+  // 🚫 Não-admin: manda para checkout
+  return <Navigate to="/checkout" replace />;
 };
 
 /**
@@ -145,7 +226,9 @@ function App() {
               path="/*"
               element={
                 <RequireAuth>
-                  <ProtectedRoutes />
+                  <RequireSubscription>
+                    <ProtectedRoutes />
+                  </RequireSubscription>
                 </RequireAuth>
               }
             />
