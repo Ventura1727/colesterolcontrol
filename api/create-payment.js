@@ -2,7 +2,8 @@
 
 const PLANS = {
   mensal: { id: "mensal", name: "Mensal", price: 24.9 },
-  anual: { id: "anual", name: "Anual", price: 199.9 }, // ajuste se existir
+  // opcional:
+  // anual: { id: "anual", name: "Anual", price: 199.9 },
 };
 
 export default async function handler(req, res) {
@@ -14,13 +15,12 @@ export default async function handler(req, res) {
     const body = req.body ?? {};
     const { userEmail, userId } = body;
 
-    // ✅ aceita dois formatos:
-    // A) planId: "mensal"
-    // B) plan: { id/name/price }
-    const planId = body.planId || body.plan?.id || body.plan?.slug;
-    const planFromMap = planId ? PLANS[String(planId).toLowerCase()] : null;
+    // aceita planId OU plan
+    const planId = body.planId || body.plan?.id || body.plan?.slug || body.plan?.name;
+    const planKey = planId ? String(planId).toLowerCase() : null;
+    const planFromMap = planKey ? PLANS[planKey] : null;
 
-    const planName = planFromMap?.name || body.plan?.name;
+    const planName = planFromMap?.name || body.plan?.name || (planId ? String(planId) : "");
     const planPrice = Number(planFromMap?.price ?? body.plan?.price);
 
     if (!userEmail || !userId) {
@@ -74,10 +74,14 @@ export default async function handler(req, res) {
 
     const raw = await mpResp.text();
     let data = null;
-    try { data = raw ? JSON.parse(raw) : null; } catch {}
+    try {
+      data = raw ? JSON.parse(raw) : null;
+    } catch {
+      data = null;
+    }
 
     if (!mpResp.ok) {
-      console.error("MercadoPago preference failed:", { status: mpResp.status, body: data ?? raw });
+      console.error("MercadoPago error:", { status: mpResp.status, body: data ?? raw });
       return res.status(502).json({
         error: "MercadoPago preference failed",
         status: mpResp.status,
@@ -85,7 +89,10 @@ export default async function handler(req, res) {
       });
     }
 
-    return res.status(200).json({ init_point: data?.init_point, id: data?.id });
+    return res.status(200).json({
+      init_point: data?.init_point,
+      id: data?.id,
+    });
   } catch (err) {
     console.error("Create payment error:", err);
     return res.status(500).json({
