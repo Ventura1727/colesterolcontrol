@@ -1,34 +1,40 @@
 // api/create-payment.js
-// ✅ Node 18+ (Vercel) já tem fetch global — NÃO usar node-fetch
+
+const PLANS = {
+  mensal: { id: "mensal", name: "Mensal", price: 24.9 },
+  anual: { id: "anual", name: "Anual", price: 199.9 }, // ajuste se existir
+};
 
 export default async function handler(req, res) {
-  // Permite só POST
   if (req.method !== "POST") {
     return res.status(405).json({ error: "Method not allowed" });
   }
 
   try {
-    const { plan, userEmail, userId } = req.body ?? {};
+    const body = req.body ?? {};
+    const { userEmail, userId } = body;
 
-    // Valida payload mínimo
-    if (!plan || !userEmail || !userId) {
-      return res.status(400).json({ error: "Missing plan, userEmail or userId" });
+    // ✅ aceita dois formatos:
+    // A) planId: "mensal"
+    // B) plan: { id/name/price }
+    const planId = body.planId || body.plan?.id || body.plan?.slug;
+    const planFromMap = planId ? PLANS[String(planId).toLowerCase()] : null;
+
+    const planName = planFromMap?.name || body.plan?.name;
+    const planPrice = Number(planFromMap?.price ?? body.plan?.price);
+
+    if (!userEmail || !userId) {
+      return res.status(400).json({ error: "Missing userEmail or userId" });
     }
 
-    // Valida campos do plano
-    const name = String(plan.name ?? "").trim();
-    const price = Number(plan.price);
-
-    if (!name) {
-      return res.status(400).json({ error: "Missing plan.name" });
+    if (!planName) {
+      return res.status(400).json({ error: "Missing plan (use planId or plan.name)" });
     }
 
-    // Segurança: valida preço
-    if (!Number.isFinite(price) || price <= 0) {
-      return res.status(400).json({ error: "Invalid plan.price" });
+    if (!Number.isFinite(planPrice) || planPrice <= 0) {
+      return res.status(400).json({ error: "Invalid plan price (use valid planId or plan.price)" });
     }
 
-    // Valida access token
     const token = process.env.MERCADOPAGO_ACCESS_TOKEN;
     if (!token) {
       return res.status(500).json({ error: "Missing MERCADOPAGO_ACCESS_TOKEN env var" });
@@ -37,31 +43,21 @@ export default async function handler(req, res) {
     const preference = {
       items: [
         {
-          title: `Plano ${name} - HeartBalance`,
+          title: `Plano ${planName} - HeartBalance`,
           quantity: 1,
-          unit_price: price,
+          unit_price: planPrice,
           currency_id: "BRL",
         },
       ],
-
       payer: { email: userEmail },
-
-      // vínculo do pagamento com o usuário
       external_reference: String(userId),
-
-      // Webhook (notificação assíncrona)
       notification_url: "https://heartbalance.com.br/api/mp-webhook",
-
-      // Retornos do checkout
       back_urls: {
         success: "https://heartbalance.com.br/finalizarcompra",
         failure: "https://heartbalance.com.br/checkout",
         pending: "https://heartbalance.com.br/checkout",
       },
-
       auto_return: "approved",
-
-      // PIX + Cartão (boleto removido)
       payment_methods: {
         excluded_payment_types: [{ id: "ticket" }],
       },
@@ -76,21 +72,12 @@ export default async function handler(req, res) {
       body: JSON.stringify(preference),
     });
 
-    // MercadoPago pode retornar erro em JSON; mas por segurança, lemos como texto primeiro
     const raw = await mpResp.text();
     let data = null;
-    try {
-      data = raw ? JSON.parse(raw) : null;
-    } catch {
-      data = null;
-    }
+    try { data = raw ? JSON.parse(raw) : null; } catch {}
 
     if (!mpResp.ok) {
-      console.error("MercadoPago preference failed:", {
-        status: mpResp.status,
-        body: data ?? raw,
-      });
-
+      console.error("MercadoPago preference failed:", { status: mpResp.status, body: data ?? raw });
       return res.status(502).json({
         error: "MercadoPago preference failed",
         status: mpResp.status,
@@ -98,11 +85,7 @@ export default async function handler(req, res) {
       });
     }
 
-    // Sucesso
-    return res.status(200).json({
-      init_point: data?.init_point,
-      id: data?.id,
-    });
+    return res.status(200).json({ init_point: data?.init_point, id: data?.id });
   } catch (err) {
     console.error("Create payment error:", err);
     return res.status(500).json({
