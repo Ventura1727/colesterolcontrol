@@ -4,7 +4,6 @@ import { supabase } from "../lib/supabaseClient";
 
 function isValidEmail(value) {
   const v = String(value || "").trim();
-  // validação simples e suficiente para UI
   return v.includes("@") && v.includes(".") && v.length >= 6;
 }
 
@@ -28,22 +27,23 @@ export default function AuthGate({ onSuccess }) {
   const canSubmit = useMemo(() => {
     if (loading) return false;
     if (!isValidEmail(email)) return false;
-    if (!password || password.length < 6) return false; // supabase geralmente exige 6+
+    if (!password || password.length < 6) return false;
     return true;
   }, [email, password, loading]);
 
-  async function handleSignIn() {
+  async function handleSignIn(e) {
+    e?.preventDefault?.();
     setError(null);
     setInfo(null);
 
-    const e = email.trim();
-    if (!isValidEmail(e)) return setError("Digite um e-mail válido.");
+    const em = email.trim();
+    if (!isValidEmail(em)) return setError("Digite um e-mail válido.");
     if (!password || password.length < 6) return setError("A senha precisa ter pelo menos 6 caracteres.");
 
     setLoading(true);
     try {
       const { data, error } = await supabase.auth.signInWithPassword({
-        email: e,
+        email: em,
         password,
       });
 
@@ -52,11 +52,8 @@ export default function AuthGate({ onSuccess }) {
         return;
       }
 
-      // sucesso
       setInfo(null);
       onSuccess?.(data?.user ?? null);
-
-      // navega para a rota original (ou "/")
       navigate(next, { replace: true });
     } catch (err) {
       setError(err?.message || "Erro ao entrar. Tente novamente.");
@@ -65,18 +62,19 @@ export default function AuthGate({ onSuccess }) {
     }
   }
 
-  async function handleSignUp() {
+  async function handleSignUp(e) {
+    e?.preventDefault?.();
     setError(null);
     setInfo(null);
 
-    const e = email.trim();
-    if (!isValidEmail(e)) return setError("Digite um e-mail válido.");
+    const em = email.trim();
+    if (!isValidEmail(em)) return setError("Digite um e-mail válido.");
     if (!password || password.length < 6) return setError("A senha precisa ter pelo menos 6 caracteres.");
 
     setLoading(true);
     try {
       const { error } = await supabase.auth.signUp({
-        email: e,
+        email: em,
         password,
       });
 
@@ -85,12 +83,7 @@ export default function AuthGate({ onSuccess }) {
         return;
       }
 
-      // O comportamento aqui depende do Supabase:
-      // - se confirmação de email estiver ON: usuário precisa confirmar
-      // - se estiver OFF: já consegue logar
       setInfo("Conta criada. Se a confirmação por e-mail estiver ativa, verifique sua caixa de entrada/spam.");
-
-      // por UX, volta para "Entrar"
       setMode("signin");
     } catch (err) {
       setError(err?.message || "Erro ao criar conta. Tente novamente.");
@@ -99,182 +92,115 @@ export default function AuthGate({ onSuccess }) {
     }
   }
 
+  const title = mode === "signin" ? "Entrar" : "Criar conta";
+  const subtitle =
+    mode === "signin"
+      ? "Acesse sua conta para continuar."
+      : "Crie sua conta para começar a usar o HeartBalance.";
+
   return (
-    <div
-      style={{
-        minHeight: "100vh",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        padding: 16,
-        background: "#f8fafc",
-      }}
-    >
-      <div
-        style={{
-          width: "100%",
-          maxWidth: 420,
-          background: "white",
-          borderRadius: 14,
-          padding: 20,
-          boxShadow: "0 10px 30px rgba(0,0,0,0.08)",
-          border: "1px solid rgba(15,23,42,0.08)",
-        }}
-      >
-        <div style={{ marginBottom: 14 }}>
-          <div style={{ fontSize: 22, fontWeight: 700, color: "#0f172a" }}>
-            {mode === "signin" ? "Entrar" : "Criar conta"}
+    <div className="min-h-screen w-full bg-slate-50 flex items-center justify-center p-4">
+      <div className="w-full max-w-md">
+        {/* Card */}
+        <div className="rounded-2xl border border-slate-200 bg-white shadow-[0_10px_30px_rgba(0,0,0,0.08)] p-5 sm:p-6">
+          {/* Header */}
+          <div className="flex items-center gap-3 mb-5">
+            <div className="h-11 w-11 rounded-2xl bg-slate-900 text-white flex items-center justify-center font-bold">
+              HB
+            </div>
+            <div className="min-w-0">
+              <h1 className="text-lg sm:text-xl font-extrabold text-slate-900 leading-tight">
+                {title}
+              </h1>
+              <p className="text-sm text-slate-600 leading-snug">
+                {subtitle}
+              </p>
+            </div>
           </div>
-          <div style={{ marginTop: 6, fontSize: 14, color: "#475569", lineHeight: 1.4 }}>
-            {mode === "signin"
-              ? "Acesse sua conta para continuar."
-              : "Crie sua conta para começar a usar o Heartbalance."}
-          </div>
+
+          {/* Form */}
+          <form onSubmit={mode === "signin" ? handleSignIn : handleSignUp} className="space-y-4">
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium text-slate-700">E-mail</label>
+              <input
+                className="w-full rounded-xl border border-slate-200 bg-white px-3.5 py-3 text-sm text-slate-900 placeholder:text-slate-400 outline-none focus:ring-2 focus:ring-slate-900/15 focus:border-slate-300"
+                placeholder="seuemail@exemplo.com"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                autoComplete="email"
+                inputMode="email"
+              />
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium text-slate-700">Senha</label>
+              <input
+                className="w-full rounded-xl border border-slate-200 bg-white px-3.5 py-3 text-sm text-slate-900 placeholder:text-slate-400 outline-none focus:ring-2 focus:ring-slate-900/15 focus:border-slate-300"
+                placeholder="••••••••"
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                autoComplete={mode === "signin" ? "current-password" : "new-password"}
+              />
+              <p className="text-xs text-slate-500">Mínimo de 6 caracteres.</p>
+            </div>
+
+            {error && (
+              <div className="rounded-xl border border-red-200 bg-red-50 px-3.5 py-3 text-sm text-red-700">
+                {error}
+              </div>
+            )}
+
+            {info && (
+              <div className="rounded-xl border border-blue-200 bg-blue-50 px-3.5 py-3 text-sm text-blue-700">
+                {info}
+              </div>
+            )}
+
+            <button
+              type="submit"
+              disabled={!canSubmit}
+              className={[
+                "w-full rounded-xl px-4 py-3 text-sm font-bold",
+                "bg-slate-900 text-white",
+                "transition-opacity",
+                canSubmit ? "opacity-100" : "opacity-60 cursor-not-allowed",
+              ].join(" ")}
+            >
+              {mode === "signin" ? (loading ? "Entrando..." : "Entrar") : (loading ? "Criando..." : "Criar conta")}
+            </button>
+
+            <div className="flex items-center justify-center gap-2 text-sm">
+              <span className="text-slate-600">
+                {mode === "signin" ? "Não tem conta?" : "Já tem conta?"}
+              </span>
+              <button
+                type="button"
+                onClick={() => {
+                  setError(null);
+                  setInfo(null);
+                  setMode(mode === "signin" ? "signup" : "signin");
+                }}
+                disabled={loading}
+                className={[
+                  "font-bold text-slate-900",
+                  loading ? "cursor-not-allowed opacity-70" : "hover:underline",
+                ].join(" ")}
+              >
+                {mode === "signin" ? "Criar conta" : "Entrar"}
+              </button>
+            </div>
+
+            <p className="pt-1 text-center text-xs text-slate-400">
+              Ao continuar, você concorda com os termos e políticas do serviço.
+            </p>
+          </form>
         </div>
 
-        <div style={{ display: "grid", gap: 10 }}>
-          <label style={{ display: "grid", gap: 6 }}>
-            <span style={{ fontSize: 13, color: "#334155" }}>E-mail</span>
-            <input
-              placeholder="seuemail@exemplo.com"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              autoComplete="email"
-              inputMode="email"
-              style={{
-                width: "100%",
-                padding: "12px 12px",
-                borderRadius: 10,
-                border: "1px solid rgba(15,23,42,0.15)",
-                outline: "none",
-                fontSize: 14,
-              }}
-            />
-          </label>
-
-          <label style={{ display: "grid", gap: 6 }}>
-            <span style={{ fontSize: 13, color: "#334155" }}>Senha</span>
-            <input
-              placeholder="••••••••"
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              autoComplete={mode === "signin" ? "current-password" : "new-password"}
-              style={{
-                width: "100%",
-                padding: "12px 12px",
-                borderRadius: 10,
-                border: "1px solid rgba(15,23,42,0.15)",
-                outline: "none",
-                fontSize: 14,
-              }}
-            />
-            <span style={{ fontSize: 12, color: "#64748b" }}>
-              Mínimo de 6 caracteres.
-            </span>
-          </label>
-
-          {error && (
-            <div
-              style={{
-                background: "rgba(239, 68, 68, 0.08)",
-                border: "1px solid rgba(239, 68, 68, 0.25)",
-                color: "#b91c1c",
-                padding: "10px 12px",
-                borderRadius: 10,
-                fontSize: 13,
-              }}
-            >
-              {error}
-            </div>
-          )}
-
-          {info && (
-            <div
-              style={{
-                background: "rgba(59, 130, 246, 0.08)",
-                border: "1px solid rgba(59, 130, 246, 0.20)",
-                color: "#1d4ed8",
-                padding: "10px 12px",
-                borderRadius: 10,
-                fontSize: 13,
-              }}
-            >
-              {info}
-            </div>
-          )}
-
-          {mode === "signin" ? (
-            <button
-              onClick={handleSignIn}
-              disabled={!canSubmit}
-              style={{
-                marginTop: 4,
-                width: "100%",
-                padding: "12px 12px",
-                borderRadius: 10,
-                border: "none",
-                cursor: canSubmit ? "pointer" : "not-allowed",
-                fontWeight: 700,
-                fontSize: 14,
-                background: "#0f172a",
-                color: "white",
-                opacity: canSubmit ? 1 : 0.6,
-              }}
-            >
-              {loading ? "Entrando..." : "Entrar"}
-            </button>
-          ) : (
-            <button
-              onClick={handleSignUp}
-              disabled={!canSubmit}
-              style={{
-                marginTop: 4,
-                width: "100%",
-                padding: "12px 12px",
-                borderRadius: 10,
-                border: "none",
-                cursor: canSubmit ? "pointer" : "not-allowed",
-                fontWeight: 700,
-                fontSize: 14,
-                background: "#0f172a",
-                color: "white",
-                opacity: canSubmit ? 1 : 0.6,
-              }}
-            >
-              {loading ? "Criando..." : "Criar conta"}
-            </button>
-          )}
-
-          <div style={{ display: "flex", justifyContent: "center", gap: 8, marginTop: 6, fontSize: 13 }}>
-            <span style={{ color: "#64748b" }}>
-              {mode === "signin" ? "Não tem conta?" : "Já tem conta?"}
-            </span>
-            <button
-              type="button"
-              onClick={() => {
-                setError(null);
-                setInfo(null);
-                setMode(mode === "signin" ? "signup" : "signin");
-              }}
-              disabled={loading}
-              style={{
-                border: "none",
-                background: "transparent",
-                color: "#0f172a",
-                fontWeight: 700,
-                cursor: loading ? "not-allowed" : "pointer",
-                padding: 0,
-              }}
-            >
-              {mode === "signin" ? "Criar conta" : "Entrar"}
-            </button>
-          </div>
-
-          <div style={{ marginTop: 10, fontSize: 12, color: "#94a3b8", textAlign: "center" }}>
-            Ao continuar, você concorda com os termos e políticas do serviço.
-          </div>
-        </div>
+        {/* Footer helper (opcional) */}
+        <p className="mt-4 text-center text-xs text-slate-500">
+          Dica: use um e-mail válido e uma senha com 6+ caracteres.
+        </p>
       </div>
     </div>
   );
