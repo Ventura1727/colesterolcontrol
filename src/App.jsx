@@ -3,7 +3,8 @@ import { Toaster } from "@/components/ui/toaster";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { queryClientInstance } from "@/lib/query-client";
 import VisualEditAgent from "@/lib/VisualEditAgent";
-// ⚠️ DESLIGADO: pode estar restaurando última página (Premium antigo)
+
+// ⚠️ DESLIGADO: pode estar restaurando última página (ex: Premium antigo)
 // import NavigationTracker from "@/lib/NavigationTracker";
 
 import { pagesConfig } from "./pages.config";
@@ -29,7 +30,7 @@ import ResetPassword from "@/components/ResetPassword";
 
 const { Pages, Layout } = pagesConfig;
 
-// ✅ Página inicial FORÇADA (não depende de config/cache/ordem)
+// ✅ Página inicial FORÇADA (não depende de cache/ordem/config)
 const START_PAGE = "Onboarding";
 
 const LayoutWrapper = ({ children, currentPageName }) =>
@@ -127,15 +128,18 @@ const RequireSubscription = ({ children }) => {
 
         // ✅ sem plano: só deixa o funil comercial
         const funnelAllowed = [
-          "/", // vai virar /Onboarding pelo redirect abaixo
+          "/",
           "/onboarding",
           "/vendas",
           "/checkout",
           "/finalizarcompra",
-          "/premium", // se ainda existir como página intermediária antiga
+          "/premium", // se existir página intermediária antiga ainda
         ];
 
-        const ok = funnelAllowed.some((p) => path === p || path.startsWith(p + "/"));
+        const ok = funnelAllowed.some(
+          (p) => path === p || path.startsWith(p + "/")
+        );
+
         if (mounted) setIsAllowed(ok);
       } catch (e) {
         if (mounted) setIsAllowed(false);
@@ -202,21 +206,19 @@ const ProtectedRoutes = () => {
 
   return (
     <Routes>
-      {/* ✅ IMPORTANTÍSSIMO:
-          "/" NUNCA renderiza MainPage.
-          "/" SEMPRE redireciona para /Onboarding.
-          Isso elimina “Premium antigo no root”.
-      */}
+      {/* ✅ "/" NUNCA renderiza “MainPage”. Sempre manda para Onboarding */}
       <Route path="/" element={<Navigate to={`/${START_PAGE}`} replace />} />
 
       {/* Rotas geradas a partir das páginas */}
       {Object.entries(Pages).map(([path, Page]) => {
-        const pageIsCheckout = path.toLowerCase().includes("checkout") || isCheckout;
+        const pageIsCheckout =
+          path.toLowerCase().includes("checkout") || isCheckout;
 
         return (
           <Route
             key={path}
             path={`/${path}`}
+            caseSensitive={false}
             element={
               <LayoutWrapper currentPageName={path}>
                 <Page />
@@ -252,7 +254,7 @@ function App() {
                 <RequireAuth>
                   <RequireSubscription>
                     <ProtectedRoutes />
-                  </ProtectedSubscription>
+                  </RequireSubscription>
                 </RequireAuth>
               }
             />
