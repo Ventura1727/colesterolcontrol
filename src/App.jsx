@@ -12,20 +12,9 @@ import UserNotRegisteredError from "@/components/UserNotRegisteredError";
 import GerarPix from "@/components/GerarPix";
 import AuthGate from "@/components/AuthGate";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 
-/**
- * ✅ IMPORTANTE:
- * Use UM padrão e siga:
- * - Se você criou estes arquivos em src/components:
- *   import AuthCallback from "@/components/AuthCallback";
- *   import ResetPassword from "@/components/ResetPassword";
- *
- * - Se você criou em src/pages:
- *   import AuthCallback from "@/pages/AuthCallback";
- *   import ResetPassword from "@/pages/ResetPassword";
- */
 import AuthCallback from "@/components/AuthCallback";
 import ResetPassword from "@/components/ResetPassword";
 
@@ -65,10 +54,8 @@ const RequireAuth = ({ children }) => {
 
 /**
  * Guard de assinatura/pagamento:
- * - Admin (profiles.role === 'admin') entra direto
+ * - Admin (profiles.role === 'admin') NÃO deve cair no checkout nem ficar preso no quiz (/)
  * - Demais usuários: se não estiver no checkout, manda para /checkout
- *
- * Depois você pode substituir a regra do "não-admin" para checar assinatura real.
  */
 const RequireSubscription = ({ children }) => {
   const { isLoadingAuth, isAuthenticated } = useAuth();
@@ -76,6 +63,24 @@ const RequireSubscription = ({ children }) => {
 
   const [loading, setLoading] = useState(true);
   const [isAdmin, setIsAdmin] = useState(false);
+
+  // escolhe automaticamente uma página "interna" (não checkout e não onboarding)
+  const adminLandingPath = useMemo(() => {
+    const keys = Object.keys(Pages || {});
+    const pick =
+      keys.find((k) => {
+        const l = String(k).toLowerCase();
+        return !l.includes("checkout") && !l.includes("onboarding") && k !== mainPageKey;
+      }) ||
+      keys.find((k) => {
+        const l = String(k).toLowerCase();
+        return !l.includes("checkout") && k !== mainPageKey;
+      }) ||
+      mainPageKey ||
+      "";
+
+    return pick ? `/${pick}` : "/";
+  }, []);
 
   useEffect(() => {
     let mounted = true;
@@ -103,7 +108,6 @@ const RequireSubscription = ({ children }) => {
           setIsAdmin(false);
         }
       } catch (e) {
-        // Se der erro, assume não-admin (comportamento conservador)
         if (mounted) setIsAdmin(false);
       } finally {
         if (mounted) setLoading(false);
@@ -124,24 +128,21 @@ const RequireSubscription = ({ children }) => {
     );
   }
 
-  // Se não estiver logado, RequireAuth já cuida
   if (!isAuthenticated) return null;
 
-  // ✅ Admin: entra direto — e se cair em /checkout por "last route", manda pra home
-  if (isAdmin) {
-    const path = location.pathname.toLowerCase();
-    const isCheckout =
-      path === "/checkout" || path.startsWith("/checkout/") || path.includes("checkout");
-
-    if (isCheckout) return <Navigate to="/" replace />;
-    return children;
-  }
-
-  // ✅ Não-admin: se já está no checkout, deixa
   const path = location.pathname.toLowerCase();
   const isCheckout =
     path === "/checkout" || path.startsWith("/checkout/") || path.includes("checkout");
 
+  // ✅ Admin: não deve ficar no quiz (/) nem no checkout
+  if (isAdmin) {
+    if (path === "/" || isCheckout) {
+      return <Navigate to={adminLandingPath} replace />;
+    }
+    return children;
+  }
+
+  // ✅ Não-admin: se já está no checkout, deixa
   if (isCheckout) return children;
 
   // 🚫 Não-admin: manda para checkout
