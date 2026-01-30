@@ -3,45 +3,30 @@ import { Toaster } from "@/components/ui/toaster";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { queryClientInstance } from "@/lib/query-client";
 import VisualEditAgent from "@/lib/VisualEditAgent";
-
-// ⚠️ DESLIGADO: pode estar restaurando última página (ex: Premium antigo)
-// import NavigationTracker from "@/lib/NavigationTracker";
-
+import NavigationTracker from "@/lib/NavigationTracker";
 import { pagesConfig } from "./pages.config";
-import {
-  BrowserRouter as Router,
-  Route,
-  Routes,
-  Navigate,
-  useLocation,
-} from "react-router-dom";
-
+import { BrowserRouter as Router, Route, Routes, Navigate, useLocation } from "react-router-dom";
 import PageNotFound from "./lib/PageNotFound";
 import { AuthProvider, useAuth } from "@/lib/AuthContext";
 import UserNotRegisteredError from "@/components/UserNotRegisteredError";
 import GerarPix from "@/components/GerarPix";
 import AuthGate from "@/components/AuthGate";
-
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 
 import AuthCallback from "@/components/AuthCallback";
 import ResetPassword from "@/components/ResetPassword";
 
-const { Pages, Layout } = pagesConfig;
+const { Pages, Layout, mainPage } = pagesConfig;
 
-// ✅ Página inicial FORÇADA (não depende de cache/ordem/config)
-const START_PAGE = "Onboarding";
+const mainPageKey = mainPage ?? Object.keys(Pages)[0];
+const MainPage = mainPageKey ? Pages[mainPageKey] : <></>;
 
 const LayoutWrapper = ({ children, currentPageName }) =>
-  Layout ? (
-    <Layout currentPageName={currentPageName}>{children}</Layout>
-  ) : (
-    <>{children}</>
-  );
+  Layout ? <Layout currentPageName={currentPageName}>{children}</Layout> : <>{children}</>;
 
 /**
- * Guard SaaS: qualquer rota protegida exige login.
+ * Guard de login (apenas onde precisamos de login).
  */
 const RequireAuth = ({ children }) => {
   const { isLoadingAuth, authError, isAuthenticated } = useAuth();
@@ -68,17 +53,32 @@ const RequireAuth = ({ children }) => {
 };
 
 /**
- * Guard de assinatura/pagamento:
- * - Admin (profiles.role === 'admin') entra direto
- * - Quem tiver plano_ativo também entra
- * - Senão, libera apenas o funil (Onboarding/Vendas/Checkout...) e trava o resto
+ * Guard de acesso “premium”.
+ *
+ * REGRAS:
+ * - Admin (profiles.role === 'admin') entra direto.
+ * - Usuário com plano_ativo === true entra.
+ * - Páginas públicas de funil (Onboarding/Vendas/Checkout) ficam livres para não quebrar o fluxo.
+ *
+ * IMPORTANTE: este guard NÃO deve prender o usuário em loop.
  */
 const RequireSubscription = ({ children }) => {
   const { isLoadingAuth, isAuthenticated } = useAuth();
   const location = useLocation();
 
   const [loading, setLoading] = useState(true);
-  const [isAllowed, setIsAllowed] = useState(false);
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [hasPlan, setHasPlan] = useState(false);
+
+  // Rotas “funil” que NÃO podem ser bloqueadas por assinatura
+  const path = (location.pathname || "").toLowerCase();
+  const isFunnelPage =
+    path === "/" ||
+    path.startsWith("/onboarding") ||
+    path.startsWith("/vendas") ||
+    path.startsWith("/checkout") ||
+    path.startsWith("/finalizarcompra") ||
+    path.startsWith("/premium"); // se essa página antiga existir, não bloqueie aqui (evita loop)
 
   useEffect(() => {
     let mounted = true;
@@ -86,63 +86,66 @@ const RequireSubscription = ({ children }) => {
     async function run() {
       try {
         if (isLoadingAuth) return;
-        if (!isAuthenticated) return;
+
+        // Se não está logado, este guard não decide nada (RequireAuth decide antes quando aplicável)
+        if (!isAuthenticated) {
+          if (mounted) {
+            setIsAdmin(false);
+            setHasPlan(false);
+            setLoading(false);
+          }
+          return;
+        }
 
         const { data: userData } = await supabase.auth.getUser();
         const user = userData?.user;
-        if (!user) return;
+        if (!user) {
+          if (mounted) {
+            setIsAdmin(false);
+            setHasPlan(false);
+            setLoading(false);
+          }
+          return;
+        }
 
-        // tenta buscar role + plano_ativo
+        // 1) Tenta buscar role + plano_ativo (pode falhar se coluna não existir)
         let role = null;
         let planoAtivo = false;
 
-        const r1 = await supabase
+        const { data, error } = await supabase
           .from("profiles")
           .select("role, plano_ativo")
           .eq("id", user.id)
           .single();
 
-        if (!r1.error && r1.data) {
-          role = r1.data.role ?? null;
-          planoAtivo = Boolean(r1.data.plano_ativo);
+        if (!error) {
+          role = data?.role ?? null;
+          planoAtivo = Boolean(data?.plano_ativo);
         } else {
-          // fallback: só role
-          const r2 = await supabase
+          // 2) Fallback: se sua tabela ainda não tiver plano_ativo, pelo menos pega role
+          const { data: data2, error: error2 } = await supabase
             .from("profiles")
             .select("role")
             .eq("id", user.id)
             .single();
-          if (!r2.error && r2.data) role = r2.data.role ?? null;
-          planoAtivo = false;
+
+          if (!error2) {
+            role = data2?.role ?? null;
+            planoAtivo = false;
+          }
         }
 
-        const isAdmin = role === "admin";
+        if (!mounted) return;
 
-        const path = (location.pathname || "/").toLowerCase();
-
-        // ✅ quando tem acesso liberado
-        if (isAdmin || planoAtivo) {
-          if (mounted) setIsAllowed(true);
-          return;
-        }
-
-        // ✅ sem plano: só deixa o funil comercial
-        const funnelAllowed = [
-          "/",
-          "/onboarding",
-          "/vendas",
-          "/checkout",
-          "/finalizarcompra",
-          "/premium", // se existir página intermediária antiga ainda
-        ];
-
-        const ok = funnelAllowed.some(
-          (p) => path === p || path.startsWith(p + "/")
-        );
-
-        if (mounted) setIsAllowed(ok);
+        const admin = role === "admin";
+        setIsAdmin(admin);
+        setHasPlan(planoAtivo);
       } catch (e) {
-        if (mounted) setIsAllowed(false);
+        // comportamento conservador
+        if (mounted) {
+          setIsAdmin(false);
+          setHasPlan(false);
+        }
       } finally {
         if (mounted) setLoading(false);
       }
@@ -152,7 +155,10 @@ const RequireSubscription = ({ children }) => {
     return () => {
       mounted = false;
     };
-  }, [isLoadingAuth, isAuthenticated, location.pathname]);
+  }, [isLoadingAuth, isAuthenticated]);
+
+  // Não bloqueie funil; deixe navegar e só proteja conteúdo premium
+  if (isFunnelPage) return children;
 
   if (isLoadingAuth || loading) {
     return (
@@ -164,10 +170,14 @@ const RequireSubscription = ({ children }) => {
 
   if (!isAuthenticated) return null;
 
-  if (isAllowed) return children;
+  // Admin entra
+  if (isAdmin) return children;
 
-  // 🚫 sem plano e fora do funil => joga pra Vendas
-  return <Navigate to="/Vendas" replace />;
+  // Usuário com plano ativo entra
+  if (hasPlan) return children;
+
+  // Sem plano: manda para Vendas (seleção de plano), NÃO para Checkout direto.
+  return <Navigate to="/vendas" replace />;
 };
 
 /**
@@ -179,7 +189,7 @@ const PublicLoginRoute = () => {
 
   if (isLoadingAuth) {
     return (
-      <div className="fixed inset-0 flex items-center justify-center">
+      <div className="fixed inset-0 flex items-center justifyContent-center">
         <div className="w-8 h-8 border-4 border-slate-200 border-t-slate-800 rounded-full animate-spin" />
       </div>
     );
@@ -195,38 +205,81 @@ const PublicLoginRoute = () => {
   return <AuthGate />;
 };
 
-const ProtectedRoutes = () => {
-  const location = useLocation();
-  const pathname = (location.pathname || "/").toLowerCase();
+/**
+ * Define quais páginas são funil (públicas) e quais são conteúdo premium (protegidas).
+ * Ajuste aqui se você criar/remover páginas.
+ */
+const PUBLIC_PAGE_KEYS = new Set([
+  "Onboarding",
+  "Vendas",
+  "Checkout",
+  "FinalizarCompra",
+  "Home", // se você usa Home como landing pública
+  "Premium", // existe no projeto, mas é “antiga”; manter pública evita loop
+]);
 
-  const isCheckout =
-    pathname === "/checkout" ||
-    pathname.startsWith("/checkout/") ||
-    pathname.includes("checkout");
+/**
+ * Render de rotas de páginas.
+ * - Funil: sem RequireAuth/RequireSubscription.
+ * - Premium: RequireAuth + RequireSubscription.
+ */
+const AppPagesRoutes = () => {
+  const location = useLocation();
+  const pathname = (location.pathname || "").toLowerCase();
+
+  const isCheckoutPath =
+    pathname === "/checkout" || pathname.startsWith("/checkout/") || pathname.includes("checkout");
 
   return (
     <Routes>
-      {/* ✅ "/" NUNCA renderiza “MainPage”. Sempre manda para Onboarding */}
-      <Route path="/" element={<Navigate to={`/${START_PAGE}`} replace />} />
+      {/* Main (/) */}
+      <Route
+        path="/"
+        element={
+          <LayoutWrapper currentPageName={mainPageKey}>
+            <MainPage />
+          </LayoutWrapper>
+        }
+      />
 
-      {/* Rotas geradas a partir das páginas */}
-      {Object.entries(Pages).map(([path, Page]) => {
-        const pageIsCheckout =
-          path.toLowerCase().includes("checkout") || isCheckout;
+      {/* Todas as páginas do config */}
+      {Object.entries(Pages).map(([pageKey, PageComponent]) => {
+        const isPublic = PUBLIC_PAGE_KEYS.has(pageKey);
 
-        return (
+        // OBS: React Router geralmente não é case sensitive, mas vamos manter caminhos em minúsculo
+        const routePath = `/${String(pageKey).toLowerCase()}`;
+
+        // Para o seu caso específico: "Alimentacao" sem acento
+        // Vamos aceitar também "/alimentação" para não dar 404 se algum lugar gerar com acento.
+        const aliasPaths =
+          pageKey === "Alimentacao"
+            ? [routePath, "/alimentação", "/alimentacao"]
+            : [routePath];
+
+        return aliasPaths.map((p) => (
           <Route
-            key={path}
-            path={`/${path}`}
-            caseSensitive={false}
+            key={`${pageKey}:${p}`}
+            path={p}
             element={
-              <LayoutWrapper currentPageName={path}>
-                <Page />
-                {pageIsCheckout ? <GerarPix /> : null}
+              <LayoutWrapper currentPageName={pageKey}>
+                {isPublic ? (
+                  <>
+                    <PageComponent />
+                    {isCheckoutPath || String(pageKey).toLowerCase().includes("checkout") ? (
+                      <GerarPix />
+                    ) : null}
+                  </>
+                ) : (
+                  <RequireAuth>
+                    <RequireSubscription>
+                      <PageComponent />
+                    </RequireSubscription>
+                  </RequireAuth>
+                )}
               </LayoutWrapper>
             }
           />
-        );
+        ));
       })}
 
       <Route path="*" element={<PageNotFound />} />
@@ -239,25 +292,16 @@ function App() {
     <QueryClientProvider client={queryClientInstance}>
       <AuthProvider>
         <Router>
-          {/* <NavigationTracker /> */}
+          <NavigationTracker />
 
           <Routes>
-            {/* Públicas */}
+            {/* Rotas públicas de auth */}
             <Route path="/login" element={<PublicLoginRoute />} />
             <Route path="/auth/callback" element={<AuthCallback />} />
             <Route path="/reset-password" element={<ResetPassword />} />
 
-            {/* Protegidas */}
-            <Route
-              path="/*"
-              element={
-                <RequireAuth>
-                  <RequireSubscription>
-                    <ProtectedRoutes />
-                  </RequireSubscription>
-                </RequireAuth>
-              }
-            />
+            {/* App */}
+            <Route path="/*" element={<AppPagesRoutes />} />
           </Routes>
 
           <Toaster />
