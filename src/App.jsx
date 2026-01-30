@@ -127,8 +127,15 @@ const RequireSubscription = ({ children }) => {
   // Se não estiver logado, RequireAuth já cuida
   if (!isAuthenticated) return null;
 
-  // ✅ Admin: entra direto
-  if (isAdmin) return children;
+  // ✅ Admin: entra direto — e se cair em /checkout por "last route", manda pra home
+  if (isAdmin) {
+    const path = location.pathname.toLowerCase();
+    const isCheckout =
+      path === "/checkout" || path.startsWith("/checkout/") || path.includes("checkout");
+
+    if (isCheckout) return <Navigate to="/" replace />;
+    return children;
+  }
 
   // ✅ Não-admin: se já está no checkout, deixa
   const path = location.pathname.toLowerCase();
