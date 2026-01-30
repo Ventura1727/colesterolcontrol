@@ -12,7 +12,7 @@ import UserNotRegisteredError from "@/components/UserNotRegisteredError";
 import GerarPix from "@/components/GerarPix";
 import AuthGate from "@/components/AuthGate";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 
 import AuthCallback from "@/components/AuthCallback";
@@ -54,8 +54,20 @@ const RequireAuth = ({ children }) => {
 
 /**
  * Guard de assinatura/pagamento:
- * - Admin (profiles.role === 'admin') NÃO deve cair no checkout e NÃO deve voltar para "/" (quiz)
- * - Demais usuários: se não estiver no checkout, manda para /checkout
+ *
+ * OBJETIVO "VENDEDOR":
+ * - Admin faz o fluxo normal: Quiz (/) -> Checkout (/checkout)
+ * - Ao clicar "Seguir" no Checkout, o Checkout deve setar:
+ *     localStorage.setItem("hb_demo_premium", "1")
+ *   e navegar para a página premium (ex.: /alimentacao)
+ *
+ * REGRAS AQUI:
+ * - Admin:
+ *     - Se hb_demo_premium=1: libera tudo (acesso premium)
+ *     - Se hb_demo_premium!=1: só permite "/" e "/checkout"; o resto manda para "/checkout"
+ * - Não-admin:
+ *     - Se não estiver no checkout, manda para "/checkout"
+ *     - Se já está no checkout, deixa
  */
 const RequireSubscription = ({ children }) => {
   const { isLoadingAuth, isAuthenticated } = useAuth();
@@ -64,34 +76,18 @@ const RequireSubscription = ({ children }) => {
   const [loading, setLoading] = useState(true);
   const [isAdmin, setIsAdmin] = useState(false);
 
-  // ✅ Para admin, escolhe uma rota "interna" que NÃO seja o mainPage (quiz) e NÃO seja checkout
-  const adminLandingPath = useMemo(() => {
-    const keys = Object.keys(Pages || {});
-    const pick =
-      keys.find((k) => {
-        const l = String(k).toLowerCase();
-        return k !== mainPageKey && !l.includes("checkout") && !l.includes("quiz") && !l.includes("onboarding");
-      }) ||
-      keys.find((k) => {
-        const l = String(k).toLowerCase();
-        return k !== mainPageKey && !l.includes("checkout");
-      }) ||
-      null;
-
-    // Se não achou nada além do quiz, cai em "/" (mas isso significa que você NÃO tem uma página interna definida ainda)
-    return pick ? `/${pick}` : "/";
-  }, []);
-
   useEffect(() => {
     let mounted = true;
 
     async function run() {
       try {
+        // enquanto auth estiver carregando, não decide nada ainda
         if (isLoadingAuth) {
           if (mounted) setLoading(true);
           return;
         }
 
+        // se não está logado, não tem o que checar aqui (RequireAuth cuida)
         if (!isAuthenticated) {
           if (mounted) {
             setIsAdmin(false);
@@ -145,33 +141,31 @@ const RequireSubscription = ({ children }) => {
     );
   }
 
+  // Se não estiver logado, RequireAuth já cuida
   if (!isAuthenticated) return null;
 
   const path = location.pathname.toLowerCase();
   const isCheckout =
     path === "/checkout" || path.startsWith("/checkout/") || path.includes("checkout");
 
-  // ✅ Admin: nunca deixa cair no checkout
-  // ✅ Admin: também não deixa ficar preso no "/" se "/" for o quiz (pois vira loop)
+  // 🔑 Flag de demo premium (será setada no checkout quando admin clicar "Seguir")
+  const demoPremium = localStorage.getItem("hb_demo_premium") === "1";
+
+  // ✅ ADMIN: libera tudo APÓS desbloquear demo
   if (isAdmin) {
-    // se você NÃO tem rota interna além do quiz, isso ficará "/". Ideal: crie uma rota interna.
-    if (adminLandingPath === "/") {
-      // fallback conservador: permite navegar, mas não bloqueia aqui
-      // (se você quiser, eu te ajudo a criar uma página /dashboard pra admin)
-      return children;
-    }
+    if (demoPremium) return children;
 
-    if (isCheckout || path === "/") {
-      return <Navigate to={adminLandingPath} replace />;
-    }
+    // Antes de desbloquear demo: só deixa quiz (/) e checkout
+    if (path === "/" || isCheckout) return children;
 
-    return children;
+    // Tentou acessar outra rota antes de liberar: manda para checkout
+    return <Navigate to="/checkout" replace />;
   }
 
-  // ✅ Não-admin: se já está no checkout, deixa
+  // ✅ NÃO-ADMIN: se já está no checkout, deixa
   if (isCheckout) return children;
 
-  // 🚫 Não-admin: manda para checkout
+  // 🚫 NÃO-ADMIN: manda para checkout
   return <Navigate to="/checkout" replace />;
 };
 
@@ -184,7 +178,7 @@ const PublicLoginRoute = () => {
 
   if (isLoadingAuth) {
     return (
-      <div className="fixed inset-0 flex items-center justifyContent-center">
+      <div className="fixed inset-0 flex items-center justify-center">
         <div className="w-8 h-8 border-4 border-slate-200 border-t-slate-800 rounded-full animate-spin" />
       </div>
     );
