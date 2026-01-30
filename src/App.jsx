@@ -12,7 +12,7 @@ import UserNotRegisteredError from "@/components/UserNotRegisteredError";
 import GerarPix from "@/components/GerarPix";
 import AuthGate from "@/components/AuthGate";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 
 import AuthCallback from "@/components/AuthCallback";
@@ -54,7 +54,7 @@ const RequireAuth = ({ children }) => {
 
 /**
  * Guard de assinatura/pagamento:
- * - Admin (profiles.role === 'admin') NÃO deve cair no checkout nem ficar preso no quiz (/)
+ * - Admin (profiles.role === 'admin') entra direto (e se cair em /checkout, manda para "/")
  * - Demais usuários: se não estiver no checkout, manda para /checkout
  */
 const RequireSubscription = ({ children }) => {
@@ -64,53 +64,55 @@ const RequireSubscription = ({ children }) => {
   const [loading, setLoading] = useState(true);
   const [isAdmin, setIsAdmin] = useState(false);
 
-  // escolhe automaticamente uma página "interna" (não checkout e não onboarding)
-  const adminLandingPath = useMemo(() => {
-    const keys = Object.keys(Pages || {});
-    const pick =
-      keys.find((k) => {
-        const l = String(k).toLowerCase();
-        return !l.includes("checkout") && !l.includes("onboarding") && k !== mainPageKey;
-      }) ||
-      keys.find((k) => {
-        const l = String(k).toLowerCase();
-        return !l.includes("checkout") && k !== mainPageKey;
-      }) ||
-      mainPageKey ||
-      "";
-
-    return pick ? `/${pick}` : "/";
-  }, []);
-
   useEffect(() => {
     let mounted = true;
 
     async function run() {
       try {
-        if (isLoadingAuth) return;
-        if (!isAuthenticated) return;
+        // enquanto auth estiver carregando, não decide nada ainda
+        if (isLoadingAuth) {
+          if (mounted) setLoading(true);
+          return;
+        }
 
-        const { data: userData } = await supabase.auth.getUser();
+        // se não está logado, não tem o que checar aqui (RequireAuth cuida)
+        if (!isAuthenticated) {
+          if (mounted) {
+            setIsAdmin(false);
+            setLoading(false);
+          }
+          return;
+        }
+
+        if (mounted) setLoading(true);
+
+        const { data: userData, error: userErr } = await supabase.auth.getUser();
         const user = userData?.user;
-        if (!user) return;
+
+        if (userErr || !user) {
+          if (mounted) {
+            setIsAdmin(false);
+            setLoading(false);
+          }
+          return;
+        }
 
         const { data, error } = await supabase
           .from("profiles")
           .select("role")
           .eq("id", user.id)
-          .single();
+          .maybeSingle();
 
         if (!mounted) return;
 
-        if (!error && data?.role === "admin") {
-          setIsAdmin(true);
-        } else {
-          setIsAdmin(false);
-        }
+        const admin = !error && data?.role === "admin";
+        setIsAdmin(admin);
+        setLoading(false);
       } catch (e) {
-        if (mounted) setIsAdmin(false);
-      } finally {
-        if (mounted) setLoading(false);
+        if (mounted) {
+          setIsAdmin(false);
+          setLoading(false);
+        }
       }
     }
 
@@ -128,17 +130,17 @@ const RequireSubscription = ({ children }) => {
     );
   }
 
+  // Se não estiver logado, RequireAuth já cuida
   if (!isAuthenticated) return null;
 
   const path = location.pathname.toLowerCase();
   const isCheckout =
     path === "/checkout" || path.startsWith("/checkout/") || path.includes("checkout");
 
-  // ✅ Admin: não deve ficar no quiz (/) nem no checkout
+  // ✅ Admin: bypass TOTAL
+  // Se o browser abriu direto /checkout por histórico/cache, joga para "/"
   if (isAdmin) {
-    if (path === "/" || isCheckout) {
-      return <Navigate to={adminLandingPath} replace />;
-    }
+    if (isCheckout) return <Navigate to="/" replace />;
     return children;
   }
 
