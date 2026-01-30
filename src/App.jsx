@@ -11,8 +11,7 @@ import { AuthProvider, useAuth } from "@/lib/AuthContext";
 import UserNotRegisteredError from "@/components/UserNotRegisteredError";
 import GerarPix from "@/components/GerarPix";
 import AuthGate from "@/components/AuthGate";
-
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 
 import AuthCallback from "@/components/AuthCallback";
@@ -53,21 +52,13 @@ const RequireAuth = ({ children }) => {
 };
 
 /**
- * Guard de assinatura/pagamento:
+ * ✅ Guard de assinatura/pagamento:
+ * - Admin (profiles.role === 'admin') entra direto em tudo
+ * - Usuário sem assinatura: pode navegar no FUNIL (quiz/planos/checkout)
+ * - Se tentar acessar rota premium sem assinatura -> manda para /vendas (escolha de plano)
  *
- * OBJETIVO "VENDEDOR":
- * - Admin faz o fluxo normal: Quiz (/) -> Checkout (/checkout)
- * - Ao clicar "Seguir" no Checkout, o Checkout deve setar:
- *     localStorage.setItem("hb_demo_premium", "1")
- *   e navegar para a página premium (ex.: /alimentacao)
- *
- * REGRAS AQUI:
- * - Admin:
- *     - Se hb_demo_premium=1: libera tudo (acesso premium)
- *     - Se hb_demo_premium!=1: só permite "/" e "/checkout"; o resto manda para "/checkout"
- * - Não-admin:
- *     - Se não estiver no checkout, manda para "/checkout"
- *     - Se já está no checkout, deixa
+ * OBS: por enquanto a "assinatura real" está como placeholder. Você pode trocar depois
+ * por um campo do profiles (ex: subscription_status / paid_until).
  */
 const RequireSubscription = ({ children }) => {
   const { isLoadingAuth, isAuthenticated } = useAuth();
@@ -75,55 +66,54 @@ const RequireSubscription = ({ children }) => {
 
   const [loading, setLoading] = useState(true);
   const [isAdmin, setIsAdmin] = useState(false);
+  const [hasSubscription, setHasSubscription] = useState(false);
+
+  const pathname = (location.pathname || "/").toLowerCase();
+
+  // Rotas do funil que NÃO devem ser bloqueadas por assinatura
+  const isFunnelRoute = useMemo(() => {
+    // ajuste aqui se você tiver nomes diferentes (ex: "/planos" ao invés de "/vendas")
+    if (pathname === "/") return true;
+    if (pathname.startsWith("/vendas")) return true;
+    if (pathname.startsWith("/checkout")) return true;
+    return false;
+  }, [pathname]);
 
   useEffect(() => {
     let mounted = true;
 
     async function run() {
       try {
-        // enquanto auth estiver carregando, não decide nada ainda
-        if (isLoadingAuth) {
-          if (mounted) setLoading(true);
-          return;
-        }
+        if (isLoadingAuth) return;
+        if (!isAuthenticated) return;
 
-        // se não está logado, não tem o que checar aqui (RequireAuth cuida)
-        if (!isAuthenticated) {
-          if (mounted) {
-            setIsAdmin(false);
-            setLoading(false);
-          }
-          return;
-        }
-
-        if (mounted) setLoading(true);
-
-        const { data: userData, error: userErr } = await supabase.auth.getUser();
+        const { data: userData } = await supabase.auth.getUser();
         const user = userData?.user;
-
-        if (userErr || !user) {
-          if (mounted) {
-            setIsAdmin(false);
-            setLoading(false);
-          }
-          return;
-        }
+        if (!user) return;
 
         const { data, error } = await supabase
           .from("profiles")
           .select("role")
           .eq("id", user.id)
-          .maybeSingle();
+          .single();
 
         if (!mounted) return;
 
-        setIsAdmin(!error && data?.role === "admin");
-        setLoading(false);
+        const admin = !error && data?.role === "admin";
+        setIsAdmin(admin);
+
+        // ✅ Placeholder de assinatura (trocar depois por coluna real)
+        // Exemplo futuro:
+        // const { data: prof } = await supabase.from("profiles").select("subscription_status, paid_until").eq("id", user.id).single();
+        // setHasSubscription(prof?.subscription_status === "active" || (prof?.paid_until && new Date(prof.paid_until) > new Date()));
+        setHasSubscription(false);
       } catch (e) {
         if (mounted) {
           setIsAdmin(false);
-          setLoading(false);
+          setHasSubscription(false);
         }
+      } finally {
+        if (mounted) setLoading(false);
       }
     }
 
@@ -141,32 +131,19 @@ const RequireSubscription = ({ children }) => {
     );
   }
 
-  // Se não estiver logado, RequireAuth já cuida
   if (!isAuthenticated) return null;
 
-  const path = location.pathname.toLowerCase();
-  const isCheckout =
-    path === "/checkout" || path.startsWith("/checkout/") || path.includes("checkout");
+  // ✅ Admin entra direto em tudo
+  if (isAdmin) return children;
 
-  // 🔑 Flag de demo premium (será setada no checkout quando admin clicar "Seguir")
-  const demoPremium = localStorage.getItem("hb_demo_premium") === "1";
+  // ✅ Sem assinatura: deixa navegar no funil (quiz -> planos -> checkout)
+  if (!hasSubscription && isFunnelRoute) return children;
 
-  // ✅ ADMIN: libera tudo APÓS desbloquear demo
-  if (isAdmin) {
-    if (demoPremium) return children;
+  // ✅ Com assinatura: libera tudo
+  if (hasSubscription) return children;
 
-    // Antes de desbloquear demo: só deixa quiz (/) e checkout
-    if (path === "/" || isCheckout) return children;
-
-    // Tentou acessar outra rota antes de liberar: manda para checkout
-    return <Navigate to="/checkout" replace />;
-  }
-
-  // ✅ NÃO-ADMIN: se já está no checkout, deixa
-  if (isCheckout) return children;
-
-  // 🚫 NÃO-ADMIN: manda para checkout
-  return <Navigate to="/checkout" replace />;
+  // 🚫 Sem assinatura e tentando entrar em rota premium: manda para escolha de planos
+  return <Navigate to="/vendas" replace />;
 };
 
 /**
@@ -196,12 +173,10 @@ const PublicLoginRoute = () => {
 
 const ProtectedRoutes = () => {
   const location = useLocation();
-  const pathname = location.pathname.toLowerCase();
+  const pathname = (location.pathname || "/").toLowerCase();
 
   const isCheckout =
-    pathname === "/checkout" ||
-    pathname.startsWith("/checkout/") ||
-    pathname.includes("checkout");
+    pathname === "/checkout" || pathname.startsWith("/checkout/") || pathname.includes("checkout");
 
   return (
     <Routes>
@@ -215,7 +190,7 @@ const ProtectedRoutes = () => {
       />
 
       {Object.entries(Pages).map(([path, Page]) => {
-        const pageIsCheckout = path.toLowerCase().includes("checkout") || isCheckout;
+        const pageIsCheckout = String(path).toLowerCase().includes("checkout") || isCheckout;
 
         return (
           <Route
@@ -249,7 +224,7 @@ function App() {
             <Route path="/auth/callback" element={<AuthCallback />} />
             <Route path="/reset-password" element={<ResetPassword />} />
 
-            {/* Tudo protegido */}
+            {/* Protegidas */}
             <Route
               path="/*"
               element={
