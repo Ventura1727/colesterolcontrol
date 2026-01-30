@@ -11,6 +11,7 @@ import { AuthProvider, useAuth } from "@/lib/AuthContext";
 import UserNotRegisteredError from "@/components/UserNotRegisteredError";
 import GerarPix from "@/components/GerarPix";
 import AuthGate from "@/components/AuthGate";
+
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 
@@ -52,32 +53,24 @@ const RequireAuth = ({ children }) => {
 };
 
 /**
- * ✅ Guard de assinatura/pagamento:
- * - Admin (profiles.role === 'admin') entra direto em tudo
- * - Usuário sem assinatura: pode navegar no FUNIL (quiz/planos/checkout)
- * - Se tentar acessar rota premium sem assinatura -> manda para /vendas (escolha de plano)
+ * Guard de assinatura/pagamento:
+ * - Admin entra em tudo
+ * - Usuário premium (is_premium=true ou premium_until > now) entra em tudo
+ * - Usuário não-premium: pode acessar SOMENTE o funil (Onboarding/Vendas/Checkout)
+ *   e é redirecionado para /Vendas quando tentar página premium.
  *
- * OBS: por enquanto a "assinatura real" está como placeholder. Você pode trocar depois
- * por um campo do profiles (ex: subscription_status / paid_until).
+ * ✅ Isso mata o loop e deixa o fluxo correto:
+ * Quiz (Onboarding) -> Vendas -> Checkout -> (pago) -> Dashboard/Home etc.
  */
 const RequireSubscription = ({ children }) => {
   const { isLoadingAuth, isAuthenticated } = useAuth();
   const location = useLocation();
 
   const [loading, setLoading] = useState(true);
-  const [isAdmin, setIsAdmin] = useState(false);
-  const [hasSubscription, setHasSubscription] = useState(false);
-
-  const pathname = (location.pathname || "/").toLowerCase();
-
-  // Rotas do funil que NÃO devem ser bloqueadas por assinatura
-  const isFunnelRoute = useMemo(() => {
-    // ajuste aqui se você tiver nomes diferentes (ex: "/planos" ao invés de "/vendas")
-    if (pathname === "/") return true;
-    if (pathname.startsWith("/vendas")) return true;
-    if (pathname.startsWith("/checkout")) return true;
-    return false;
-  }, [pathname]);
+  const [entitlement, setEntitlement] = useState({
+    isAdmin: false,
+    isPremium: false,
+  });
 
   useEffect(() => {
     let mounted = true;
@@ -91,27 +84,26 @@ const RequireSubscription = ({ children }) => {
         const user = userData?.user;
         if (!user) return;
 
+        // ✅ pegar role + flags de premium (você vai criar esses campos)
         const { data, error } = await supabase
           .from("profiles")
-          .select("role")
+          .select("role, is_premium, premium_until")
           .eq("id", user.id)
           .single();
 
         if (!mounted) return;
 
-        const admin = !error && data?.role === "admin";
-        setIsAdmin(admin);
+        const isAdmin = !error && data?.role === "admin";
 
-        // ✅ Placeholder de assinatura (trocar depois por coluna real)
-        // Exemplo futuro:
-        // const { data: prof } = await supabase.from("profiles").select("subscription_status, paid_until").eq("id", user.id).single();
-        // setHasSubscription(prof?.subscription_status === "active" || (prof?.paid_until && new Date(prof.paid_until) > new Date()));
-        setHasSubscription(false);
+        // premium_until: se existir e for no futuro
+        const premiumUntil = data?.premium_until ? new Date(data.premium_until).getTime() : 0;
+        const now = Date.now();
+        const isPremium =
+          Boolean(data?.is_premium) || (premiumUntil && premiumUntil > now);
+
+        setEntitlement({ isAdmin, isPremium });
       } catch (e) {
-        if (mounted) {
-          setIsAdmin(false);
-          setHasSubscription(false);
-        }
+        if (mounted) setEntitlement({ isAdmin: false, isPremium: false });
       } finally {
         if (mounted) setLoading(false);
       }
@@ -131,19 +123,25 @@ const RequireSubscription = ({ children }) => {
     );
   }
 
+  // RequireAuth já cuida, mas mantém seguro
   if (!isAuthenticated) return null;
 
-  // ✅ Admin entra direto em tudo
-  if (isAdmin) return children;
+  // ✅ Admin/premium entram direto
+  if (entitlement.isAdmin || entitlement.isPremium) return children;
 
-  // ✅ Sem assinatura: deixa navegar no funil (quiz -> planos -> checkout)
-  if (!hasSubscription && isFunnelRoute) return children;
+  // ✅ allowlist do funil (não-premium)
+  const path = location.pathname.toLowerCase();
 
-  // ✅ Com assinatura: libera tudo
-  if (hasSubscription) return children;
+  const isOnboarding = path === "/" || path.includes("/onboarding");
+  const isVendas = path.includes("/vendas");
+  const isCheckout = path.includes("/checkout");
 
-  // 🚫 Sem assinatura e tentando entrar em rota premium: manda para escolha de planos
-  return <Navigate to="/vendas" replace />;
+  if (isOnboarding || isVendas || isCheckout) {
+    return children;
+  }
+
+  // 🚫 tentou abrir página premium sem premium -> manda para Vendas (escolher plano)
+  return <Navigate to="/Vendas" replace />;
 };
 
 /**
@@ -173,10 +171,12 @@ const PublicLoginRoute = () => {
 
 const ProtectedRoutes = () => {
   const location = useLocation();
-  const pathname = (location.pathname || "/").toLowerCase();
+  const pathname = location.pathname.toLowerCase();
 
   const isCheckout =
-    pathname === "/checkout" || pathname.startsWith("/checkout/") || pathname.includes("checkout");
+    pathname === "/checkout" ||
+    pathname.startsWith("/checkout/") ||
+    pathname.includes("checkout");
 
   return (
     <Routes>
@@ -190,7 +190,7 @@ const ProtectedRoutes = () => {
       />
 
       {Object.entries(Pages).map(([path, Page]) => {
-        const pageIsCheckout = String(path).toLowerCase().includes("checkout") || isCheckout;
+        const pageIsCheckout = path.toLowerCase().includes("checkout") || isCheckout;
 
         return (
           <Route
