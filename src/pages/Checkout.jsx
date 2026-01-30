@@ -6,24 +6,25 @@ import { Input } from "@/components/ui/input";
 import { createPageUrl } from "@/utils";
 import { supabase } from "@/lib/supabaseClient";
 import AuthGate from "@/components/AuthGate";
-import { useNavigate } from "react-router-dom";
 
-const plans = {
+const PLANS = {
   mensal: { id: "mensal", name: "Mensal", price: 24.9, duration: 30 },
   trimestral: { id: "trimestral", name: "Trimestral", price: 59.9, duration: 90 },
   anual: { id: "anual", name: "Anual", price: 199.9, duration: 365 },
 };
 
-export default function Checkout() {
-  const navigate = useNavigate();
+function goToDashboard() {
+  // padrão do seu app (Base44) costuma usar createPageUrl com a key do pages.config
+  window.location.href = createPageUrl("Dashboard");
+}
 
-  const [step, setStep] = useState(1);
+export default function Checkout() {
+  const [step, setStep] = useState(1); // 1=metodo, 2=dados, 3=confirmacao/pagar
   const [selectedPlan, setSelectedPlan] = useState(null);
   const [paymentMethod, setPaymentMethod] = useState(null);
   const [isProcessing, setIsProcessing] = useState(false);
 
   const [user, setUser] = useState(null);
-  const [isAdmin, setIsAdmin] = useState(false);
   const [showAuth, setShowAuth] = useState(false);
 
   const [personalData, setPersonalData] = useState({
@@ -32,96 +33,47 @@ export default function Checkout() {
     cpf: "",
   });
 
-  const isPersonalDataValid = useMemo(() => {
-    return Boolean(personalData.nome?.trim() && personalData.email?.trim() && personalData.cpf?.trim());
-  }, [personalData]);
-
-  // 1) Carrega plano do localStorage (vem da página /Vendas)
+  // Carrega usuário logado (se tiver)
   useEffect(() => {
-    const planId = localStorage.getItem("heartbalance_selected_plan");
-    if (!planId || !plans[planId]) {
-      // Se não tem plano, volta para Vendas (sem reload)
-      navigate(createPageUrl("Vendas"), { replace: true });
-      return;
-    }
-    setSelectedPlan(plans[planId]);
-  }, [navigate]);
-
-  // 2) Pega usuário atual (se já estiver logado) e preenche e-mail
-  useEffect(() => {
-    let mounted = true;
     supabase.auth.getUser().then(({ data }) => {
-      if (!mounted) return;
       if (data?.user) {
         setUser(data.user);
         setPersonalData((p) => ({ ...p, email: data.user.email || p.email }));
       }
     });
-    return () => {
-      mounted = false;
-    };
   }, []);
 
-  // 3) Detecta se é admin via profiles.role
+  // Carrega plano selecionado (obrigatório)
   useEffect(() => {
-    let mounted = true;
-
-    async function loadRole() {
-      try {
-        const { data } = await supabase.auth.getUser();
-        const u = data?.user;
-        if (!u) {
-          if (mounted) setIsAdmin(false);
-          return;
-        }
-
-        const { data: prof, error } = await supabase
-          .from("profiles")
-          .select("role")
-          .eq("id", u.id)
-          .single();
-
-        if (!mounted) return;
-
-        setIsAdmin(!error && prof?.role === "admin");
-      } catch (e) {
-        if (mounted) setIsAdmin(false);
-      }
-    }
-
-    loadRole();
-    return () => {
-      mounted = false;
-    };
-  }, [user?.id]);
-
-  // 4) Quando o AuthGate fizer login com sucesso, fecha e segue fluxo
-  const handleAuthSuccess = async () => {
-    const { data } = await supabase.auth.getUser();
-    if (data?.user) {
-      setUser(data.user);
-      setPersonalData((p) => ({ ...p, email: data.user.email || p.email }));
-    }
-    setShowAuth(false);
-    // continua no fluxo
-    setStep(3);
-  };
-
-  const handleBack = () => {
-    if (showAuth) {
-      setShowAuth(false);
+    const planId = localStorage.getItem("heartbalance_selected_plan");
+    if (!planId || !PLANS[planId]) {
+      // Se não escolheu plano, volta para Vendas (onde escolhe o plano)
+      window.location.href = createPageUrl("Vendas");
       return;
     }
-    setStep((s) => Math.max(1, s - 1));
-  };
+    setSelectedPlan(PLANS[planId]);
+  }, []);
+
+  const isAdminDemo = useMemo(() => {
+    // “modo vendedor/admin”: se o usuário for admin (profiles.role='admin'), vamos liberar sem MP.
+    // Não depende do perfil completo aqui; vamos detectar no momento do pagamento.
+    return false;
+  }, []);
 
   const handleContinue = async () => {
-    if (!isPersonalDataValid) {
+    if (!paymentMethod) {
+      alert("Selecione a forma de pagamento.");
+      return;
+    }
+
+    if (!personalData.nome || !personalData.email || !personalData.cpf) {
       alert("Preencha todos os campos.");
       return;
     }
 
     const { data } = await supabase.auth.getUser();
+
+    // Se não estiver logado, abre AuthGate (login/cadastro)
     if (!data?.user) {
       setShowAuth(true);
       return;
@@ -131,30 +83,66 @@ export default function Checkout() {
     setStep(3);
   };
 
-  // ✅ Admin: libera premium direto
-  const grantPremiumForAdmin = () => {
-    // opcional: guarda um “flag” só pra debug/demonstração
-    localStorage.setItem("heartbalance_demo_premium", "1");
+  async function markPlanActiveForUser(userId, planId) {
+    // Tenta atualizar colunas novas (plano_ativo, plano_tipo etc).
+    // Se sua tabela ainda não tiver tudo, não quebra o fluxo.
+    const today = new Date();
+    const startDate = today.toISOString().slice(0, 10);
 
-    // limpa dados do checkout, se quiser evitar comportamento estranho no retorno
-    // (não é obrigatório)
-    // localStorage.removeItem("heartbalance_purchase_data");
+    // Calcula plano_fim baseado em duration (dias)
+    const durationDays = selectedPlan?.duration ?? 30;
+    const end = new Date(today.getTime() + durationDays * 24 * 60 * 60 * 1000);
+    const endDate = end.toISOString().slice(0, 10);
 
-    navigate(createPageUrl("Premium"), { replace: true });
-  };
+    // Primeiro tenta update
+    const { error: updErr } = await supabase
+      .from("profiles")
+      .update({
+        plano_ativo: true,
+        plano_tipo: planId,
+        plano_inicio: startDate,
+        plano_fim: endDate,
+      })
+      .eq("id", userId);
+
+    if (!updErr) return;
+
+    // Fallback: tenta pelo menos setar algo simples (se existir só role, por exemplo)
+    await supabase
+      .from("profiles")
+      .update({
+        plano_ativo: true,
+      })
+      .eq("id", userId);
+  }
+
+  async function isUserAdmin(userId) {
+    // lê role do profiles
+    const { data, error } = await supabase
+      .from("profiles")
+      .select("role")
+      .eq("id", userId)
+      .single();
+
+    if (error) return false;
+    return data?.role === "admin";
+  }
 
   const handlePay = async () => {
     if (!user || !paymentMethod || !selectedPlan) return;
 
-    // ✅ bypass admin: NÃO chama Mercado Pago
-    if (isAdmin) {
-      grantPremiumForAdmin();
-      return;
-    }
-
     setIsProcessing(true);
 
     try {
+      // 1) Se for admin -> modo vendedor/demo: libera premium e vai pro Dashboard (sem MP)
+      const admin = await isUserAdmin(user.id);
+      if (admin) {
+        await markPlanActiveForUser(user.id, selectedPlan.id);
+        goToDashboard();
+        return;
+      }
+
+      // 2) Usuário normal -> fluxo MercadoPago
       const resp = await fetch("/api/create-payment", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -162,35 +150,56 @@ export default function Checkout() {
           plan: selectedPlan,
           userEmail: user.email,
           userId: user.id,
+          paymentMethod, // opcional, mas ajuda no backend
         }),
       });
 
-      const data = await resp.json();
+      const data = await resp.json().catch(() => ({}));
+
       if (!resp.ok || !data?.init_point) {
-        alert("Erro ao iniciar pagamento");
+        alert("Erro ao iniciar pagamento (Mercado Pago).");
         setIsProcessing(false);
         return;
       }
 
+      // Vai para MercadoPago
       window.location.href = data.init_point;
     } catch (e) {
-      alert("Erro ao iniciar pagamento");
+      alert("Erro inesperado ao processar pagamento.");
       setIsProcessing(false);
     }
   };
 
   if (!selectedPlan) return null;
 
-  // AuthGate é full-screen. Não envolver em “caixa” para não quebrar layout.
-  if (showAuth) {
-    return <AuthGate onSuccess={handleAuthSuccess} />;
-  }
-
   return (
     <div className="min-h-screen bg-gradient-to-br from-rose-50 to-white p-6">
+      {showAuth && (
+        <div className="max-w-md mx-auto bg-white p-6 rounded-xl shadow mb-6">
+          <AuthGate
+            onSuccess={(u) => {
+              setUser(u);
+              setShowAuth(false);
+              // Depois do login/cadastro, volta para o fluxo (não redireciona pro quiz)
+              // Mantém o usuário no Checkout para seguir
+            }}
+          />
+        </div>
+      )}
+
       <div className="max-w-lg mx-auto bg-white p-6 rounded-3xl shadow-xl">
         <div className="flex items-center gap-3 mb-6">
-          <ArrowLeft className="cursor-pointer" onClick={handleBack} />
+          <ArrowLeft
+            className="cursor-pointer"
+            onClick={() => {
+              if (step <= 1) {
+                // volta para Vendas (seleção de plano)
+                window.location.href = createPageUrl("Vendas");
+              } else {
+                setStep(step - 1);
+              }
+            }}
+          />
           <div>
             <h2 className="text-xl font-bold">Finalizar Compra</h2>
             <p className="text-sm text-gray-500">{selectedPlan.name}</p>
@@ -207,6 +216,7 @@ export default function Checkout() {
         </div>
 
         <AnimatePresence mode="wait">
+          {/* STEP 1 - Método */}
           {step === 1 && (
             <motion.div
               key="step1"
@@ -235,6 +245,7 @@ export default function Checkout() {
             </motion.div>
           )}
 
+          {/* STEP 2 - Dados */}
           {step === 2 && (
             <motion.div
               key="step2"
@@ -262,15 +273,10 @@ export default function Checkout() {
               <Button className="w-full" onClick={handleContinue}>
                 Continuar
               </Button>
-
-              {isAdmin && (
-                <p className="text-xs text-gray-500">
-                  Modo Admin: ao final, o acesso Premium será liberado sem redirecionar para pagamento.
-                </p>
-              )}
             </motion.div>
           )}
 
+          {/* STEP 3 - Confirmar e pagar */}
           {step === 3 && (
             <motion.div
               key="step3"
@@ -292,12 +298,12 @@ export default function Checkout() {
               </div>
 
               <Button className="w-full" onClick={handlePay} disabled={isProcessing}>
-                {isAdmin
-                  ? "Ativar Premium Agora"
-                  : isProcessing
-                  ? "Redirecionando..."
-                  : "Pagar Agora"}
+                {isProcessing ? "Processando..." : "Pagar Agora"}
               </Button>
+
+              <p className="text-xs text-gray-500 text-center">
+                * Se você for admin, este botão libera acesso e vai direto para o Dashboard (modo vendedor).
+              </p>
             </motion.div>
           )}
         </AnimatePresence>
