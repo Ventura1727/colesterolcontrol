@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { ArrowLeft, CreditCard, QrCode } from "lucide-react";
+import { ArrowLeft, CreditCard, QrCode, ShieldCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { createPageUrl } from "@/utils";
@@ -14,18 +14,50 @@ const PLANS = {
 };
 
 function goToDashboard() {
-  // padrão do seu app (Base44) costuma usar createPageUrl com a key do pages.config
   window.location.href = createPageUrl("Dashboard");
 }
 
+function normalizeCpf(value) {
+  return (value || "").replace(/\D/g, "").slice(0, 11);
+}
+
+function isValidCpfDigits(cpfDigits) {
+  // Validação simples (11 dígitos). Se quiser, depois colocamos validação completa de CPF.
+  return typeof cpfDigits === "string" && cpfDigits.length === 11;
+}
+
+function loadSelectedPlan() {
+  // Aceita:
+  // - Formato antigo: "mensal" | "trimestral" | "anual"
+  // - Formato novo: JSON { id, name, price, duration, ... } (salvo no Vendas.jsx atualizado)
+  const raw = localStorage.getItem("heartbalance_selected_plan");
+  if (!raw) return null;
+
+  // 1) Tenta JSON
+  try {
+    const parsed = JSON.parse(raw);
+    const planId = parsed?.id;
+    if (planId && PLANS[planId]) {
+      // Preferimos a tabela PLANS como fonte de verdade (duration/price fixos)
+      return PLANS[planId];
+    }
+  } catch {
+    // ignore
+  }
+
+  // 2) Fallback formato antigo
+  if (PLANS[raw]) return PLANS[raw];
+
+  return null;
+}
+
 export default function Checkout() {
-  const [step, setStep] = useState(1); // 1=metodo, 2=dados, 3=confirmacao/pagar
+  const [step, setStep] = useState(1); // 1=método, 2=dados(+login/cadastro), 3=confirmar/pagar
   const [selectedPlan, setSelectedPlan] = useState(null);
   const [paymentMethod, setPaymentMethod] = useState(null);
   const [isProcessing, setIsProcessing] = useState(false);
 
   const [user, setUser] = useState(null);
-  const [showAuth, setShowAuth] = useState(false);
 
   const [personalData, setPersonalData] = useState({
     nome: "",
@@ -33,68 +65,89 @@ export default function Checkout() {
     cpf: "",
   });
 
-  // Carrega usuário logado (se tiver)
+  // Carrega usuário logado e mantém sincronizado
   useEffect(() => {
-    supabase.auth.getUser().then(({ data }) => {
+    let mounted = true;
+
+    async function bootstrap() {
+      const { data } = await supabase.auth.getUser();
+      if (!mounted) return;
+
       if (data?.user) {
         setUser(data.user);
         setPersonalData((p) => ({ ...p, email: data.user.email || p.email }));
       }
+    }
+
+    bootstrap();
+
+    const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => {
+      const u = session?.user || null;
+      setUser(u);
+      if (u?.email) {
+        setPersonalData((p) => ({ ...p, email: u.email || p.email }));
+      }
     });
+
+    return () => {
+      mounted = false;
+      sub?.subscription?.unsubscribe?.();
+    };
   }, []);
 
   // Carrega plano selecionado (obrigatório)
   useEffect(() => {
-    const planId = localStorage.getItem("heartbalance_selected_plan");
-    if (!planId || !PLANS[planId]) {
-      // Se não escolheu plano, volta para Vendas (onde escolhe o plano)
+    const plan = loadSelectedPlan();
+    if (!plan) {
       window.location.href = createPageUrl("Vendas");
       return;
     }
-    setSelectedPlan(PLANS[planId]);
+    setSelectedPlan(plan);
   }, []);
 
-  const isAdminDemo = useMemo(() => {
-    // “modo vendedor/admin”: se o usuário for admin (profiles.role='admin'), vamos liberar sem MP.
-    // Não depende do perfil completo aqui; vamos detectar no momento do pagamento.
-    return false;
-  }, []);
+  const stepTitle = useMemo(() => {
+    if (step === 1) return "Forma de Pagamento";
+    if (step === 2) return "Dados e Acesso";
+    return "Confirmar e Pagar";
+  }, [step]);
 
-  const handleContinue = async () => {
+  const handleContinueFromStep2 = () => {
     if (!paymentMethod) {
       alert("Selecione a forma de pagamento.");
+      setStep(1);
       return;
     }
 
-    if (!personalData.nome || !personalData.email || !personalData.cpf) {
-      alert("Preencha todos os campos.");
+    const cpfDigits = normalizeCpf(personalData.cpf);
+
+    if (!personalData.nome || !personalData.email || !cpfDigits) {
+      alert("Preencha Nome, Email e CPF.");
       return;
     }
 
-    const { data } = await supabase.auth.getUser();
-
-    // Se não estiver logado, abre AuthGate (login/cadastro)
-    if (!data?.user) {
-      setShowAuth(true);
+    if (!isValidCpfDigits(cpfDigits)) {
+      alert("CPF inválido. Digite os 11 números do CPF.");
       return;
     }
 
-    setUser(data.user);
+    if (!user) {
+      // Aqui é o ponto exato do seu requisito: login/cadastro só no step de dados.
+      alert("Faça login ou crie sua conta para continuar o pagamento.");
+      return;
+    }
+
+    setPersonalData((p) => ({ ...p, cpf: cpfDigits }));
     setStep(3);
   };
 
   async function markPlanActiveForUser(userId, planId) {
-    // Tenta atualizar colunas novas (plano_ativo, plano_tipo etc).
-    // Se sua tabela ainda não tiver tudo, não quebra o fluxo.
     const today = new Date();
     const startDate = today.toISOString().slice(0, 10);
 
-    // Calcula plano_fim baseado em duration (dias)
     const durationDays = selectedPlan?.duration ?? 30;
     const end = new Date(today.getTime() + durationDays * 24 * 60 * 60 * 1000);
     const endDate = end.toISOString().slice(0, 10);
 
-    // Primeiro tenta update
     const { error: updErr } = await supabase
       .from("profiles")
       .update({
@@ -107,7 +160,6 @@ export default function Checkout() {
 
     if (!updErr) return;
 
-    // Fallback: tenta pelo menos setar algo simples (se existir só role, por exemplo)
     await supabase
       .from("profiles")
       .update({
@@ -117,7 +169,6 @@ export default function Checkout() {
   }
 
   async function isUserAdmin(userId) {
-    // lê role do profiles
     const { data, error } = await supabase
       .from("profiles")
       .select("role")
@@ -134,7 +185,7 @@ export default function Checkout() {
     setIsProcessing(true);
 
     try {
-      // 1) Se for admin -> modo vendedor/demo: libera premium e vai pro Dashboard (sem MP)
+      // 1) Admin -> libera premium sem MP (modo vendedor/demo)
       const admin = await isUserAdmin(user.id);
       if (admin) {
         await markPlanActiveForUser(user.id, selectedPlan.id);
@@ -142,15 +193,20 @@ export default function Checkout() {
         return;
       }
 
-      // 2) Usuário normal -> fluxo MercadoPago
+      // 2) Usuário normal -> MercadoPago
       const resp = await fetch("/api/create-payment", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           plan: selectedPlan,
-          userEmail: user.email,
+          userEmail: personalData.email || user.email,
           userId: user.id,
-          paymentMethod, // opcional, mas ajuda no backend
+          paymentMethod,
+          customer: {
+            nome: personalData.nome,
+            email: personalData.email,
+            cpf: normalizeCpf(personalData.cpf),
+          },
         }),
       });
 
@@ -162,7 +218,6 @@ export default function Checkout() {
         return;
       }
 
-      // Vai para MercadoPago
       window.location.href = data.init_point;
     } catch (e) {
       alert("Erro inesperado ao processar pagamento.");
@@ -174,35 +229,23 @@ export default function Checkout() {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-rose-50 to-white p-6">
-      {showAuth && (
-        <div className="max-w-md mx-auto bg-white p-6 rounded-xl shadow mb-6">
-          <AuthGate
-            onSuccess={(u) => {
-              setUser(u);
-              setShowAuth(false);
-              // Depois do login/cadastro, volta para o fluxo (não redireciona pro quiz)
-              // Mantém o usuário no Checkout para seguir
-            }}
-          />
-        </div>
-      )}
-
       <div className="max-w-lg mx-auto bg-white p-6 rounded-3xl shadow-xl">
         <div className="flex items-center gap-3 mb-6">
           <ArrowLeft
             className="cursor-pointer"
             onClick={() => {
               if (step <= 1) {
-                // volta para Vendas (seleção de plano)
                 window.location.href = createPageUrl("Vendas");
               } else {
                 setStep(step - 1);
               }
             }}
           />
-          <div>
+          <div className="flex-1">
             <h2 className="text-xl font-bold">Finalizar Compra</h2>
-            <p className="text-sm text-gray-500">{selectedPlan.name}</p>
+            <p className="text-sm text-gray-500">
+              {selectedPlan.name} • {stepTitle}
+            </p>
           </div>
         </div>
 
@@ -242,35 +285,77 @@ export default function Checkout() {
               >
                 <CreditCard className="mr-2" /> Cartão
               </Button>
+
+              <p className="text-xs text-gray-500 text-center mt-4">
+                Você só fará login/cadastro no próximo passo, ao preencher os dados para pagamento.
+              </p>
             </motion.div>
           )}
 
-          {/* STEP 2 - Dados */}
+          {/* STEP 2 - Dados + Login/Cadastro */}
           {step === 2 && (
             <motion.div
               key="step2"
               initial={{ opacity: 0, x: 50 }}
               animate={{ opacity: 1, x: 0 }}
               exit={{ opacity: 0 }}
-              className="space-y-3"
+              className="space-y-4"
             >
-              <Input
-                placeholder="Nome"
-                value={personalData.nome}
-                onChange={(e) => setPersonalData({ ...personalData, nome: e.target.value })}
-              />
-              <Input
-                placeholder="Email"
-                value={personalData.email}
-                onChange={(e) => setPersonalData({ ...personalData, email: e.target.value })}
-              />
-              <Input
-                placeholder="CPF"
-                value={personalData.cpf}
-                onChange={(e) => setPersonalData({ ...personalData, cpf: e.target.value })}
-              />
+              <div className="bg-gray-50 p-4 rounded-xl">
+                <p className="text-sm text-gray-700">
+                  <b>Plano:</b> {selectedPlan.name} • <b>Valor:</b> R$ {selectedPlan.price.toFixed(2)} •{" "}
+                  <b>Método:</b> {paymentMethod === "pix" ? "PIX" : "Cartão"}
+                </p>
+              </div>
 
-              <Button className="w-full" onClick={handleContinue}>
+              <div className="space-y-3">
+                <Input
+                  placeholder="Nome"
+                  value={personalData.nome}
+                  onChange={(e) => setPersonalData({ ...personalData, nome: e.target.value })}
+                />
+                <Input
+                  placeholder="Email"
+                  value={personalData.email}
+                  onChange={(e) => setPersonalData({ ...personalData, email: e.target.value })}
+                />
+                <Input
+                  placeholder="CPF (somente números)"
+                  value={personalData.cpf}
+                  onChange={(e) =>
+                    setPersonalData({ ...personalData, cpf: normalizeCpf(e.target.value) })
+                  }
+                />
+              </div>
+
+              {/* Aqui é o ponto do seu requisito: login/cadastro só no Step 2 */}
+              {!user ? (
+                <div className="bg-white border border-gray-200 rounded-xl p-4">
+                  <div className="flex items-center gap-2 mb-3">
+                    <ShieldCheck className="w-5 h-5 text-green-600" />
+                    <p className="font-semibold text-gray-900">Crie sua conta ou faça login</p>
+                  </div>
+
+                  <p className="text-xs text-gray-500 mb-4">
+                    Precisamos do seu acesso para liberar o conteúdo Premium após a confirmação do pagamento.
+                  </p>
+
+                  <AuthGate
+                    onSuccess={(u) => {
+                      setUser(u);
+                      if (u?.email) {
+                        setPersonalData((p) => ({ ...p, email: u.email || p.email }));
+                      }
+                    }}
+                  />
+                </div>
+              ) : (
+                <div className="bg-green-50 border border-green-200 rounded-xl p-3 text-sm text-green-800">
+                  Logado como <b>{user.email}</b>. Você já pode continuar.
+                </div>
+              )}
+
+              <Button className="w-full" onClick={handleContinueFromStep2}>
                 Continuar
               </Button>
             </motion.div>
@@ -285,7 +370,7 @@ export default function Checkout() {
               exit={{ opacity: 0 }}
               className="space-y-4"
             >
-              <div className="bg-gray-50 p-4 rounded-xl">
+              <div className="bg-gray-50 p-4 rounded-xl space-y-1">
                 <p>
                   <b>Plano:</b> {selectedPlan.name}
                 </p>
@@ -294,6 +379,9 @@ export default function Checkout() {
                 </p>
                 <p>
                   <b>Método:</b> {paymentMethod === "pix" ? "PIX" : "Cartão"}
+                </p>
+                <p>
+                  <b>Email:</b> {personalData.email}
                 </p>
               </div>
 
