@@ -2,8 +2,20 @@ import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/lib/supabaseClient";
 
+function parseHashParams() {
+  const hash = window.location.hash?.replace(/^#/, "") || "";
+  const params = new URLSearchParams(hash);
+  const access_token = params.get("access_token");
+  const refresh_token = params.get("refresh_token");
+  const type = params.get("type");
+  return { access_token, refresh_token, type };
+}
+
 export default function ResetPassword() {
   const navigate = useNavigate();
+
+  const [checkingSession, setCheckingSession] = useState(true);
+
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
   const [error, setError] = useState(null);
@@ -11,10 +23,67 @@ export default function ResetPassword() {
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    // Se não tiver sessão (ou token inválido), manda pro login
-    supabase.auth.getSession().then(({ data }) => {
-      if (!data?.session) navigate("/login", { replace: true });
-    });
+    let mounted = true;
+
+    async function ensureSession() {
+      setCheckingSession(true);
+      setError(null);
+
+      try {
+        // 1) Tenta sessão normal (storage)
+        const { data: sessData } = await supabase.auth.getSession();
+        if (!mounted) return;
+
+        if (sessData?.session) {
+          setCheckingSession(false);
+          return;
+        }
+
+        // 2) Se não tem sessão, tenta criar a partir do hash (caso o link de recovery caia aqui direto)
+        const { access_token, refresh_token, type } = parseHashParams();
+
+        if (access_token && refresh_token) {
+          const { data, error } = await supabase.auth.setSession({
+            access_token,
+            refresh_token,
+          });
+
+          // Limpa o hash da URL (evita reprocessar e evita expor token na barra)
+          window.history.replaceState({}, document.title, window.location.pathname + window.location.search);
+
+          if (!mounted) return;
+
+          if (error || !data?.session) {
+            setCheckingSession(false);
+            navigate("/login", { replace: true });
+            return;
+          }
+
+          // Se for recovery, pode ficar nessa página mesmo
+          if (type === "recovery") {
+            setCheckingSession(false);
+            return;
+          }
+
+          setCheckingSession(false);
+          return;
+        }
+
+        // 3) Sem sessão e sem tokens no hash: não tem como resetar
+        setCheckingSession(false);
+        navigate("/login", { replace: true });
+      } catch (e) {
+        if (!mounted) return;
+        setCheckingSession(false);
+        navigate("/login", { replace: true });
+      }
+    }
+
+    ensureSession();
+
+    return () => {
+      mounted = false;
+    };
   }, [navigate]);
 
   async function handleUpdate() {
@@ -27,7 +96,10 @@ export default function ResetPassword() {
     setLoading(true);
     try {
       const { error } = await supabase.auth.updateUser({ password });
-      if (error) return setError(error.message);
+      if (error) {
+        setError(error.message);
+        return;
+      }
 
       setInfo("Senha atualizada com sucesso. Faça login novamente.");
       await supabase.auth.signOut();
@@ -37,6 +109,26 @@ export default function ResetPassword() {
     } finally {
       setLoading(false);
     }
+  }
+
+  if (checkingSession) {
+    return (
+      <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+        <div
+          style={{
+            width: "100%",
+            maxWidth: 420,
+            background: "white",
+            borderRadius: 14,
+            padding: 20,
+            border: "1px solid rgba(15,23,42,0.10)",
+          }}
+        >
+          <h2 style={{ margin: 0, fontSize: 22, fontWeight: 700 }}>Carregando…</h2>
+          <p style={{ marginTop: 8, color: "#475569" }}>Validando seu link de redefinição de senha.</p>
+        </div>
+      </div>
+    );
   }
 
   return (
