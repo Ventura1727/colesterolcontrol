@@ -11,10 +11,11 @@ import { AuthProvider, useAuth } from "@/lib/AuthContext";
 import UserNotRegisteredError from "@/components/UserNotRegisteredError";
 import GerarPix from "@/components/GerarPix";
 import AuthGate from "@/components/AuthGate";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 
-import AuthCallback from "@/components/AuthCallback";
+// ✅ Ajustado para o local onde você criou o arquivo no print: src/components/Auth/Callback.jsx
+import AuthCallback from "@/components/Auth/Callback";
 import ResetPassword from "@/components/ResetPassword";
 
 const { Pages, Layout, mainPage } = pagesConfig;
@@ -189,7 +190,7 @@ const PublicLoginRoute = () => {
 
   if (isLoadingAuth) {
     return (
-      <div className="fixed inset-0 flex items-center justifyContent-center">
+      <div className="fixed inset-0 flex items-center justify-center">
         <div className="w-8 h-8 border-4 border-slate-200 border-t-slate-800 rounded-full animate-spin" />
       </div>
     );
@@ -246,11 +247,8 @@ const AppPagesRoutes = () => {
       {Object.entries(Pages).map(([pageKey, PageComponent]) => {
         const isPublic = PUBLIC_PAGE_KEYS.has(pageKey);
 
-        // OBS: React Router geralmente não é case sensitive, mas vamos manter caminhos em minúsculo
         const routePath = `/${String(pageKey).toLowerCase()}`;
 
-        // Para o seu caso específico: "Alimentacao" sem acento
-        // Vamos aceitar também "/alimentação" para não dar 404 se algum lugar gerar com acento.
         const aliasPaths =
           pageKey === "Alimentacao"
             ? [routePath, "/alimentação", "/alimentacao"]
