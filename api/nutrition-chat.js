@@ -1,67 +1,85 @@
-// api/nutrition-chat.js
-
-export default async function handler(req, res) {
-  if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
-
+// /api/nutrition-chat.js
+module.exports = async (req, res) => {
   try {
-    const { messages } = req.body || {};
-
-    if (!Array.isArray(messages) || messages.length === 0) {
-      return res.status(400).json({ error: "messages[] é obrigatório" });
+    if (req.method !== "POST") {
+      return res.status(405).json({ error: "Method not allowed" });
     }
 
     const apiKey = process.env.OPENAI_API_KEY;
-    if (!apiKey) return res.status(500).json({ error: "OPENAI_API_KEY não configurada" });
+    if (!apiKey) {
+      return res.status(500).json({ error: "Missing OPENAI_API_KEY on server" });
+    }
 
-    // System prompt do seu app (colesterol/rotina/educativo)
-    const system = `
-Você é o Nutricionista IA do app HeartBalance (foco: controle de colesterol).
-Regras:
-- Responda em PT-BR, objetivo e didático.
-- Sugira opções práticas (café/almoço/jantar/lanche), porções aproximadas e substituições.
-- Se o usuário mencionar exames/LDL/HDL/Triglicerídeos, explique o que significa e hábitos que ajudam.
-- Não prescreva medicamentos. Se for algo médico/urgente, recomende procurar um profissional.
-- Sempre que fizer sentido, finalize com um mini "próximo passo" (1 ação simples hoje).
-`.trim();
+    // Vercel geralmente já entrega req.body como objeto, mas em alguns casos vem string
+    const body = typeof req.body === "string" ? JSON.parse(req.body) : (req.body || {});
+    const messages = Array.isArray(body.messages) ? body.messages : [];
 
-    // Converte messages do front para o formato simples do Responses API:
-    // [{role:"system|user|assistant", content:"..."}]
+    // mantém o payload leve
+    const trimmed = messages.slice(-20).map((m) => ({
+      role: m.role === "assistant" ? "assistant" : "user",
+      content: String(m.content || "").slice(0, 4000),
+    }));
+
+    const system = {
+      role: "system",
+      content: [
+        {
+          type: "text",
+          text:
+            "Você é o Nutricionista IA do app HeartBalance. Ajude com alimentação para reduzir colesterol (LDL), melhorar HDL e hábitos. " +
+            "Seja prático e motivador. Quando der recomendações, inclua substituições simples e porções. " +
+            "Não faça diagnóstico; recomende procurar um médico/nutricionista para decisões clínicas.",
+        },
+      ],
+    };
+
     const input = [
-      { role: "system", content: system },
-      ...messages
-        .filter((m) => m && typeof m === "object")
-        .map((m) => ({
-          role: m.role === "assistant" ? "assistant" : "user",
-          content: String(m.content || "").slice(0, 8000),
-        })),
+      system,
+      ...trimmed.map((m) => ({
+        role: m.role,
+        content: [{ type: "text", text: m.content }],
+      })),
     ];
 
-    const r = await fetch("https://api.openai.com/v1/responses", {
+    const openaiResp = await fetch("https://api.openai.com/v1/responses", {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${apiKey}`,
         "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`,
       },
       body: JSON.stringify({
-        model: "gpt-4.1-mini",
+        model: "gpt-5-mini",
         input,
-        max_output_tokens: 500,
+        store: false,
+        max_output_tokens: 450,
       }),
     });
 
-    const data = await r.json();
+    const data = await openaiResp.json().catch(() => ({}));
 
-    if (!r.ok) {
-      return res.status(500).json({
-        error: "Erro ao chamar OpenAI",
-        details: data,
+    if (!openaiResp.ok) {
+      return res.status(openaiResp.status).json({
+        error: "OpenAI error",
+        detail: data?.error || data,
       });
     }
 
-    // No Responses API, o jeito mais simples é usar output_text :contentReference[oaicite:1]{index=1}
-    const assistant = data.output_text || "";
-    return res.status(200).json({ assistant });
-  } catch (e) {
-    return res.status(500).json({ error: "Erro inesperado", details: String(e?.message || e) });
+    const reply =
+      data?.output_text ||
+      (Array.isArray(data?.output)
+        ? data.output
+            .flatMap((o) => o?.content || [])
+            .filter((c) => c?.type === "output_text")
+            .map((c) => c?.text)
+            .join("\n")
+        : "") ||
+      "";
+
+    return res.status(200).json({ reply });
+  } catch (err) {
+    return res.status(500).json({
+      error: "Server error",
+      detail: String(err?.message || err),
+    });
   }
-}
+};
