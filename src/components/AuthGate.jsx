@@ -1,13 +1,31 @@
 import { useMemo, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
-import { supabase } from "../lib/supabaseClient";
+import { supabase } from "@/lib/supabaseClient";
 
 function isValidEmail(value) {
   const v = String(value || "").trim();
   return v.includes("@") && v.includes(".") && v.length >= 6;
 }
 
-export default function AuthGate({ onSuccess }) {
+function humanizeAuthError(message) {
+  const m = String(message || "").toLowerCase();
+
+  if (m.includes("invalid login credentials")) return "E-mail ou senha incorretos.";
+  if (m.includes("email not confirmed")) return "Seu e-mail ainda não foi confirmado. Verifique sua caixa de entrada/spam.";
+  if (m.includes("user already registered")) return "Este e-mail já está cadastrado. Clique em “Entrar”.";
+  if (m.includes("password should be at least")) return "A senha precisa ter pelo menos 6 caracteres.";
+  if (m.includes("too many requests")) return "Muitas tentativas. Aguarde um pouco e tente novamente.";
+
+  return message || "Ocorreu um erro. Tente novamente.";
+}
+
+/**
+ * AuthGate
+ *
+ * - Quando usado EMBUTIDO (ex.: Checkout), passe onSuccess(user) e ele NÃO vai navegar.
+ * - Quando usado como PÁGINA, ele navega para `next` (querystring ?next=/rota).
+ */
+export default function AuthGate({ onSuccess, title, subtitle }) {
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -48,15 +66,20 @@ export default function AuthGate({ onSuccess }) {
       });
 
       if (error) {
-        setError(error.message);
+        setError(humanizeAuthError(error.message));
         return;
       }
 
-      setInfo(null);
-      onSuccess?.(data?.user ?? null);
-      navigate(next, { replace: true });
+      const user = data?.user ?? null;
+      onSuccess?.(user);
+
+      // Se tiver onSuccess (uso embutido), NÃO navega automaticamente.
+      // Se não tiver onSuccess (uso página), navega para o next.
+      if (!onSuccess) {
+        navigate(next, { replace: true });
+      }
     } catch (err) {
-      setError(err?.message || "Erro ao entrar. Tente novamente.");
+      setError(humanizeAuthError(err?.message));
     } finally {
       setLoading(false);
     }
@@ -73,34 +96,46 @@ export default function AuthGate({ onSuccess }) {
 
     setLoading(true);
     try {
-      const { error } = await supabase.auth.signUp({
+      const { data, error } = await supabase.auth.signUp({
         email: em,
         password,
       });
 
       if (error) {
-        setError(error.message);
+        setError(humanizeAuthError(error.message));
         return;
       }
 
-      setInfo("Conta criada. Se a confirmação por e-mail estiver ativa, verifique sua caixa de entrada/spam.");
+      // Alguns projetos retornam session imediatamente se email confirmation estiver OFF.
+      // Outros exigem confirmação.
+      const createdUser = data?.user ?? null;
+      const hasSession = !!data?.session;
+
+      if (hasSession && createdUser) {
+        onSuccess?.(createdUser);
+        if (!onSuccess) navigate(next, { replace: true });
+        return;
+      }
+
+      setInfo("Conta criada. Se a confirmação por e-mail estiver ativa, verifique sua caixa de entrada/spam para confirmar.");
       setMode("signin");
     } catch (err) {
-      setError(err?.message || "Erro ao criar conta. Tente novamente.");
+      setError(humanizeAuthError(err?.message));
     } finally {
       setLoading(false);
     }
   }
 
-  const title = mode === "signin" ? "Entrar" : "Criar conta";
-  const subtitle =
-    mode === "signin"
+  const computedTitle = title || (mode === "signin" ? "Entrar" : "Criar conta");
+  const computedSubtitle =
+    subtitle ||
+    (mode === "signin"
       ? "Acesse sua conta para continuar."
-      : "Crie sua conta para começar a usar o HeartBalance.";
+      : "Crie sua conta para liberar o conteúdo Premium.");
 
   return (
-    <div className="min-h-screen w-full bg-slate-50 flex items-center justify-center p-4">
-      <div className="w-full max-w-md">
+    <div className="w-full">
+      <div className="w-full">
         {/* Card */}
         <div className="rounded-2xl border border-slate-200 bg-white shadow-[0_10px_30px_rgba(0,0,0,0.08)] p-5 sm:p-6">
           {/* Header */}
@@ -110,11 +145,9 @@ export default function AuthGate({ onSuccess }) {
             </div>
             <div className="min-w-0">
               <h1 className="text-lg sm:text-xl font-extrabold text-slate-900 leading-tight">
-                {title}
+                {computedTitle}
               </h1>
-              <p className="text-sm text-slate-600 leading-snug">
-                {subtitle}
-              </p>
+              <p className="text-sm text-slate-600 leading-snug">{computedSubtitle}</p>
             </div>
           </div>
 
@@ -167,13 +200,17 @@ export default function AuthGate({ onSuccess }) {
                 canSubmit ? "opacity-100" : "opacity-60 cursor-not-allowed",
               ].join(" ")}
             >
-              {mode === "signin" ? (loading ? "Entrando..." : "Entrar") : (loading ? "Criando..." : "Criar conta")}
+              {mode === "signin"
+                ? loading
+                  ? "Entrando..."
+                  : "Entrar"
+                : loading
+                ? "Criando..."
+                : "Criar conta"}
             </button>
 
             <div className="flex items-center justify-center gap-2 text-sm">
-              <span className="text-slate-600">
-                {mode === "signin" ? "Não tem conta?" : "Já tem conta?"}
-              </span>
+              <span className="text-slate-600">{mode === "signin" ? "Não tem conta?" : "Já tem conta?"}</span>
               <button
                 type="button"
                 onClick={() => {
@@ -197,7 +234,6 @@ export default function AuthGate({ onSuccess }) {
           </form>
         </div>
 
-        {/* Footer helper (opcional) */}
         <p className="mt-4 text-center text-xs text-slate-500">
           Dica: use um e-mail válido e uma senha com 6+ caracteres.
         </p>
