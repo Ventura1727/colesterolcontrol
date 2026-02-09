@@ -128,6 +128,12 @@ export default function Checkout() {
     setStep(3);
   };
 
+  async function isUserAdmin(userId) {
+    const { data, error } = await supabase.from("profiles").select("role").eq("id", userId).single();
+    if (error) return false;
+    return data?.role === "admin";
+  }
+
   async function markPlanActiveForUser(userId, planId) {
     const today = new Date();
     const startDate = today.toISOString().slice(0, 10);
@@ -136,25 +142,36 @@ export default function Checkout() {
     const end = new Date(today.getTime() + durationDays * 24 * 60 * 60 * 1000);
     const endDate = end.toISOString().slice(0, 10);
 
-    const { error: updErr } = await supabase
-      .from("profiles")
-      .update({
-        plano_ativo: true,
-        plano_tipo: planId,
-        plano_inicio: startDate,
-        plano_fim: endDate,
-      })
-      .eq("id", userId);
+    // premium_until como timestamptz (fim do dia)
+    const premiumUntil = new Date(endDate + "T23:59:59.000Z").toISOString();
 
-    if (!updErr) return;
+    // ✅ Fonte de verdade: public.user_profiles
+    // Usa UPSERT para funcionar mesmo se não existir linha ainda
+    const { error: upsertErr } = await supabase
+      .from("user_profiles")
+      .upsert(
+        {
+          id: userId,
+          plano_ativo: true,
+          plano_tipo: planId,
+          plano_inicio: startDate,
+          plano_fim: endDate,
+          premium_until: premiumUntil,
+        },
+        { onConflict: "id" }
+      );
 
-    await supabase.from("profiles").update({ plano_ativo: true }).eq("id", userId);
-  }
+    if (upsertErr) {
+      // Fallback mínimo (não quebra fluxo)
+      await supabase.from("user_profiles").upsert({ id: userId, plano_ativo: true }, { onConflict: "id" });
+    }
 
-  async function isUserAdmin(userId) {
-    const { data, error } = await supabase.from("profiles").select("role").eq("id", userId).single();
-    if (error) return false;
-    return data?.role === "admin";
+    // (Opcional) compatibilidade: marca também is_premium na tabela profiles, se existir coluna
+    try {
+      await supabase.from("profiles").update({ is_premium: true }).eq("id", userId);
+    } catch {
+      // ignore
+    }
   }
 
   const handlePay = async () => {
@@ -164,12 +181,15 @@ export default function Checkout() {
 
     try {
       const admin = await isUserAdmin(user.id);
+
+      // Admin “free pass”
       if (admin) {
         await markPlanActiveForUser(user.id, selectedPlan.id);
         goToDashboard();
         return;
       }
 
+      // Usuário normal -> MP
       const resp = await fetch("/api/create-payment", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
