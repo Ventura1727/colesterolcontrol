@@ -31,30 +31,25 @@ const features = [
 export default function Dashboard() {
   const [isLoading, setIsLoading] = useState(true);
 
-  const [user, setUser] = useState(null);
-
-  // Perfil do Supabase (public.profiles)
-  const [profile, setProfile] = useState(null);
+  // Dados do Supabase (separados por tabela)
+  const [sbRole, setSbRole] = useState(null); // public.profiles.role
+  const [sbIsPremiumFlag, setSbIsPremiumFlag] = useState(false); // public.profiles.is_premium
+  const [userProfile, setUserProfile] = useState(null); // public.user_profiles (plano_ativo etc)
 
   // Dados auxiliares
   const [colesterolRecords, setColesterolRecords] = useState([]);
   const [historicoAgua, setHistoricoAgua] = useState([]);
-
   const [showLockedModal, setShowLockedModal] = useState(false);
 
-  const isAdmin = useMemo(() => profile?.role === "admin", [profile?.role]);
-  const isPremium = useMemo(() => Boolean(profile?.plano_ativo) || isAdmin, [profile?.plano_ativo, isAdmin]);
+  const isAdmin = useMemo(() => sbRole === "admin", [sbRole]);
+
+  // ✅ Premium real: user_profiles.plano_ativo OR profiles.is_premium OR admin
+  const isPremium = useMemo(() => {
+    return Boolean(userProfile?.plano_ativo) || Boolean(sbIsPremiumFlag) || isAdmin;
+  }, [userProfile?.plano_ativo, sbIsPremiumFlag, isAdmin]);
 
   useEffect(() => {
     bootstrap();
-    // também acompanha mudanças de sessão
-    const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => {
-      setUser(session?.user ?? null);
-    });
-
-    return () => {
-      sub?.subscription?.unsubscribe?.();
-    };
   }, []);
 
   async function bootstrap() {
@@ -69,37 +64,55 @@ export default function Dashboard() {
         return;
       }
 
-      setUser(u);
-
-      // 1) Carrega profile do Supabase
-      const { data: pData, error: pErr } = await supabase
-        .from("profiles")
-        .select("id, role, plano_ativo, plano_tipo, plano_inicio, plano_fim, idade, alimentacao, exercicios, objetivo, dias_consecutivos, xp_total")
-        .eq("id", u.id)
-        .single();
-
-      if (pErr) {
-        // Se não existir profile ainda, cria um básico (sem plano)
-        // (Se você já tem trigger de criação, isso não vai rodar normalmente)
-        const { data: ins, error: insErr } = await supabase
+      // 1) public.profiles => role, is_premium
+      try {
+        const { data: pData, error: pErr } = await supabase
           .from("profiles")
-          .insert({
-            id: u.id,
-            role: "user",
-            plano_ativo: false,
-            dias_consecutivos: 0,
-            xp_total: 0,
-          })
-          .select()
+          .select("role, is_premium")
+          .eq("id", u.id)
           .single();
 
-        if (!insErr && ins) setProfile(ins);
-      } else {
-        setProfile(pData);
+        if (!pErr && pData) {
+          setSbRole(pData.role ?? null);
+          setSbIsPremiumFlag(Boolean(pData.is_premium));
+        }
+      } catch {
+        // ignore
       }
 
-      // 2) Colesterol (se você tiver tabela no Supabase). Se não tiver, não quebra.
-      // Ajuste o nome da tabela/colunas se necessário.
+      // 2) public.user_profiles => plano_ativo e infos do plano
+      try {
+        const { data: upData, error: upErr } = await supabase
+          .from("user_profiles")
+          .select("plano_ativo, plano_tipo, plano_inicio, plano_fim, premium_until, idade, alimentacao, exercicios, objetivo, dias_consecutivos, xp_total")
+          .eq("id", u.id)
+          .single();
+
+        if (!upErr && upData) {
+          setUserProfile(upData);
+        } else {
+          // Se não existir, cria um básico (free)
+          const { data: ins, error: insErr } = await supabase
+            .from("user_profiles")
+            .insert({
+              id: u.id,
+              plano_ativo: false,
+              dias_consecutivos: 0,
+              xp_total: 0,
+            })
+            .select()
+            .single();
+
+          if (!insErr && ins) setUserProfile(ins);
+        }
+      } catch {
+        // ignore
+      }
+
+      // 3) Água: não quebrar se /api/water-log der 500 ou HTML
+      await loadWaterLogsSafe();
+
+      // 4) Colesterol: se existir tabela no supabase, carrega; se não, segue vazio
       try {
         const { data: recs } = await supabase
           .from("colesterol_records")
@@ -112,9 +125,6 @@ export default function Dashboard() {
       } catch {
         setColesterolRecords([]);
       }
-
-      // 3) Água: não quebrar se /api/water-log estiver com 500
-      await loadWaterLogsSafe();
     } catch (e) {
       console.error(e);
     } finally {
@@ -131,7 +141,6 @@ export default function Dashboard() {
         headers: token ? { Authorization: `Bearer ${token}` } : {},
       });
 
-      // se 500 ou html, não tenta json
       if (!res.ok) {
         setHistoricoAgua([]);
         return;
@@ -155,9 +164,7 @@ export default function Dashboard() {
       setShowLockedModal(true);
       return;
     }
-    if (feature.page) {
-      window.location.href = createPageUrl(feature.page);
-    }
+    if (feature.page) window.location.href = createPageUrl(feature.page);
   };
 
   if (isLoading) {
@@ -172,7 +179,7 @@ export default function Dashboard() {
     );
   }
 
-  // cálculo do progresso de água
+  // Progresso água
   const hoje = new Date().toISOString().split("T")[0];
   const consumoHoje = historicoAgua
     .filter((item) => item.data === hoje)
@@ -208,7 +215,7 @@ export default function Dashboard() {
           {isPremium && (
             <div className="flex items-center gap-1 bg-yellow-100 text-yellow-700 px-3 py-1.5 rounded-full text-sm font-medium">
               <Zap className="w-4 h-4" />
-              {profile?.xp_total || 0} XP
+              {userProfile?.xp_total || 0} XP
             </div>
           )}
         </div>
@@ -216,7 +223,7 @@ export default function Dashboard() {
         {/* Rank Card - Premium */}
         {isPremium && (
           <RankCard
-            profile={profile || {}}
+            profile={userProfile || {}}
             onViewProgress={() => (window.location.href = createPageUrl("Progresso"))}
           />
         )}
@@ -259,30 +266,31 @@ export default function Dashboard() {
               Seu Perfil
             </h2>
             <span className="text-xs text-red-600 bg-red-50 px-2 py-1 rounded-full">
-              {profile?.objetivo || "—"}
+              {userProfile?.objetivo || "—"}
             </span>
           </div>
+
           <div className="grid grid-cols-2 gap-3 text-sm">
             <div className="bg-gray-50 rounded-lg p-3">
               <div className="text-gray-500 text-xs">Idade</div>
-              <div className="font-medium">{profile?.idade ?? "—"} anos</div>
+              <div className="font-medium">{userProfile?.idade ?? "—"} anos</div>
             </div>
             <div className="bg-gray-50 rounded-lg p-3">
               <div className="text-gray-500 text-xs">Alimentação</div>
-              <div className="font-medium">{profile?.alimentacao ?? "—"}</div>
+              <div className="font-medium">{userProfile?.alimentacao ?? "—"}</div>
             </div>
             <div className="bg-gray-50 rounded-lg p-3">
               <div className="text-gray-500 text-xs">Exercícios</div>
-              <div className="font-medium">{profile?.exercicios ?? "—"}</div>
+              <div className="font-medium">{userProfile?.exercicios ?? "—"}</div>
             </div>
             <div className="bg-gray-50 rounded-lg p-3">
               <div className="text-gray-500 text-xs">Dias seguidos</div>
-              <div className="font-medium">{profile?.dias_consecutivos || 0} dias 🔥</div>
+              <div className="font-medium">{userProfile?.dias_consecutivos || 0} dias 🔥</div>
             </div>
           </div>
         </motion.div>
 
-        {/* Grid de Funcionalidades */}
+        {/* Funcionalidades */}
         <h2 className="font-semibold text-gray-900 mb-4">Funcionalidades</h2>
         <div className="grid grid-cols-2 gap-3">
           {features.map((feature, idx) => (
@@ -293,7 +301,9 @@ export default function Dashboard() {
               transition={{ delay: idx * 0.05 }}
               onClick={() => handleFeatureClick(feature)}
               className={`relative bg-white rounded-xl p-4 border text-left transition-all hover:shadow-md ${
-                feature.premium && !isPremium ? "border-gray-200 opacity-75" : "border-red-100 hover:border-red-300"
+                feature.premium && !isPremium
+                  ? "border-gray-200 opacity-75"
+                  : "border-red-100 hover:border-red-300"
               }`}
             >
               {feature.premium && !isPremium && (
@@ -306,7 +316,11 @@ export default function Dashboard() {
                   feature.premium && !isPremium ? "bg-gray-100" : "bg-red-100"
                 }`}
               >
-                <feature.icon className={`w-5 h-5 ${feature.premium && !isPremium ? "text-gray-400" : "text-red-600"}`} />
+                <feature.icon
+                  className={`w-5 h-5 ${
+                    feature.premium && !isPremium ? "text-gray-400" : "text-red-600"
+                  }`}
+                />
               </div>
               <div className="font-medium text-gray-900 text-sm mb-1">{feature.title}</div>
               <div className="text-xs text-gray-500">{feature.desc}</div>
@@ -328,10 +342,14 @@ export default function Dashboard() {
         </motion.div>
       </div>
 
-      {/* Modal de Bloqueio */}
+      {/* Modal */}
       {showLockedModal && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
-          <motion.div initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} className="bg-white rounded-2xl p-6 max-w-sm w-full">
+          <motion.div
+            initial={{ opacity: 0, scale: 0.9 }}
+            animate={{ opacity: 1, scale: 1 }}
+            className="bg-white rounded-2xl p-6 max-w-sm w-full"
+          >
             <div className="text-center">
               <div className="w-16 h-16 bg-amber-100 rounded-full mx-auto mb-4 flex items-center justify-center">
                 <Crown className="w-8 h-8 text-amber-600" />
@@ -347,7 +365,11 @@ export default function Dashboard() {
                 >
                   Ver Plano Premium
                 </Button>
-                <Button onClick={() => setShowLockedModal(false)} variant="ghost" className="w-full text-gray-500">
+                <Button
+                  onClick={() => setShowLockedModal(false)}
+                  variant="ghost"
+                  className="w-full text-gray-500"
+                >
                   Talvez depois
                 </Button>
               </div>
