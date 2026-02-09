@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { motion } from 'framer-motion';
 import { Heart, Check, TrendingDown, Crown, Zap, Shield, Star, Sparkles } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -21,7 +21,7 @@ const getDiagnostico = (quizData) => {
     pontosFocos.push('Treinos gamificados que motivam');
   }
 
-  if (quizData.idade > 40) {
+  if (Number(quizData.idade) > 40) {
     pontosFracos.push('Idade requer monitoramento frequente');
     pontosFocos.push('Acompanhamento detalhado de exames');
   }
@@ -65,6 +65,15 @@ const testimonials = [
   { name: 'Ana L.', text: 'Melhor investimento na minha saúde', rating: 5 }
 ];
 
+function isQuizValid(data) {
+  if (!data || typeof data !== 'object') return false;
+  if (data.idade == null) return false;
+  if (!data.alimentacao) return false;
+  if (!data.exercicios) return false;
+  if (!data.objetivo) return false;
+  return true;
+}
+
 export default function Vendas() {
   const [quizData, setQuizData] = useState(null);
   const [diagnostico, setDiagnostico] = useState(null);
@@ -72,29 +81,56 @@ export default function Vendas() {
 
   useEffect(() => {
     const saved = localStorage.getItem('heartbalance_quiz');
-    if (saved) {
+
+    if (!saved) {
+      window.location.href = createPageUrl('Onboarding');
+      return;
+    }
+
+    try {
       const data = JSON.parse(saved);
+
+      if (!isQuizValid(data)) {
+        localStorage.removeItem('heartbalance_quiz');
+        window.location.href = createPageUrl('Onboarding');
+        return;
+      }
+
       setQuizData(data);
       setDiagnostico(getDiagnostico(data));
-    } else {
+    } catch (e) {
+      localStorage.removeItem('heartbalance_quiz');
       window.location.href = createPageUrl('Onboarding');
     }
   }, []);
 
+  const currentPlan = useMemo(() => plans.find((p) => p.id === selectedPlan), [selectedPlan]);
+
   const handleContinue = () => {
-    localStorage.setItem('heartbalance_selected_plan', selectedPlan);
+    // Salva o plano selecionado (id + metadados úteis pro Checkout)
+    const planPayload = {
+      id: currentPlan?.id || selectedPlan,
+      name: currentPlan?.name || '',
+      duration: currentPlan?.duration || '',
+      price: typeof currentPlan?.price === 'number' ? currentPlan.price : null,
+      selectedAt: new Date().toISOString()
+    };
+
+    localStorage.setItem('heartbalance_selected_plan', JSON.stringify(planPayload));
     window.location.href = createPageUrl('Checkout');
   };
 
-  if (!quizData || !diagnostico) {
+  if (!quizData || !diagnostico || !currentPlan) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-red-50 via-white to-rose-50 flex items-center justify-center">
-        <motion.div animate={{ rotate: 360 }} transition={{ repeat: Infinity, duration: 1, ease: 'linear' }} className="w-8 h-8 border-3 border-red-600 border-t-transparent rounded-full" />
+        <motion.div
+          animate={{ rotate: 360 }}
+          transition={{ repeat: Infinity, duration: 1, ease: 'linear' }}
+          className="w-8 h-8 border-[3px] border-red-600 border-t-transparent rounded-full"
+        />
       </div>
     );
   }
-
-  const currentPlan = plans.find(p => p.id === selectedPlan);
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-red-50 via-white to-rose-50">
@@ -223,23 +259,23 @@ export default function Vendas() {
                   <div className="flex-1">
                     <h3 className="font-bold text-gray-900 mb-1">{plan.name}</h3>
                     <p className="text-sm text-gray-500 mb-2">{plan.duration} de acesso completo</p>
-                    
+
                     <div className="flex items-baseline gap-2 mb-1">
                       <span className="text-2xl font-bold text-gray-900">R$ {plan.price.toFixed(2)}</span>
                     </div>
                     {plan.totalSavings > 0 && (
-                      <p className="text-xs text-red-600 font-medium">🔥 Economia de R$ {plan.totalSavings.toFixed(2)} vs planos mensais</p>
+                      <p className="text-xs text-red-600 font-medium">
+                        🔥 Economia de R$ {plan.totalSavings.toFixed(2)} vs planos mensais
+                      </p>
                     )}
                   </div>
 
-                  <div className={`w-6 h-6 rounded-full border-2 flex items-center justify-center ${
-                    selectedPlan === plan.id
-                      ? 'border-red-500 bg-red-500'
-                      : 'border-gray-300'
-                  }`}>
-                    {selectedPlan === plan.id && (
-                      <Check className="w-4 h-4 text-white" />
-                    )}
+                  <div
+                    className={`w-6 h-6 rounded-full border-2 flex items-center justify-center ${
+                      selectedPlan === plan.id ? 'border-red-500 bg-red-500' : 'border-gray-300'
+                    }`}
+                  >
+                    {selectedPlan === plan.id && <Check className="w-4 h-4 text-white" />}
                   </div>
                 </div>
               </button>
@@ -324,9 +360,7 @@ export default function Vendas() {
             Continuar para Pagamento
             <Zap className="w-5 h-5 ml-2" />
           </Button>
-          <p className="text-xs text-center text-gray-500 mt-3">
-            🔒 Pagamento 100% seguro
-          </p>
+          <p className="text-xs text-center text-gray-500 mt-3">🔒 Pagamento 100% seguro</p>
         </motion.div>
       </div>
     </div>
