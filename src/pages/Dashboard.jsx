@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { motion } from 'framer-motion';
 import { Heart, Crown, Lock, Salad, Dumbbell, Droplets, BookOpen, TrendingDown, Target, Zap, Bot } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -17,16 +17,30 @@ const features = [
 ];
 
 export default function Dashboard() {
-  const [profile, setProfile] = useState(null);
+  const [profile, setProfile] = useState(null); // UserProfile (Base44)
   const [colesterolRecords, setColesterolRecords] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [showLockedModal, setShowLockedModal] = useState(false);
   const [historicoAgua, setHistoricoAgua] = useState([]);
 
+  // ✅ Fonte de verdade (Supabase) para admin/plano
+  const [sbRole, setSbRole] = useState(null);
+  const [sbPlanActive, setSbPlanActive] = useState(false);
+
   useEffect(() => {
     loadData();
     loadWaterLogs();
   }, []);
+
+  // ✅ Define premium de forma unificada:
+  // - UserProfile (Base44) tem plano_ativo
+  // - Supabase profiles tem role e plano_ativo
+  const isPremium = useMemo(() => {
+    const base44Premium = Boolean(profile?.plano_ativo);
+    const supabasePremium = Boolean(sbPlanActive);
+    const isAdmin = sbRole === 'admin';
+    return base44Premium || supabasePremium || isAdmin;
+  }, [profile, sbPlanActive, sbRole]);
 
   const loadData = async () => {
     try {
@@ -40,6 +54,28 @@ export default function Dashboard() {
       } catch (e) {
         base44.auth.redirectToLogin(createPageUrl('Dashboard'));
         return;
+      }
+
+      // ✅ Puxa também role/plano do Supabase (para admin/free pass)
+      // (Se falhar, não quebra o dashboard.)
+      try {
+        const { data: sbUserData } = await supabase.auth.getUser();
+        const sbUser = sbUserData?.user;
+
+        if (sbUser?.id) {
+          const { data: sbProfile, error } = await supabase
+            .from('profiles')
+            .select('role, plano_ativo')
+            .eq('id', sbUser.id)
+            .single();
+
+          if (!error && sbProfile) {
+            setSbRole(sbProfile.role ?? null);
+            setSbPlanActive(Boolean(sbProfile.plano_ativo));
+          }
+        }
+      } catch (e) {
+        // ignore
       }
 
       const [profiles, records] = await Promise.all([
@@ -64,10 +100,13 @@ export default function Dashboard() {
           setProfile(newProfile);
           localStorage.removeItem('heartbalance_quiz');
         } else {
-          window.location.href = createPageUrl('Onboarding');
-          return;
+          // ✅ Se não tem quiz salvo, não manda pro onboarding.
+          // O usuário pode existir e só não ter UserProfile ainda.
+          // Mantém o dashboard funcional no modo free (ou admin via Supabase).
+          setProfile(null);
         }
       }
+
       setColesterolRecords(records);
     } catch (error) {
       console.error(error);
@@ -85,14 +124,14 @@ export default function Dashboard() {
       });
 
       const data = await res.json();
-      setHistoricoAgua(data);
+      setHistoricoAgua(Array.isArray(data) ? data : []);
     } catch (error) {
       console.error(error);
     }
   };
 
   const handleFeatureClick = (feature) => {
-    if (feature.premium && !profile?.plano_ativo) {
+    if (feature.premium && !isPremium) {
       setShowLockedModal(true);
     } else if (feature.page) {
       window.location.href = createPageUrl(feature.page);
@@ -115,7 +154,7 @@ export default function Dashboard() {
   const hoje = new Date().toISOString().split('T')[0];
   const consumoHoje = historicoAgua
     .filter((item) => item.data === hoje)
-    .reduce((total, item) => total + item.quantidade_ml, 0);
+    .reduce((total, item) => total + (Number(item.quantidade_ml) || 0), 0);
 
   const metaDiaria = 2000;
   const progresso = Math.min((consumoHoje / metaDiaria) * 100, 100);
@@ -132,7 +171,7 @@ export default function Dashboard() {
             <div>
               <h1 className="text-xl font-bold text-gray-900">HeartBalance</h1>
               <p className="text-sm text-gray-500">
-                {profile?.plano_ativo ? (
+                {isPremium ? (
                   <span className="flex items-center gap-1 text-amber-600">
                     <Crown className="w-4 h-4" />
                     Premium Ativo
@@ -143,24 +182,25 @@ export default function Dashboard() {
               </p>
             </div>
           </div>
-          {profile?.plano_ativo && (
+
+          {isPremium && (
             <div className="flex items-center gap-1 bg-yellow-100 text-yellow-700 px-3 py-1.5 rounded-full text-sm font-medium">
               <Zap className="w-4 h-4" />
-              {profile.xp_total || 0} XP
+              {profile?.xp_total || 0} XP
             </div>
           )}
         </div>
 
         {/* Rank Card - Apenas Premium */}
-        {profile?.plano_ativo && (
+        {isPremium && (
           <RankCard
-            profile={profile}
-            onViewProgress={() => window.location.href = createPageUrl('Progresso')}
+            profile={profile || {}}
+            onViewProgress={() => (window.location.href = createPageUrl('Progresso'))}
           />
         )}
 
         {/* Colesterol Tracker - Apenas Premium */}
-        {profile?.plano_ativo && (
+        {isPremium && (
           <ColesterolTracker
             records={colesterolRecords}
             onRecordAdded={loadData}
@@ -198,21 +238,21 @@ export default function Dashboard() {
               Seu Perfil
             </h2>
             <span className="text-xs text-red-600 bg-red-50 px-2 py-1 rounded-full">
-              {profile?.objetivo}
+              {profile?.objetivo || '—'}
             </span>
           </div>
           <div className="grid grid-cols-2 gap-3 text-sm">
             <div className="bg-gray-50 rounded-lg p-3">
               <div className="text-gray-500 text-xs">Idade</div>
-              <div className="font-medium">{profile?.idade} anos</div>
+              <div className="font-medium">{profile?.idade ?? '—'} anos</div>
             </div>
             <div className="bg-gray-50 rounded-lg p-3">
               <div className="text-gray-500 text-xs">Alimentação</div>
-              <div className="font-medium">{profile?.alimentacao}</div>
+              <div className="font-medium">{profile?.alimentacao ?? '—'}</div>
             </div>
             <div className="bg-gray-50 rounded-lg p-3">
               <div className="text-gray-500 text-xs">Exercícios</div>
-              <div className="font-medium">{profile?.exercicios}</div>
+              <div className="font-medium">{profile?.exercicios ?? '—'}</div>
             </div>
             <div className="bg-gray-50 rounded-lg p-3">
               <div className="text-gray-500 text-xs">Dias seguidos</div>
@@ -232,24 +272,24 @@ export default function Dashboard() {
               transition={{ delay: idx * 0.05 }}
               onClick={() => handleFeatureClick(feature)}
               className={`relative bg-white rounded-xl p-4 border text-left transition-all hover:shadow-md ${
-                feature.premium && !profile?.plano_ativo
+                feature.premium && !isPremium
                   ? 'border-gray-200 opacity-75'
                   : 'border-red-100 hover:border-red-300'
               }`}
             >
-              {feature.premium && !profile?.plano_ativo && (
+              {feature.premium && !isPremium && (
                 <div className="absolute top-2 right-2">
                   <Lock className="w-4 h-4 text-gray-400" />
                 </div>
               )}
               <div
                 className={`w-10 h-10 rounded-xl mb-3 flex items-center justify-center ${
-                  feature.premium && !profile?.plano_ativo ? 'bg-gray-100' : 'bg-red-100'
+                  feature.premium && !isPremium ? 'bg-gray-100' : 'bg-red-100'
                 }`}
               >
                 <feature.icon
                   className={`w-5 h-5 ${
-                    feature.premium && !profile?.plano_ativo ? 'text-gray-400' : 'text-red-600'
+                    feature.premium && !isPremium ? 'text-gray-400' : 'text-red-600'
                   }`}
                 />
               </div>
@@ -293,7 +333,7 @@ export default function Dashboard() {
               </p>
               <div className="space-y-3">
                 <Button
-                  onClick={() => window.location.href = createPageUrl('Premium')}
+                  onClick={() => (window.location.href = createPageUrl('Vendas'))}
                   className="w-full bg-gradient-to-r from-red-500 to-rose-600 hover:from-red-600 hover:to-rose-700 text-white py-5 rounded-xl"
                 >
                   Ver Plano Premium
