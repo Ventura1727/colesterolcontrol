@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import { motion } from "framer-motion";
 import {
   Heart,
@@ -29,142 +29,147 @@ const features = [
 ];
 
 export default function Dashboard() {
-  const [isLoading, setIsLoading] = useState(true);
-
-  // Dados do Supabase (separados por tabela)
-  const [sbRole, setSbRole] = useState(null); // public.profiles.role
-  const [sbIsPremiumFlag, setSbIsPremiumFlag] = useState(false); // public.profiles.is_premium
-  const [userProfile, setUserProfile] = useState(null); // public.user_profiles (plano_ativo etc)
-
-  // Dados auxiliares
+  const [profile, setProfile] = useState(null);
   const [colesterolRecords, setColesterolRecords] = useState([]);
-  const [historicoAgua, setHistoricoAgua] = useState([]);
+  const [isLoading, setIsLoading] = useState(true);
   const [showLockedModal, setShowLockedModal] = useState(false);
-
-  const isAdmin = useMemo(() => sbRole === "admin", [sbRole]);
-
-  // ✅ Premium real: user_profiles.plano_ativo OR profiles.is_premium OR admin
-  const isPremium = useMemo(() => {
-    return Boolean(userProfile?.plano_ativo) || Boolean(sbIsPremiumFlag) || isAdmin;
-  }, [userProfile?.plano_ativo, sbIsPremiumFlag, isAdmin]);
+  const [historicoAgua, setHistoricoAgua] = useState([]);
 
   useEffect(() => {
-    bootstrap();
-  }, []);
+    let mounted = true;
 
-  async function bootstrap() {
-    setIsLoading(true);
-
-    try {
-      const { data: uData } = await supabase.auth.getUser();
-      const u = uData?.user ?? null;
-
-      if (!u) {
-        window.location.href = "/login?next=/dashboard";
-        return;
-      }
-
-      // 1) public.profiles => role, is_premium
+    async function load() {
       try {
-        const { data: pData, error: pErr } = await supabase
-          .from("profiles")
-          .select("role, is_premium")
-          .eq("id", u.id)
-          .single();
+        setIsLoading(true);
 
-        if (!pErr && pData) {
-          setSbRole(pData.role ?? null);
-          setSbIsPremiumFlag(Boolean(pData.is_premium));
+        const { data: userData } = await supabase.auth.getUser();
+        const user = userData?.user;
+
+        if (!user) {
+          // manda pro login com next (seu App.jsx já tem /login)
+          window.location.href = `/login?next=${encodeURIComponent("/dashboard")}`;
+          return;
         }
-      } catch {
-        // ignore
-      }
 
-      // 2) public.user_profiles => plano_ativo e infos do plano
-      try {
-        const { data: upData, error: upErr } = await supabase
-          .from("user_profiles")
-          .select("plano_ativo, plano_tipo, plano_inicio, plano_fim, premium_until, idade, alimentacao, exercicios, objetivo, dias_consecutivos, xp_total")
-          .eq("id", u.id)
-          .single();
-
-        if (!upErr && upData) {
-          setUserProfile(upData);
-        } else {
-          // Se não existir, cria um básico (free)
-          const { data: ins, error: insErr } = await supabase
-            .from("user_profiles")
-            .insert({
-              id: u.id,
-              plano_ativo: false,
-              dias_consecutivos: 0,
-              xp_total: 0,
-            })
-            .select()
+        // 1) role/is_premium em public.profiles (opcional, mas útil)
+        let role = null;
+        let isPremiumLegacy = null;
+        try {
+          const { data: prof, error: profErr } = await supabase
+            .from("profiles")
+            .select("role, is_premium")
+            .eq("id", user.id)
             .single();
 
-          if (!insErr && ins) setUserProfile(ins);
+          if (!profErr) {
+            role = prof?.role ?? null;
+            isPremiumLegacy = prof?.is_premium ?? null;
+          }
+        } catch {
+          // ignore
         }
-      } catch {
-        // ignore
-      }
 
-      // 3) Água: não quebrar se /api/water-log der 500 ou HTML
-      await loadWaterLogsSafe();
-
-      // 4) Colesterol: se existir tabela no supabase, carrega; se não, segue vazio
-      try {
-        const { data: recs } = await supabase
-          .from("colesterol_records")
+        // 2) Fonte de verdade do plano: public.user_profiles
+        const { data: up, error: upErr } = await supabase
+          .from("user_profiles")
           .select("*")
-          .eq("user_id", u.id)
-          .order("data_exame", { ascending: false })
-          .limit(10);
+          .eq("id", user.id)
+          .single();
 
-        setColesterolRecords(Array.isArray(recs) ? recs : []);
-      } catch {
-        setColesterolRecords([]);
+        let finalProfile = upErr ? null : up;
+
+        // 3) Se ainda não existe user_profiles, tenta criar a partir do quiz (ou cria mínimo)
+        if (!finalProfile) {
+          const quizDataRaw = localStorage.getItem("heartbalance_quiz");
+          let quiz = null;
+          try {
+            quiz = quizDataRaw ? JSON.parse(quizDataRaw) : null;
+          } catch {
+            quiz = null;
+          }
+
+          const insertPayload = {
+            id: user.id,
+            ...(quiz || {}),
+            // se for admin ou tiver legacy is_premium, já considera premium ativo
+            plano_ativo: role === "admin" ? true : Boolean(isPremiumLegacy),
+            plano_tipo: null,
+            plano_inicio: null,
+            plano_fim: null,
+            premium_until: null,
+            rank: "Iniciante",
+            xp_total: 0,
+            metas_concluidas: 0,
+            dias_consecutivos: 0,
+          };
+
+          const { data: created, error: createErr } = await supabase
+            .from("user_profiles")
+            .insert(insertPayload)
+            .select("*")
+            .single();
+
+          if (!createErr) {
+            finalProfile = created;
+            localStorage.removeItem("heartbalance_quiz");
+          }
+        }
+
+        if (!mounted) return;
+
+        setProfile(finalProfile);
+
+        // 4) Colesterol records: se sua tabela ainda não existe/nome diferente, não quebra.
+        // Se você souber o nome exato da tabela, me diga que eu ajusto.
+        try {
+          const { data: recs } = await supabase
+            .from("colesterol_records")
+            .select("*")
+            .order("data_exame", { ascending: false })
+            .limit(10);
+          setColesterolRecords(Array.isArray(recs) ? recs : []);
+        } catch {
+          setColesterolRecords([]);
+        }
+
+        // 5) Water logs: não pode quebrar o app se API falhar
+        try {
+          const session = await supabase.auth.getSession();
+          const token = session?.data?.session?.access_token;
+
+          const res = await fetch("/api/water-log", {
+            headers: { Authorization: `Bearer ${token}` },
+          });
+
+          if (!res.ok) {
+            setHistoricoAgua([]);
+          } else {
+            const data = await res.json().catch(() => []);
+            setHistoricoAgua(Array.isArray(data) ? data : []);
+          }
+        } catch {
+          setHistoricoAgua([]);
+        }
+      } finally {
+        if (mounted) setIsLoading(false);
       }
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setIsLoading(false);
     }
-  }
 
-  async function loadWaterLogsSafe() {
-    try {
-      const session = await supabase.auth.getSession();
-      const token = session?.data?.session?.access_token;
+    load();
 
-      const res = await fetch("/api/water-log", {
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
-      });
+    return () => {
+      mounted = false;
+    };
+  }, []);
 
-      if (!res.ok) {
-        setHistoricoAgua([]);
-        return;
-      }
-
-      const text = await res.text();
-      try {
-        const data = JSON.parse(text);
-        setHistoricoAgua(Array.isArray(data) ? data : []);
-      } catch {
-        setHistoricoAgua([]);
-      }
-    } catch (e) {
-      console.error(e);
-      setHistoricoAgua([]);
-    }
-  }
+  const isPremium = useMemo(() => Boolean(profile?.plano_ativo), [profile]);
 
   const handleFeatureClick = (feature) => {
     if (feature.premium && !isPremium) {
       setShowLockedModal(true);
-      return;
+    } else if (feature.page) {
+      window.location.href = createPageUrl(feature.page);
     }
-    if (feature.page) window.location.href = createPageUrl(feature.page);
   };
 
   if (isLoading) {
@@ -179,11 +184,11 @@ export default function Dashboard() {
     );
   }
 
-  // Progresso água
+  // cálculo do progresso de água
   const hoje = new Date().toISOString().split("T")[0];
   const consumoHoje = historicoAgua
     .filter((item) => item.data === hoje)
-    .reduce((total, item) => total + (Number(item.quantidade_ml) || 0), 0);
+    .reduce((total, item) => total + (item.quantidade_ml || 0), 0);
 
   const metaDiaria = 2000;
   const progresso = Math.min((consumoHoje / metaDiaria) * 100, 100);
@@ -203,7 +208,7 @@ export default function Dashboard() {
                 {isPremium ? (
                   <span className="flex items-center gap-1 text-amber-600">
                     <Crown className="w-4 h-4" />
-                    Premium Ativo{isAdmin ? " (Admin)" : ""}
+                    Premium Ativo
                   </span>
                 ) : (
                   "Plano Gratuito"
@@ -211,37 +216,26 @@ export default function Dashboard() {
               </p>
             </div>
           </div>
-
           {isPremium && (
             <div className="flex items-center gap-1 bg-yellow-100 text-yellow-700 px-3 py-1.5 rounded-full text-sm font-medium">
               <Zap className="w-4 h-4" />
-              {userProfile?.xp_total || 0} XP
+              {profile?.xp_total || 0} XP
             </div>
           )}
         </div>
 
-        {/* Rank Card - Premium */}
+        {/* Rank Card - Apenas Premium */}
         {isPremium && (
-          <RankCard
-            profile={userProfile || {}}
-            onViewProgress={() => (window.location.href = createPageUrl("Progresso"))}
-          />
+          <RankCard profile={profile} onViewProgress={() => (window.location.href = createPageUrl("Progresso"))} />
         )}
 
-        {/* Colesterol Tracker - Premium */}
+        {/* Colesterol Tracker - Apenas Premium */}
         {isPremium && (
-          <ColesterolTracker
-            records={colesterolRecords}
-            onRecordAdded={bootstrap}
-          />
+          <ColesterolTracker records={colesterolRecords} onRecordAdded={() => window.location.reload()} />
         )}
 
         {/* Hidratação */}
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="bg-white rounded-2xl p-5 mb-6 border border-gray-100 shadow-sm"
-        >
+        <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="bg-white rounded-2xl p-5 mb-6 border border-gray-100 shadow-sm">
           <h2 className="font-semibold text-gray-900 flex items-center gap-2 mb-3">
             <Droplets className="w-5 h-5 text-blue-600" />
             Hidratação de Hoje
@@ -255,42 +249,35 @@ export default function Dashboard() {
         </motion.div>
 
         {/* Resumo do Perfil */}
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="bg-white rounded-2xl p-5 mb-6 border border-gray-100 shadow-sm"
-        >
+        <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="bg-white rounded-2xl p-5 mb-6 border border-gray-100 shadow-sm">
           <div className="flex items-center justify-between mb-3">
             <h2 className="font-semibold text-gray-900 flex items-center gap-2">
               <Target className="w-5 h-5 text-emerald-600" />
               Seu Perfil
             </h2>
-            <span className="text-xs text-red-600 bg-red-50 px-2 py-1 rounded-full">
-              {userProfile?.objetivo || "—"}
-            </span>
+            <span className="text-xs text-red-600 bg-red-50 px-2 py-1 rounded-full">{profile?.objetivo}</span>
           </div>
-
           <div className="grid grid-cols-2 gap-3 text-sm">
             <div className="bg-gray-50 rounded-lg p-3">
               <div className="text-gray-500 text-xs">Idade</div>
-              <div className="font-medium">{userProfile?.idade ?? "—"} anos</div>
+              <div className="font-medium">{profile?.idade ? `${profile.idade} anos` : "—"}</div>
             </div>
             <div className="bg-gray-50 rounded-lg p-3">
               <div className="text-gray-500 text-xs">Alimentação</div>
-              <div className="font-medium">{userProfile?.alimentacao ?? "—"}</div>
+              <div className="font-medium">{profile?.alimentacao || "—"}</div>
             </div>
             <div className="bg-gray-50 rounded-lg p-3">
               <div className="text-gray-500 text-xs">Exercícios</div>
-              <div className="font-medium">{userProfile?.exercicios ?? "—"}</div>
+              <div className="font-medium">{profile?.exercicios || "—"}</div>
             </div>
             <div className="bg-gray-50 rounded-lg p-3">
               <div className="text-gray-500 text-xs">Dias seguidos</div>
-              <div className="font-medium">{userProfile?.dias_consecutivos || 0} dias 🔥</div>
+              <div className="font-medium">{profile?.dias_consecutivos || 0} dias 🔥</div>
             </div>
           </div>
         </motion.div>
 
-        {/* Funcionalidades */}
+        {/* Grid de Funcionalidades */}
         <h2 className="font-semibold text-gray-900 mb-4">Funcionalidades</h2>
         <div className="grid grid-cols-2 gap-3">
           {features.map((feature, idx) => (
@@ -301,9 +288,7 @@ export default function Dashboard() {
               transition={{ delay: idx * 0.05 }}
               onClick={() => handleFeatureClick(feature)}
               className={`relative bg-white rounded-xl p-4 border text-left transition-all hover:shadow-md ${
-                feature.premium && !isPremium
-                  ? "border-gray-200 opacity-75"
-                  : "border-red-100 hover:border-red-300"
+                feature.premium && !isPremium ? "border-gray-200 opacity-75" : "border-red-100 hover:border-red-300"
               }`}
             >
               {feature.premium && !isPremium && (
@@ -311,16 +296,8 @@ export default function Dashboard() {
                   <Lock className="w-4 h-4 text-gray-400" />
                 </div>
               )}
-              <div
-                className={`w-10 h-10 rounded-xl mb-3 flex items-center justify-center ${
-                  feature.premium && !isPremium ? "bg-gray-100" : "bg-red-100"
-                }`}
-              >
-                <feature.icon
-                  className={`w-5 h-5 ${
-                    feature.premium && !isPremium ? "text-gray-400" : "text-red-600"
-                  }`}
-                />
+              <div className={`w-10 h-10 rounded-xl mb-3 flex items-center justify-center ${feature.premium && !isPremium ? "bg-gray-100" : "bg-red-100"}`}>
+                <feature.icon className={`w-5 h-5 ${feature.premium && !isPremium ? "text-gray-400" : "text-red-600"}`} />
               </div>
               <div className="font-medium text-gray-900 text-sm mb-1">{feature.title}</div>
               <div className="text-xs text-gray-500">{feature.desc}</div>
@@ -329,12 +306,7 @@ export default function Dashboard() {
         </div>
 
         {/* Dica do dia */}
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.3 }}
-          className="mt-6 bg-gradient-to-r from-red-500 to-rose-600 rounded-2xl p-5 text-white"
-        >
+        <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.3 }} className="mt-6 bg-gradient-to-r from-red-500 to-rose-600 rounded-2xl p-5 text-white">
           <div className="text-sm opacity-90 mb-1">💡 Dica do dia</div>
           <p className="font-medium">
             Inclua uma porção de aveia no café da manhã. As fibras solúveis ajudam a reduzir o colesterol LDL naturalmente.
@@ -342,22 +314,16 @@ export default function Dashboard() {
         </motion.div>
       </div>
 
-      {/* Modal */}
+      {/* Modal de Bloqueio */}
       {showLockedModal && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
-          <motion.div
-            initial={{ opacity: 0, scale: 0.9 }}
-            animate={{ opacity: 1, scale: 1 }}
-            className="bg-white rounded-2xl p-6 max-w-sm w-full"
-          >
+          <motion.div initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} className="bg-white rounded-2xl p-6 max-w-sm w-full">
             <div className="text-center">
               <div className="w-16 h-16 bg-amber-100 rounded-full mx-auto mb-4 flex items-center justify-center">
                 <Crown className="w-8 h-8 text-amber-600" />
               </div>
               <h3 className="text-xl font-bold text-gray-900 mb-2">Funcionalidade Premium</h3>
-              <p className="text-gray-600 mb-6">
-                Desbloqueie treinos gamificados, receitas exclusivas e acompanhamento de colesterol!
-              </p>
+              <p className="text-gray-600 mb-6">Desbloqueie treinos gamificados, receitas exclusivas e acompanhamento de colesterol!</p>
               <div className="space-y-3">
                 <Button
                   onClick={() => (window.location.href = createPageUrl("Vendas"))}
@@ -365,11 +331,7 @@ export default function Dashboard() {
                 >
                   Ver Plano Premium
                 </Button>
-                <Button
-                  onClick={() => setShowLockedModal(false)}
-                  variant="ghost"
-                  className="w-full text-gray-500"
-                >
+                <Button onClick={() => setShowLockedModal(false)} variant="ghost" className="w-full text-gray-500">
                   Talvez depois
                 </Button>
               </div>
