@@ -128,34 +128,34 @@ export default function Hidratacao() {
     }
   };
 
-  const registrarAgua = async (quantidade_ml) => {
-    try {
-      const session = await supabase.auth.getSession();
-      const token = session?.data?.session?.access_token;
+  const registrarAgua = async (quantidade_ml, dataOverride) => {
+  try {
+    const session = await supabase.auth.getSession();
+    const token = session?.data?.session?.access_token;
 
-      const agora = new Date();
-      const data = agora.toISOString().split("T")[0];
-      const hora = agora.toTimeString().split(" ")[0];
+    const agora = new Date();
+    const data = dataOverride || agora.toISOString().split("T")[0];
+    const hora = agora.toTimeString().split(" ")[0];
 
-      const res = await fetch("/api/water-log-post", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({ quantidade_ml, data, hora }),
-      });
+    const res = await fetch("/api/water-log-post", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ quantidade_ml, data, hora }),
+    });
 
-      if (!res.ok) {
-        console.error("Falha ao registrar água:", await res.text().catch(() => ""));
-      }
-
-      await loadData();
-    } catch (err) {
-      console.error("Erro ao registrar água:", err);
-      alert("Não foi possível registrar a água. Tente novamente.");
+    if (!res.ok) {
+      console.error("Falha ao registrar água:", await res.text().catch(() => ""));
     }
-  };
+
+    await loadData();
+  } catch (err) {
+    console.error("Erro ao registrar água:", err);
+    alert("Não foi possível registrar a água. Tente novamente.");
+  }
+};
 
   if (isLoading) {
     return (
