@@ -128,7 +128,7 @@ const RequireSubscription = ({ children }) => {
           // Não existe profile ainda -> cria/garante e tenta retornar dados mínimos
           const { data: created, error: upsertErr } = await supabase
             .from("profiles")
-            .upsert({ id: user.id, role: "user", plano_ativo: false }, { onConflict: "id" })
+            .upsert({ id: user.id }, { onConflict: "id" })
             .select("role, plano_ativo")
             .single();
 
