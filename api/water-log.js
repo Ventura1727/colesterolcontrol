@@ -1,10 +1,5 @@
 // api/water-log.js
-import { createClient } from "@supabase/supabase-js";
-
-const supabase = createClient(
-  process.env.SUPABASE_URL,
-  process.env.SUPABASE_ANON_KEY
-);
+import { supabase } from "./supabaseClient.js";
 
 function getBearerToken(req) {
   const auth = req.headers.authorization || "";
@@ -30,7 +25,6 @@ export default async function handler(req, res) {
       return res.status(401).json({ error: "Usuário não autenticado" });
     }
 
-    // ===== GET: listar logs =====
     if (req.method === "GET") {
       const { data, error } = await supabase
         .from("water_logs")
@@ -46,7 +40,6 @@ export default async function handler(req, res) {
       return res.status(200).json({ data });
     }
 
-    // ===== POST: inserir log =====
     const body = typeof req.body === "string" ? JSON.parse(req.body) : (req.body || {});
     const { quantidade_ml, data, hora } = body;
 
@@ -54,16 +47,14 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: "Campos obrigatórios ausentes" });
     }
 
-    const { error: insertError } = await supabase
-      .from("water_logs")
-      .insert([
-        {
-          created_by: user.id,
-          quantidade_ml: Number(quantidade_ml),
-          data,
-          hora,
-        },
-      ]);
+    const { error: insertError } = await supabase.from("water_logs").insert([
+      {
+        created_by: user.id,
+        quantidade_ml: Number(quantidade_ml),
+        data,
+        hora,
+      },
+    ]);
 
     if (insertError) {
       return res.status(400).json({ error: insertError.message, details: insertError });
