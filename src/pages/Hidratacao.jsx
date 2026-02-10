@@ -41,6 +41,47 @@ export default function Hidratacao() {
     setWaterNeeded(waterInLiters);
   };
 
+  async function getAccessTokenOrThrow() {
+    const { data, error } = await supabase.auth.getSession();
+    if (error) throw error;
+    const token = data?.session?.access_token;
+    if (!token) throw new Error("Sessão inválida (sem access_token)");
+    return token;
+  }
+
+  const fetchWaterLogs = async () => {
+    const token = await getAccessTokenOrThrow();
+
+    const r = await fetch("/api/water-log", {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
+
+    const json = await r.json().catch(() => ({}));
+
+    if (!r.ok) {
+      console.error("GET /api/water-log falhou:", r.status, json);
+      throw new Error(json?.error || `Erro ao listar water logs (${r.status})`);
+    }
+
+    // API retorna { data: [...] }
+    const logs = Array.isArray(json?.data) ? json.data : [];
+
+    // Normaliza nomes (caso algum registro antigo tenha user_id, etc)
+    const normalized = logs.map((l) => ({
+      id: l.id,
+      quantidade_ml: l.quantidade_ml ?? l.quantidadeMl ?? l.quantidade ?? 0,
+      data: l.data,
+      hora: l.hora,
+      created_at: l.created_at,
+      created_by: l.created_by ?? l.user_id ?? l.userId ?? null,
+    }));
+
+    return normalized;
+  };
+
   const loadData = async () => {
     setIsLoading(true);
     try {
@@ -76,11 +117,13 @@ export default function Hidratacao() {
           basal_hidratacao: null,
         };
 
-        const { data: created } = await supabase
+        const { data: created, error: createErr } = await supabase
           .from("user_profiles")
           .insert(payload)
           .select("*")
           .single();
+
+        if (createErr) console.error("Erro ao criar user_profiles:", createErr);
 
         prof = created || payload;
       }
@@ -97,17 +140,14 @@ export default function Hidratacao() {
         calculateWater(prof.peso_hidratacao, prof.basal_hidratacao);
       }
 
-      // Logs de água (direto do Supabase)
-      const { data: logs, error: logsError } = await supabase
-        .from("water_logs")
-        .select("id, user_id, quantidade_ml, data, hora, created_at")
-        .eq("user_id", user.id)
-        .order("data", { ascending: false })
-        .order("hora", { ascending: false })
-        .limit(500);
-
-      if (logsError) console.error("Erro ao carregar water_logs:", logsError);
-      setWaterLogs(Array.isArray(logs) ? logs : []);
+      // Logs de água: SEMPRE via API (evita RLS e coluna created_by)
+      try {
+        const logs = await fetchWaterLogs();
+        setWaterLogs(logs);
+      } catch (e) {
+        console.error("Erro ao carregar logs via API:", e);
+        setWaterLogs([]);
+      }
     } catch (err) {
       console.error("Erro ao carregar dados:", err);
     } finally {
@@ -141,32 +181,41 @@ export default function Hidratacao() {
     }
   };
 
-  const registrarAgua = async (quantidade_ml) => {
+  // HydrationDashboard chama: onLogAdded(ml, dataOpcional)
+  const registrarAgua = async (quantidade_ml, dataSelecionada) => {
     try {
-      const { data: userData } = await supabase.auth.getUser();
-      const user = userData?.user;
-      if (!user) throw new Error("Sem usuário logado");
+      const token = await getAccessTokenOrThrow();
 
       const agora = new Date();
-      const data = agora.toISOString().slice(0, 10); // YYYY-MM-DD
+      const data = dataSelecionada || agora.toISOString().slice(0, 10); // YYYY-MM-DD
       const hora = agora.toTimeString().slice(0, 8); // HH:MM:SS
 
-      const { error } = await supabase.from("water_logs").insert({
-        user_id: user.id,
-        quantidade_ml: Number(quantidade_ml),
-        data,
-        hora,
+      const r = await fetch("/api/water-log", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          quantidade_ml: Number(quantidade_ml),
+          data,
+          hora,
+        }),
       });
 
-      if (error) {
-        console.error("Erro ao registrar água:", error);
-        throw error;
+      const json = await r.json().catch(() => ({}));
+
+      if (!r.ok) {
+        console.error("POST /api/water-log falhou:", r.status, json);
+        throw new Error(json?.error || `Erro ao inserir water log (${r.status})`);
       }
 
+      // Recarrega lista
       await loadData();
     } catch (err) {
       console.error("Falha ao registrar água:", err);
       alert("Não foi possível registrar a água. Tente novamente.");
+      throw err;
     }
   };
 
@@ -283,7 +332,7 @@ export default function Hidratacao() {
           >
             <HydrationDashboard
               waterLogs={waterLogs}
-              metaDiaria={Number(waterNeeded)}  // <- número em litros
+              metaDiaria={Number(waterNeeded)} // <- número em litros
               onLogAdded={registrarAgua}
             />
           </motion.div>
