@@ -154,6 +154,39 @@ async function safeSelect(table, queryBuilderFn) {
   }
 }
 
+function todayISODate() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function localKeyForDay(day) {
+  return `hb_recipes_done_${day}`;
+}
+
+function readLocalDoneSet(day) {
+  try {
+    const raw = localStorage.getItem(localKeyForDay(day));
+    const arr = raw ? JSON.parse(raw) : [];
+    return new Set(Array.isArray(arr) ? arr : []);
+  } catch {
+    return new Set();
+  }
+}
+
+function writeLocalDoneSet(day, set) {
+  try {
+    localStorage.setItem(localKeyForDay(day), JSON.stringify(Array.from(set)));
+  } catch {
+    // ignore
+  }
+}
+
+function sameDay(isoDatetimeOrDate, dayYYYYMMDD) {
+  if (!isoDatetimeOrDate) return false;
+  const s = String(isoDatetimeOrDate);
+  // aceita "2026-02-10" ou "2026-02-10T..."
+  return s.slice(0, 10) === dayYYYYMMDD;
+}
+
 export default function Alimentacao() {
   const [profile, setProfile] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -175,8 +208,12 @@ export default function Alimentacao() {
   const fileInputRef = useRef(null);
   const cameraInputRef = useRef(null);
 
+  const day = useMemo(() => todayISODate(), []);
+  const [localDoneSet, setLocalDoneSet] = useState(() => readLocalDoneSet(todayISODate()));
+
   useEffect(() => {
     loadData();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const loadData = async () => {
@@ -231,13 +268,16 @@ export default function Alimentacao() {
     setProfile(prof);
 
     // Logs (se tabelas não existirem, retorna [])
-    const meals = await safeSelect("meal_logs", (q) => q.order("created_at", { ascending: false }).limit(30));
-    const acts = await safeSelect("activity_logs", (q) => q.order("created_at", { ascending: false }).limit(30));
+    const meals = await safeSelect("meal_logs", (q) => q.order("created_at", { ascending: false }).limit(60));
+    const acts = await safeSelect("activity_logs", (q) => q.order("created_at", { ascending: false }).limit(60));
     const colesterol = await safeSelect("colesterol_records", (q) => q.order("data_exame", { ascending: false }).limit(5));
 
     setMealLogs(meals);
     setActivities(acts);
     setColesterolRecords(colesterol);
+
+    // Atualiza também o localStorage set do dia (fallback) — mantém coerente
+    setLocalDoneSet(readLocalDoneSet(day));
 
     setIsLoading(false);
   };
@@ -248,12 +288,69 @@ export default function Alimentacao() {
     return userRankIndex >= requiredRankIndex;
   };
 
+  /**
+   * Fonte de verdade: meal_logs do dia com description == receita.name
+   * Fallback: localStorage do dia com recipe.id
+   */
+  const completedTodaySet = useMemo(() => {
+    const set = new Set();
+
+    // 1) via meal_logs (preferencial)
+    const todaysMeals = Array.isArray(mealLogs)
+      ? mealLogs.filter((m) => sameDay(m?.date || m?.created_at, day))
+      : [];
+
+    for (const m of todaysMeals) {
+      const desc = (m?.description || "").trim();
+      if (!desc) continue;
+      const found = receitas.find((r) => r.name === desc);
+      if (found) set.add(found.id);
+    }
+
+    // 2) fallback local
+    for (const id of localDoneSet) set.add(id);
+
+    return set;
+  }, [mealLogs, localDoneSet, day]);
+
+  const isCompletedToday = (receita) => completedTodaySet.has(receita.id);
+
+  const sortedReceitas = useMemo(() => {
+    // não concluídas hoje primeiro; depois concluídas
+    return [...receitas].sort((a, b) => {
+      const aDone = completedTodaySet.has(a.id) ? 1 : 0;
+      const bDone = completedTodaySet.has(b.id) ? 1 : 0;
+      if (aDone !== bDone) return aDone - bDone;
+
+      // depois, por rank requerido (mais fácil primeiro)
+      const ar = rankOrder.indexOf(a.rank_required);
+      const br = rankOrder.indexOf(b.rank_required);
+      if (ar !== br) return ar - br;
+
+      // depois, por xp
+      return (a.xp || 0) - (b.xp || 0);
+    });
+  }, [completedTodaySet]);
+
   const completeReceita = async (receita) => {
     if (!profile?.id) return;
 
+    // evita XP duplicado no mesmo dia
+    if (isCompletedToday(receita)) {
+      setSelectedReceita(null);
+      return;
+    }
+
     setCompleting(true);
+
+    // atualização otimista do “done” (para UX imediata)
+    const nextLocal = new Set(localDoneSet);
+    nextLocal.add(receita.id);
+    setLocalDoneSet(nextLocal);
+    writeLocalDoneSet(day, nextLocal);
+
     try {
-      // 1) Meal log
+      // 1) Meal log (fonte de verdade do "concluído hoje")
       try {
         await supabase.from("meal_logs").insert({
           user_id: profile.id,
@@ -264,17 +361,17 @@ export default function Alimentacao() {
           date: new Date().toISOString(),
         });
       } catch {
-        // ignore
+        // se falhar, mantém no localStorage (fallback)
       }
 
-      // 2) Activity log
+      // 2) Activity log (histórico)
       try {
         await supabase.from("activity_logs").insert({
           user_id: profile.id,
           tipo: "alimentacao",
           descricao: `Preparou: ${receita.name}`,
           xp_ganho: receita.xp,
-          data: new Date().toISOString().slice(0, 10),
+          data: day,
         });
       } catch {
         // ignore
@@ -296,6 +393,7 @@ export default function Alimentacao() {
 
       setProfile({ ...profile, xp_total: newXp, metas_concluidas: newMetas, rank: newRank });
 
+      // Recarrega logs para refletir em gráficos/insights
       await loadData();
       setSelectedReceita(null);
     } finally {
@@ -373,7 +471,7 @@ export default function Alimentacao() {
           </div>
           <div className="bg-white rounded-xl p-3 border border-gray-100 text-center">
             <Salad className="w-5 h-5 text-green-500 mx-auto mb-1" />
-            <div className="font-bold text-gray-900">{receitas.filter((r) => isUnlocked(r)).length}</div>
+            <div className="font-bold text-gray-900">{sortedReceitas.filter((r) => isUnlocked(r)).length}</div>
             <div className="text-xs text-gray-500">Liberadas</div>
           </div>
         </div>
@@ -425,24 +523,38 @@ export default function Alimentacao() {
         {/* Lista de Receitas */}
         <h2 className="font-semibold text-gray-900 mb-4">Receitas Saudáveis</h2>
         <div className="space-y-3">
-          {receitas.map((receita, idx) => {
+          {sortedReceitas.map((receita, idx) => {
             const unlocked = isUnlocked(receita);
+            const done = isCompletedToday(receita);
+
             return (
-              <motion.div key={receita.id} initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: idx * 0.05 }}>
+              <motion.div key={receita.id} initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: idx * 0.03 }}>
                 <button
                   onClick={() => unlocked && setSelectedReceita(receita)}
                   disabled={!unlocked}
                   className={`w-full text-left bg-white rounded-2xl p-4 border transition-all ${
                     unlocked ? "border-red-100 hover:border-red-300 hover:shadow-md cursor-pointer" : "border-gray-200 opacity-60 cursor-not-allowed"
-                  }`}
+                  } ${done ? "opacity-70" : ""}`}
                 >
                   <div className="flex items-center gap-4">
                     <div className={`w-14 h-14 rounded-xl flex items-center justify-center text-3xl ${unlocked ? "bg-red-50" : "bg-gray-100"}`}>
                       {unlocked ? receita.image : <Lock className="w-6 h-6 text-gray-400" />}
                     </div>
+
                     <div className="flex-1">
-                      <div className="font-semibold text-gray-900">{receita.name}</div>
+                      <div className="flex items-center gap-2">
+                        <div className="font-semibold text-gray-900">{receita.name}</div>
+
+                        {done && (
+                          <span className="inline-flex items-center gap-1 text-xs bg-emerald-50 text-emerald-700 px-2 py-0.5 rounded-full border border-emerald-100">
+                            <Check className="w-3 h-3" />
+                            Concluída hoje
+                          </span>
+                        )}
+                      </div>
+
                       <div className="text-sm text-gray-500">{receita.desc}</div>
+
                       <div className="flex items-center gap-3 mt-2 text-xs">
                         <span className="flex items-center gap-1 text-gray-400">
                           <Clock className="w-3 h-3" /> {receita.time} min
@@ -450,11 +562,12 @@ export default function Alimentacao() {
                         <span className="flex items-center gap-1 text-orange-500">
                           <Flame className="w-3 h-3" /> {receita.calories} kcal
                         </span>
-                        <span className="flex items-center gap-1 text-yellow-500">
+                        <span className={`flex items-center gap-1 ${done ? "text-gray-300" : "text-yellow-500"}`}>
                           <Zap className="w-3 h-3" /> +{receita.xp} XP
                         </span>
                       </div>
                     </div>
+
                     {unlocked ? (
                       <ChevronRight className="w-5 h-5 text-gray-400" />
                     ) : (
@@ -616,6 +729,7 @@ export default function Alimentacao() {
                   <div className="text-center mb-6">
                     <div className="text-6xl mb-3">{selectedReceita.image}</div>
                     <h2 className="text-xl font-bold text-gray-900">{selectedReceita.name}</h2>
+
                     <div className="flex items-center justify-center gap-4 text-sm text-gray-500 mt-2">
                       <span className="flex items-center gap-1">
                         <Clock className="w-4 h-4" /> {selectedReceita.time} min
@@ -623,14 +737,22 @@ export default function Alimentacao() {
                       <span className="flex items-center gap-1 text-orange-500">
                         <Flame className="w-4 h-4" /> {selectedReceita.calories} kcal
                       </span>
-                      <span className="flex items-center gap-1 text-yellow-500">
+                      <span className={`flex items-center gap-1 ${isCompletedToday(selectedReceita) ? "text-gray-300" : "text-yellow-500"}`}>
                         <Zap className="w-4 h-4" /> +{selectedReceita.xp} XP
                       </span>
                     </div>
+
                     <div className="inline-flex items-center gap-1 bg-red-50 text-red-600 px-3 py-1 rounded-full text-sm mt-2">
                       <Heart className="w-4 h-4" />
                       {selectedReceita.benefit}
                     </div>
+
+                    {isCompletedToday(selectedReceita) && (
+                      <div className="mt-3 inline-flex items-center gap-1 bg-emerald-50 text-emerald-700 px-3 py-1 rounded-full text-sm border border-emerald-100">
+                        <Check className="w-4 h-4" />
+                        Você já concluiu esta receita hoje ✅
+                      </div>
+                    )}
                   </div>
 
                   <h3 className="font-semibold text-gray-900 mb-3">Ingredientes</h3>
@@ -659,8 +781,12 @@ export default function Alimentacao() {
 
                   <Button
                     onClick={() => completeReceita(selectedReceita)}
-                    disabled={completing}
-                    className="w-full bg-gradient-to-r from-red-500 to-rose-600 hover:from-red-600 hover:to-rose-700 text-white py-6 rounded-xl text-lg font-semibold"
+                    disabled={completing || isCompletedToday(selectedReceita)}
+                    className={`w-full py-6 rounded-xl text-lg font-semibold ${
+                      isCompletedToday(selectedReceita)
+                        ? "bg-gray-200 text-gray-500 hover:bg-gray-200 cursor-not-allowed"
+                        : "bg-gradient-to-r from-red-500 to-rose-600 hover:from-red-600 hover:to-rose-700 text-white"
+                    }`}
                   >
                     {completing ? (
                       <motion.div
@@ -668,6 +794,11 @@ export default function Alimentacao() {
                         transition={{ repeat: Infinity, duration: 1, ease: "linear" }}
                         className="w-6 h-6 border-2 border-white border-t-transparent rounded-full"
                       />
+                    ) : isCompletedToday(selectedReceita) ? (
+                      <>
+                        <Check className="w-5 h-5 mr-2" />
+                        Concluída hoje
+                      </>
                     ) : (
                       <>
                         <Check className="w-5 h-5 mr-2" />
