@@ -19,141 +19,175 @@ import { supabase } from "@/lib/supabaseClient";
 export default function Hidratacao() {
   const [profile, setProfile] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
+
   const [form, setForm] = useState({ peso: "", altura: "", basal: "" });
+
+  // waterNeeded em litros (string com 1 casa, ex: "3.1")
   const [waterNeeded, setWaterNeeded] = useState(null);
+
+  // waterLogs: [{ id, quantidade_ml, data, hora, created_at }]
   const [waterLogs, setWaterLogs] = useState([]);
 
   useEffect(() => {
     loadData();
   }, []);
 
+  const calculateWater = (peso, basal) => {
+    if (!peso) return;
+    let waterInMl = Number(peso) * 35;
+
+    if (basal !== null && basal !== undefined && basal !== "") {
+      const basalNum = Number(basal);
+      if (Number.isFinite(basalNum)) {
+        if (basalNum > 2000) waterInMl += 500;
+        else if (basalNum > 1500) waterInMl += 300;
+      }
+    }
+
+    const waterInLiters = (waterInMl / 1000).toFixed(1); // string
+    setWaterNeeded(waterInLiters);
+  };
+
   const loadData = async () => {
+    setIsLoading(true);
     try {
-      // Usuário logado via Supabase
+      // Usuário logado
       const {
         data: { user },
       } = await supabase.auth.getUser();
 
-      if (user) {
-        // Perfil do usuário
-        const { data: profiles, error: profileError } = await supabase
+      if (!user) {
+        window.location.href = `/login?next=${encodeURIComponent("/hidratacao")}`;
+        return;
+      }
+
+      // Perfil (usar id = auth.user.id como fonte de verdade)
+      let prof = null;
+      try {
+        const { data, error } = await supabase
           .from("user_profiles")
           .select("*")
-          .eq("created_by", user.email);
+          .eq("id", user.id)
+          .single();
+        if (!error) prof = data;
+      } catch {
+        prof = null;
+      }
 
-        if (profileError) {
-          console.error("Erro ao carregar perfil:", profileError);
+      // Se não existir, cria mínimo
+      if (!prof) {
+        const payload = {
+          id: user.id,
+          created_by: user.email,
+          plano_ativo: true,
+          rank: "Iniciante",
+          xp_total: 0,
+          metas_concluidas: 0,
+          dias_consecutivos: 0,
+        };
+
+        try {
+          const { data: created, error } = await supabase
+            .from("user_profiles")
+            .insert(payload)
+            .select("*")
+            .single();
+          if (!error && created) prof = created;
+          else prof = payload;
+        } catch {
+          prof = payload;
         }
+      }
 
-        if (profiles && profiles.length > 0) {
-          setProfile(profiles[0]);
+      setProfile(prof);
 
-          if (profiles[0].peso_hidratacao) {
-            setForm({
-              peso: profiles[0].peso_hidratacao,
-              altura: profiles[0].altura_hidratacao || "",
-              basal: profiles[0].basal_hidratacao || "",
-            });
-
-            calculateWater(profiles[0].peso_hidratacao, profiles[0].basal_hidratacao);
-          }
-        }
+      // Preenche formulário e calcula meta se já tiver peso salvo
+      if (prof?.peso_hidratacao) {
+        setForm({
+          peso: String(prof.peso_hidratacao ?? ""),
+          altura: String(prof.altura_hidratacao ?? ""),
+          basal: String(prof.basal_hidratacao ?? ""),
+        });
+        calculateWater(prof.peso_hidratacao, prof.basal_hidratacao);
       }
 
       // Logs de água direto do Supabase (sem /api)
-const { data: logs, error: logsError } = await supabase
-  .from("water_logs")
-  .select("id, quantidade_ml, data, hora, created_at")
-  .eq("user_id", user.id)
-  .order("created_at", { ascending: false });
+      const { data: logs, error: logsError } = await supabase
+        .from("water_logs")
+        .select("id, quantidade_ml, data, hora, created_at")
+        .eq("user_id", user.id)
+        .order("created_at", { ascending: false });
 
-if (logsError) console.error("Erro ao carregar water_logs:", logsError);
-setWaterLogs(logs || []);
-      } else {
-        const logs = await res.json().catch(() => []);
-        setWaterLogs(Array.isArray(logs) ? logs : []);
+      if (logsError) {
+        console.error("Erro ao carregar water_logs:", logsError);
       }
+
+      setWaterLogs(Array.isArray(logs) ? logs : []);
     } catch (err) {
       console.error("Erro ao carregar dados:", err);
-      setWaterLogs([]);
     } finally {
       setIsLoading(false);
     }
   };
 
-  const calculateWater = (peso, basal) => {
-    if (!peso) return;
-
-    let waterInMl = Number(peso) * 35;
-
-    if (basal) {
-      const basalNum = parseFloat(basal);
-      if (basalNum > 2000) {
-        waterInMl += 500;
-      } else if (basalNum > 1500) {
-        waterInMl += 300;
-      }
-    }
-
-    const waterInLiters = (waterInMl / 1000).toFixed(1);
-    setWaterNeeded(waterInLiters);
-  };
-
   const handleCalculate = async () => {
-    const peso = parseFloat(form.peso);
-    const basal = form.basal ? parseFloat(form.basal) : null;
+    const peso = Number(form.peso);
+    const basal = form.basal !== "" ? Number(form.basal) : null;
 
-    if (!peso || peso <= 0) {
+    if (!Number.isFinite(peso) || peso <= 0) {
       alert("Por favor, insira um peso válido");
       return;
     }
 
     calculateWater(peso, basal);
 
-    if (profile) {
+    if (!profile?.id) return;
+
+    try {
       const { error } = await supabase
         .from("user_profiles")
         .update({
           peso_hidratacao: peso,
-          altura_hidratacao: form.altura ? parseFloat(form.altura) : null,
+          altura_hidratacao:
+            form.altura !== "" ? Number(form.altura) : null,
           basal_hidratacao: basal,
         })
         .eq("id", profile.id);
 
-      if (error) {
-        console.error("Erro ao atualizar perfil:", error);
-      }
+      if (error) console.error("Erro ao atualizar perfil:", error);
+    } catch (e) {
+      console.error("Erro ao atualizar perfil:", e);
     }
   };
 
-  const registrarAgua = async (quantidade_ml, dataOverride) => {
-  try {
-    const session = await supabase.auth.getSession();
-    const token = session?.data?.session?.access_token;
+  const registrarAgua = async (quantidade_ml) => {
+    try {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (!user) throw new Error("Sem usuário logado");
 
-    const agora = new Date();
-    const data = dataOverride || agora.toISOString().split("T")[0];
-    const hora = agora.toTimeString().split(" ")[0];
+      const agora = new Date();
+      const data = agora.toISOString().split("T")[0];
+      const hora = agora.toTimeString().split(" ")[0];
 
-    const res = await fetch("/api/water-log-post", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${token}`,
-      },
-      body: JSON.stringify({ quantidade_ml, data, hora }),
-    });
+      const { error } = await supabase.from("water_logs").insert({
+        user_id: user.id,
+        created_by: user.email, // opcional, pode manter
+        quantidade_ml,
+        data,
+        hora,
+      });
 
-    if (!res.ok) {
-      console.error("Falha ao registrar água:", await res.text().catch(() => ""));
+      if (error) throw error;
+
+      // Recarrega para atualizar dashboard
+      await loadData();
+    } catch (err) {
+      console.error("Erro ao registrar água:", err);
+      alert("Não foi possível registrar a água. Tente novamente.");
     }
-
-    await loadData();
-  } catch (err) {
-    console.error("Erro ao registrar água:", err);
-    alert("Não foi possível registrar a água. Tente novamente.");
-  }
-};
+  };
 
   if (isLoading) {
     return (
@@ -192,7 +226,9 @@ setWaterLogs(logs || []);
         >
           <div className="flex items-center gap-2 mb-4">
             <Calculator className="w-5 h-5 text-blue-600" />
-            <h2 className="font-semibold text-gray-900">Calcule Sua Meta de Água</h2>
+            <h2 className="font-semibold text-gray-900">
+              Calcule Sua Meta de Água
+            </h2>
           </div>
 
           <div className="space-y-4">
@@ -259,27 +295,27 @@ setWaterLogs(logs || []);
             <div className="text-5xl font-bold mb-2">{waterNeeded}L</div>
             <p className="text-blue-100">Meta diária de água recomendada</p>
             <p className="text-sm text-blue-100 mt-2">
-              Aproximadamente {Math.ceil(Number(waterNeeded) / 0.25)} copos de 250ml
+              Aproximadamente {Math.ceil(Number(waterNeeded) / 0.25)} copos de
+              250ml
             </p>
           </motion.div>
         )}
 
-       {/* Dashboard de Hidratação */}
-{waterNeeded && (
-  <motion.div
-    initial={{ opacity: 0, y: 20 }}
-    animate={{ opacity: 1, y: 0 }}
-    transition={{ delay: 0.1 }}
-    className="bg-white rounded-2xl p-6 mb-6 border border-gray-100 shadow-sm"
-  >
-    {/* metaDiaria agora é numero */}
-    <HydrationDashboard
-      waterLogs={waterLogs}
-      metaDiaria={waterNeeded ? Number(String(waterNeeded).replace(",", ".")) : 0}
-      onLogAdded={registrarAgua}
-    />
-  </motion.div>
-)}
+        {/* Dashboard de Hidratação */}
+        {waterNeeded && (
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.1 }}
+            className="bg-white rounded-2xl p-6 mb-6 border border-gray-100 shadow-sm"
+          >
+            <HydrationDashboard
+              waterLogs={waterLogs}
+              metaDiaria={Number(waterNeeded)}
+              onLogAdded={registrarAgua}
+            />
+          </motion.div>
+        )}
 
         {/* Por que Hidratação é Importante */}
         <motion.div
@@ -290,7 +326,9 @@ setWaterLogs(logs || []);
         >
           <div className="flex items-center gap-2 mb-4">
             <Info className="w-5 h-5 text-red-600" />
-            <h2 className="font-semibold text-gray-900">Por Que Hidratação é Crucial?</h2>
+            <h2 className="font-semibold text-gray-900">
+              Por Que Hidratação é Crucial?
+            </h2>
           </div>
 
           <div className="space-y-4">
@@ -299,9 +337,12 @@ setWaterLogs(logs || []);
                 <Heart className="w-5 h-5 text-red-600" />
               </div>
               <div>
-                <h3 className="font-medium text-gray-900 mb-1">Saúde Cardiovascular</h3>
+                <h3 className="font-medium text-gray-900 mb-1">
+                  Saúde Cardiovascular
+                </h3>
                 <p className="text-sm text-gray-600">
-                  A água ajuda o sangue a circular melhor, reduzindo a carga no coração e mantendo a pressão arterial equilibrada.
+                  A água ajuda o sangue a circular melhor, reduzindo a carga no
+                  coração e mantendo a pressão arterial equilibrada.
                 </p>
               </div>
             </div>
@@ -311,9 +352,12 @@ setWaterLogs(logs || []);
                 <Zap className="w-5 h-5 text-emerald-600" />
               </div>
               <div>
-                <h3 className="font-medium text-gray-900 mb-1">Controle do Apetite</h3>
+                <h3 className="font-medium text-gray-900 mb-1">
+                  Controle do Apetite
+                </h3>
                 <p className="text-sm text-gray-600">
-                  Beber água regularmente ajuda a saciar e reduz a sensação de fome, evitando excessos alimentares.
+                  Beber água regularmente ajuda a saciar e reduz a sensação de
+                  fome, evitando excessos alimentares.
                 </p>
               </div>
             </div>
@@ -323,9 +367,12 @@ setWaterLogs(logs || []);
                 <Droplets className="w-5 h-5 text-blue-600" />
               </div>
               <div>
-                <h3 className="font-medium text-gray-900 mb-1">Metabolismo Ativo</h3>
+                <h3 className="font-medium text-gray-900 mb-1">
+                  Metabolismo Ativo
+                </h3>
                 <p className="text-sm text-gray-600">
-                  Estar bem hidratado melhora o metabolismo e facilita a eliminação de toxinas do organismo.
+                  Estar bem hidratado melhora o metabolismo e facilita a
+                  eliminação de toxinas do organismo.
                 </p>
               </div>
             </div>
@@ -341,7 +388,9 @@ setWaterLogs(logs || []);
         >
           <div className="flex items-center gap-2 mb-4">
             <AlertCircle className="w-5 h-5 text-amber-600" />
-            <h2 className="font-semibold text-amber-900">Sinais de Desidratação</h2>
+            <h2 className="font-semibold text-amber-900">
+              Sinais de Desidratação
+            </h2>
           </div>
 
           <ul className="space-y-2 text-sm text-amber-800">
@@ -373,7 +422,9 @@ setWaterLogs(logs || []);
         >
           <div className="flex items-center gap-2 mb-4">
             <CheckCircle2 className="w-5 h-5 text-green-600" />
-            <h2 className="font-semibold text-gray-900">Dicas para Manter-se Hidratado</h2>
+            <h2 className="font-semibold text-gray-900">
+              Dicas para Manter-se Hidratado
+            </h2>
           </div>
 
           <div className="space-y-3 text-sm text-gray-700">
@@ -399,7 +450,9 @@ setWaterLogs(logs || []);
             </div>
             <div className="flex gap-2">
               <span className="text-green-600 font-bold">6.</span>
-              <p>Aumente a ingestão em dias quentes ou ao praticar exercícios</p>
+              <p>
+                Aumente a ingestão em dias quentes ou ao praticar exercícios
+              </p>
             </div>
           </div>
         </motion.div>
