@@ -100,6 +100,7 @@ const RequireSubscription = ({ children }) => {
 
         const { data: userData } = await supabase.auth.getUser();
         const user = userData?.user;
+
         if (!user) {
           if (mounted) {
             setIsAdmin(false);
@@ -109,7 +110,8 @@ const RequireSubscription = ({ children }) => {
           return;
         }
 
-        // 1) Tenta buscar role + plano_ativo (pode falhar se coluna não existir)
+        // ✅ Correção: usar maybeSingle() para NÃO gerar 406 quando não existir profile
+        // e garantir criação do profile via upsert.
         let role = null;
         let planoAtivo = false;
 
@@ -117,23 +119,27 @@ const RequireSubscription = ({ children }) => {
           .from("profiles")
           .select("role, plano_ativo")
           .eq("id", user.id)
-          .single();
+          .maybeSingle();
 
-        if (!error) {
+        if (!error && data) {
           role = data?.role ?? null;
           planoAtivo = Boolean(data?.plano_ativo);
-        } else {
-          // 2) Fallback: se sua tabela ainda não tiver plano_ativo, pelo menos pega role
-          const { data: data2, error: error2 } = await supabase
+        } else if (!error && !data) {
+          // Não existe profile ainda -> cria/garante e tenta retornar dados mínimos
+          const { data: created, error: upsertErr } = await supabase
             .from("profiles")
-            .select("role")
-            .eq("id", user.id)
+            .upsert({ id: user.id, role: "user", plano_ativo: false }, { onConflict: "id" })
+            .select("role, plano_ativo")
             .single();
 
-          if (!error2) {
-            role = data2?.role ?? null;
-            planoAtivo = false;
+          if (!upsertErr && created) {
+            role = created?.role ?? null;
+            planoAtivo = Boolean(created?.plano_ativo);
           }
+        } else {
+          // erro real (RLS/schema). comportamento conservador
+          role = null;
+          planoAtivo = false;
         }
 
         if (!mounted) return;
@@ -250,9 +256,7 @@ const AppPagesRoutes = () => {
         const routePath = `/${String(pageKey).toLowerCase()}`;
 
         const aliasPaths =
-          pageKey === "Alimentacao"
-            ? [routePath, "/alimentação", "/alimentacao"]
-            : [routePath];
+          pageKey === "Alimentacao" ? [routePath, "/alimentação", "/alimentacao"] : [routePath];
 
         return aliasPaths.map((p) => (
           <Route
