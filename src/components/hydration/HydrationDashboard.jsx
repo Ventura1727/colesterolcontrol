@@ -1,70 +1,85 @@
-import React, { useState } from 'react';
-import { motion } from 'framer-motion';
-import { Droplets, Target, Plus, TrendingUp, Calendar, Check } from 'lucide-react';
-import { format } from 'date-fns';
-import { ptBR } from 'date-fns/locale';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
+import React, { useState } from "react";
+import { motion } from "framer-motion";
+import { Droplets, Target, Plus, TrendingUp, Calendar, Check } from "lucide-react";
+import { format } from "date-fns";
+import { ptBR } from "date-fns/locale";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 
 export default function HydrationDashboard({ waterLogs, metaDiaria, onLogAdded }) {
   const [showAddModal, setShowAddModal] = useState(false);
-  const [quantidade, setQuantidade] = useState('');
-  const [data, setData] = useState(new Date().toISOString().split('T')[0]);
+  const [quantidade, setQuantidade] = useState("");
+  const [data, setData] = useState(new Date().toISOString().split("T")[0]);
   const [isLogging, setIsLogging] = useState(false);
 
-  // Meta diária em ml
-  const metaDiariaML = metaDiaria ? parseFloat(metaDiaria) * 1000 : 2500;
+  // ✅ Meta diária em ml (aceita number ou string)
+  const metaLitros =
+    typeof metaDiaria === "number"
+      ? metaDiaria
+      : metaDiaria
+      ? Number(String(metaDiaria).replace(",", "."))
+      : 2.5;
+
+  const metaDiariaML = Number.isFinite(metaLitros) ? metaLitros * 1000 : 2500;
 
   // Consumo de hoje
-  const hoje = new Date().toISOString().split('T')[0];
+  const hoje = new Date().toISOString().split("T")[0];
   const consumoHoje =
-    waterLogs?.filter(log => log.data === hoje).reduce((sum, log) => sum + log.quantidade_ml, 0) || 0;
+    (waterLogs || [])
+      .filter((log) => log?.data === hoje)
+      .reduce((sum, log) => sum + (Number(log?.quantidade_ml) || 0), 0) || 0;
 
-  const percentualMeta = Math.min((consumoHoje / metaDiariaML) * 100, 100);
+  const percentualMeta = metaDiariaML > 0 ? Math.min((consumoHoje / metaDiariaML) * 100, 100) : 0;
   const mlRestantes = Math.max(metaDiariaML - consumoHoje, 0);
 
   // Histórico de 7 dias
   const hoje7dias = [];
   for (let i = 6; i >= 0; i--) {
-    const date = new Date();
-    date.setDate(date.getDate() - i);
-    const dateStr = date.toISOString().split('T')[0];
-    const dayLogs = waterLogs?.filter(log => log.data === dateStr) || [];
-    const totalML = dayLogs.reduce((sum, log) => sum + log.quantidade_ml, 0);
+    const dateObj = new Date();
+    dateObj.setDate(dateObj.getDate() - i);
+    const dateStr = dateObj.toISOString().split("T")[0];
+
+    const dayLogs = (waterLogs || []).filter((log) => log?.data === dateStr);
+    const totalML = dayLogs.reduce((sum, log) => sum + (Number(log?.quantidade_ml) || 0), 0);
 
     hoje7dias.push({
       date: dateStr,
       ml: totalML,
       litros: (totalML / 1000).toFixed(1),
       registros: dayLogs.length,
-      label: format(date, 'EEE', { locale: ptBR })
+      label: format(dateObj, "EEE", { locale: ptBR }),
     });
   }
 
-  const maxML = Math.max(...hoje7dias.map(d => d.ml), metaDiariaML);
-  const infoHoje = hoje7dias.find(d => d.date === hoje);
+  const maxML = Math.max(...hoje7dias.map((d) => d.ml), metaDiariaML);
+  const infoHoje = hoje7dias.find((d) => d.date === hoje);
 
   const handleAddWater = async () => {
-    if (!quantidade || !data) return;
+    const ml = parseInt(quantidade, 10);
+    if (!ml || ml <= 0 || !data) return;
+
     setIsLogging(true);
     try {
-      // Centraliza a lógica no pai (Hidratacao.jsx)
-      await onLogAdded(parseInt(quantidade, 10));
+      // ✅ Agora respeita a data escolhida no modal
+      await onLogAdded(ml, data);
+
       setShowAddModal(false);
-      setQuantidade('');
-      setData(new Date().toISOString().split('T')[0]);
+      setQuantidade("");
+      setData(new Date().toISOString().split("T")[0]);
     } catch (error) {
-      console.error('Erro ao registrar água:', error);
-      alert('Erro ao registrar. Tente novamente.');
+      console.error("Erro ao registrar água:", error);
+      alert("Erro ao registrar. Tente novamente.");
+    } finally {
+      setIsLogging(false);
     }
-    setIsLogging(false);
   };
 
   const quickAdd = async (ml) => {
     try {
-      await onLogAdded(ml);
+      // ✅ quick add é sempre “Hoje”
+      await onLogAdded(ml, hoje);
     } catch (error) {
-      console.error('Erro ao registrar:', error);
+      console.error("Erro ao registrar:", error);
     }
   };
 
@@ -125,6 +140,7 @@ export default function HydrationDashboard({ waterLogs, metaDiaria, onLogAdded }
           <div className="text-xs font-medium text-gray-900">250ml</div>
           <div className="text-[10px] text-gray-500">Copo</div>
         </button>
+
         <button
           onClick={() => quickAdd(500)}
           className="bg-white border border-blue-200 rounded-xl p-3 hover:bg-blue-50 transition-colors"
@@ -133,6 +149,7 @@ export default function HydrationDashboard({ waterLogs, metaDiaria, onLogAdded }
           <div className="text-xs font-medium text-gray-900">500ml</div>
           <div className="text-[10px] text-gray-500">Garrafa</div>
         </button>
+
         <button
           onClick={() => setShowAddModal(true)}
           className="bg-gradient-to-br from-blue-500 to-indigo-600 text-white rounded-xl p-3 hover:from-blue-600 hover:to-indigo-700 transition-colors"
@@ -168,8 +185,9 @@ export default function HydrationDashboard({ waterLogs, metaDiaria, onLogAdded }
         <div className="bg-white rounded-xl p-4 border border-gray-100">
           <div className="flex items-end justify-between gap-2 h-32">
             {hoje7dias.map((day) => {
-              const altura = (day.ml / maxML) * 100;
+              const altura = maxML > 0 ? (day.ml / maxML) * 100 : 0;
               const isToday = day.date === hoje;
+
               return (
                 <div key={day.date} className="flex-1 flex flex-col items-center gap-2">
                   <div className="w-full flex flex-col justify-end h-full">
@@ -178,7 +196,7 @@ export default function HydrationDashboard({ waterLogs, metaDiaria, onLogAdded }
                       animate={{ height: `${altura}%` }}
                       transition={{ delay: 0.1 }}
                       className={`w-full rounded-t-lg ${
-                        isToday ? 'bg-gradient-to-t from-blue-500 to-indigo-600' : 'bg-blue-200'
+                        isToday ? "bg-gradient-to-t from-blue-500 to-indigo-600" : "bg-blue-200"
                       }`}
                     />
                   </div>
@@ -249,7 +267,7 @@ export default function HydrationDashboard({ waterLogs, metaDiaria, onLogAdded }
                   type="date"
                   value={data}
                   onChange={(e) => setData(e.target.value)}
-                  max={new Date().toISOString().split('T')[0]}
+                  max={new Date().toISOString().split("T")[0]}
                   className="w-full"
                 />
               </div>
@@ -267,12 +285,7 @@ export default function HydrationDashboard({ waterLogs, metaDiaria, onLogAdded }
             </div>
 
             <div className="flex gap-3 mt-6">
-              <Button
-                onClick={() => setShowAddModal(false)}
-                variant="outline"
-                className="flex-1"
-                disabled={isLogging}
-              >
+              <Button onClick={() => setShowAddModal(false)} variant="outline" className="flex-1" disabled={isLogging}>
                 Cancelar
               </Button>
               <Button
@@ -283,7 +296,7 @@ export default function HydrationDashboard({ waterLogs, metaDiaria, onLogAdded }
                 {isLogging ? (
                   <motion.div
                     animate={{ rotate: 360 }}
-                    transition={{ repeat: Infinity, duration: 1, ease: 'linear' }}
+                    transition={{ repeat: Infinity, duration: 1, ease: "linear" }}
                     className="w-5 h-5 border-2 border-white border-t-transparent rounded-full"
                   />
                 ) : (
