@@ -358,7 +358,7 @@ export default function Alimentacao() {
           calories: receita.calories,
           is_healthy: true,
           ai_feedback: `Receita saudável: ${receita.benefit}`,
-          date: new Date().toISOString(),
+          date: new Date().toISOString().slice(0, 10), // "YYYY-MM-DD"
         });
       } catch {
         // se falhar, mantém no localStorage (fallback)
