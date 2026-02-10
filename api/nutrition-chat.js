@@ -1,4 +1,4 @@
-// api/nutrition-chat.js
+// /api/nutrition-chat.js
 export default async function handler(req, res) {
   try {
     if (req.method !== "POST") {
@@ -17,7 +17,21 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: "Missing messages[]" });
     }
 
-    const r = await fetch("https://api.openai.com/v1/chat/completions", {
+    // Converte para o formato do Responses API
+    const input = messages.map((m) => {
+      const role =
+        m.role === "system" || m.role === "assistant" || m.role === "user"
+          ? m.role
+          : "user";
+
+      const text = String(m.content ?? "");
+      return {
+        role,
+        content: [{ type: "input_text", text }],
+      };
+    });
+
+    const r = await fetch("https://api.openai.com/v1/responses", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -25,17 +39,18 @@ export default async function handler(req, res) {
       },
       body: JSON.stringify({
         model: "gpt-5-mini",
-        messages: messages.map((m) => ({
-          role: m.role === "assistant" ? "assistant" : "user",
-          content: String(m.content || ""),
-        })),
+        input,
         temperature: 0.6,
+        // opcional: deixe uma instrução fixa “de nutricionista”
+        // instructions: "Você é uma nutricionista focada em redução de LDL. Responda em pt-BR, de forma prática.",
       }),
     });
 
     const data = await r.json().catch(() => ({}));
 
     if (!r.ok) {
+      // Isso aqui é o que você precisa ver quando der 500 no front
+      console.error("OpenAI error:", r.status, data);
       return res.status(500).json({
         error: "OpenAI request failed",
         status: r.status,
@@ -43,9 +58,14 @@ export default async function handler(req, res) {
       });
     }
 
-    const text = data?.choices?.[0]?.message?.content ?? "";
+    const text =
+      data?.output_text ??
+      data?.output?.[0]?.content?.find?.((c) => c?.type === "output_text")?.text ??
+      "";
+
     return res.status(200).json({ text });
   } catch (err) {
+    console.error("nutrition-chat server error:", err);
     return res.status(500).json({
       error: "Server error",
       message: err?.message || String(err),
