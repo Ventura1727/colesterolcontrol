@@ -60,17 +60,15 @@ export default function Hidratacao() {
         }
       }
 
-      // Logs de água via API
-      const session = await supabase.auth.getSession();
-      const token = session?.data?.session?.access_token;
+      // Logs de água direto do Supabase (sem /api)
+const { data: logs, error: logsError } = await supabase
+  .from("water_logs")
+  .select("id, quantidade_ml, data, hora, created_at")
+  .eq("user_id", user.id)
+  .order("created_at", { ascending: false });
 
-      const res = await fetch("/api/water-log", {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-
-      // ✅ não quebra a tela se API falhar
-      if (!res.ok) {
-        setWaterLogs([]);
+if (logsError) console.error("Erro ao carregar water_logs:", logsError);
+setWaterLogs(logs || []);
       } else {
         const logs = await res.json().catch(() => []);
         setWaterLogs(Array.isArray(logs) ? logs : []);
