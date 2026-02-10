@@ -20,12 +20,54 @@ import ColesterolTracker from "@/components/dashboard/ColesterolTracker";
 import { supabase } from "@/lib/supabaseClient";
 
 const features = [
-  { id: "nutricionista", title: "Nutricionista IA", desc: "Planos e análise de pratos", icon: Bot, premium: true, page: "Nutricionista" },
-  { id: "exercicios", title: "Exercícios", desc: "Treinos que liberam XP", icon: Dumbbell, premium: true, page: "Exercicios" },
-  { id: "alimentacao", title: "Receitas", desc: "Pratos anti-colesterol", icon: Salad, premium: true, page: "Alimentacao" },
-  { id: "progresso", title: "Meu Progresso", desc: "Acompanhe sua evolução", icon: TrendingDown, premium: true, page: "Progresso" },
-  { id: "hidratacao", title: "Hidratação", desc: "Calcule sua meta diária", icon: Droplets, premium: true, page: "Hidratacao" },
-  { id: "educacao", title: "Conteúdo", desc: "Artigos sobre saúde", icon: BookOpen, premium: false, page: "Conteudo" },
+  {
+    id: "nutricionista",
+    title: "Nutricionista IA",
+    desc: "Planos e análise de pratos",
+    icon: Bot,
+    premium: true,
+    page: "Nutricionista",
+  },
+  {
+    id: "exercicios",
+    title: "Exercícios",
+    desc: "Treinos que liberam XP",
+    icon: Dumbbell,
+    premium: true,
+    page: "Exercicios",
+  },
+  {
+    id: "alimentacao",
+    title: "Receitas",
+    desc: "Pratos anti-colesterol",
+    icon: Salad,
+    premium: true,
+    page: "Alimentacao",
+  },
+  {
+    id: "progresso",
+    title: "Meu Progresso",
+    desc: "Acompanhe sua evolução",
+    icon: TrendingDown,
+    premium: true,
+    page: "Progresso",
+  },
+  {
+    id: "hidratacao",
+    title: "Hidratação",
+    desc: "Calcule sua meta diária",
+    icon: Droplets,
+    premium: true,
+    page: "Hidratacao",
+  },
+  {
+    id: "educacao",
+    title: "Conteúdo",
+    desc: "Artigos sobre saúde",
+    icon: BookOpen,
+    premium: false,
+    page: "Conteudo",
+  },
 ];
 
 export default function Dashboard() {
@@ -51,34 +93,68 @@ export default function Dashboard() {
           return;
         }
 
-        // 1) role/is_premium em public.profiles (opcional, mas útil)
+        /**
+         * 1) Fonte auxiliar: public.profiles (role + flags legacy)
+         *    - usamos maybeSingle para NÃO gerar 406 quando não existir linha.
+         */
         let role = null;
         let isPremiumLegacy = null;
+        let premiumUntilLegacy = null;
+
         try {
           const { data: prof, error: profErr } = await supabase
             .from("profiles")
-            .select("role, is_premium")
+            .select("role, is_premium, premium_until, plano_ativo")
             .eq("id", user.id)
-            .single();
+            .maybeSingle();
 
-          if (!profErr) {
+          if (!profErr && prof) {
             role = prof?.role ?? null;
             isPremiumLegacy = prof?.is_premium ?? null;
+            premiumUntilLegacy = prof?.premium_until ?? null;
           }
         } catch {
           // ignore
         }
 
-        // 2) Fonte de verdade do plano: public.user_profiles
+        /**
+         * 2) Fonte principal: public.user_profiles
+         *    - também com maybeSingle() para evitar 406.
+         */
         const { data: up, error: upErr } = await supabase
           .from("user_profiles")
           .select("*")
           .eq("id", user.id)
-          .single();
+          .maybeSingle();
 
         let finalProfile = upErr ? null : up;
 
-        // 3) Se ainda não existe user_profiles, tenta criar a partir do quiz (ou cria mínimo)
+        /**
+         * 2.1) Se existe user_profiles, injeta role e normaliza premium
+         *      (evita “Plano Gratuito” mesmo com admin/premium em public.profiles).
+         */
+        if (finalProfile) {
+          // premium_until pode existir em user_profiles OU vir do legacy profiles
+          const premiumUntil = finalProfile?.premium_until ?? premiumUntilLegacy ?? null;
+          const premiumUntilOk = premiumUntil ? new Date(premiumUntil) > new Date() : false;
+
+          finalProfile = {
+            ...finalProfile,
+            role: finalProfile?.role ?? role,
+            // Se for admin, sempre premium
+            plano_ativo:
+              role === "admin" ? true : Boolean(finalProfile?.plano_ativo ?? false),
+            // legado opcional (não quebra se não existir)
+            is_premium: finalProfile?.is_premium ?? isPremiumLegacy ?? null,
+            premium_until: premiumUntil,
+            // Se tiver premium_until válido, também considera premium
+            __premium_until_ok: premiumUntilOk,
+          };
+        }
+
+        /**
+         * 3) Se ainda não existe user_profiles, tenta criar a partir do quiz (ou cria mínimo)
+         */
         if (!finalProfile) {
           const quizDataRaw = localStorage.getItem("heartbalance_quiz");
           let quiz = null;
@@ -88,15 +164,23 @@ export default function Dashboard() {
             quiz = null;
           }
 
+          // premium_until legado (se existir)
+          const premiumUntilOk =
+            premiumUntilLegacy && new Date(premiumUntilLegacy) > new Date();
+
           const insertPayload = {
             id: user.id,
             ...(quiz || {}),
-            // se for admin ou tiver legacy is_premium, já considera premium ativo
-            plano_ativo: role === "admin" ? true : Boolean(isPremiumLegacy),
+            role: role ?? "user",
+            // Se for admin, premium. Se tiver legado premium, premium. Se premium_until no futuro, premium.
+            plano_ativo:
+              role === "admin"
+                ? true
+                : Boolean(isPremiumLegacy) || Boolean(premiumUntilOk),
             plano_tipo: null,
             plano_inicio: null,
             plano_fim: null,
-            premium_until: null,
+            premium_until: premiumUntilLegacy ?? null,
             rank: "Iniciante",
             xp_total: 0,
             metas_concluidas: 0,
@@ -110,7 +194,20 @@ export default function Dashboard() {
             .single();
 
           if (!createErr) {
-            finalProfile = created;
+            // Normaliza premium no objeto recém-criado
+            const premiumUntil = created?.premium_until ?? premiumUntilLegacy ?? null;
+            const premiumUntilOk2 = premiumUntil ? new Date(premiumUntil) > new Date() : false;
+
+            finalProfile = {
+              ...created,
+              role: created?.role ?? role,
+              plano_ativo:
+                role === "admin" ? true : Boolean(created?.plano_ativo ?? false),
+              is_premium: created?.is_premium ?? isPremiumLegacy ?? null,
+              premium_until: premiumUntil,
+              __premium_until_ok: premiumUntilOk2,
+            };
+
             localStorage.removeItem("heartbalance_quiz");
           }
         }
@@ -119,20 +216,24 @@ export default function Dashboard() {
 
         setProfile(finalProfile);
 
-        // 4) Colesterol records: se sua tabela ainda não existe/nome diferente, não quebra.
-        // Se você souber o nome exato da tabela, me diga que eu ajusto.
+        /**
+         * 4) Colesterol records: se sua tabela ainda não existe/nome diferente, não quebra.
+         */
         try {
           const { data: recs } = await supabase
             .from("colesterol_records")
             .select("*")
             .order("data_exame", { ascending: false })
             .limit(10);
+
           setColesterolRecords(Array.isArray(recs) ? recs : []);
         } catch {
           setColesterolRecords([]);
         }
 
-        // 5) Water logs: não pode quebrar o app se API falhar
+        /**
+         * 5) Water logs: não pode quebrar o app se API falhar
+         */
         try {
           const session = await supabase.auth.getSession();
           const token = session?.data?.session?.access_token;
@@ -162,7 +263,25 @@ export default function Dashboard() {
     };
   }, []);
 
-  const isPremium = useMemo(() => Boolean(profile?.plano_ativo), [profile]);
+  /**
+   * Premium final (unificado):
+   * - admin => premium
+   * - plano_ativo => premium
+   * - is_premium legacy => premium
+   * - premium_until no futuro => premium
+   */
+  const isPremium = useMemo(() => {
+    const premiumUntilOk =
+      profile?.premium_until && new Date(profile.premium_until) > new Date();
+
+    return (
+      profile?.role === "admin" ||
+      profile?.plano_ativo === true ||
+      profile?.is_premium === true ||
+      premiumUntilOk ||
+      profile?.__premium_until_ok === true
+    );
+  }, [profile]);
 
   const handleFeatureClick = (feature) => {
     if (feature.premium && !isPremium) {
@@ -216,6 +335,7 @@ export default function Dashboard() {
               </p>
             </div>
           </div>
+
           {isPremium && (
             <div className="flex items-center gap-1 bg-yellow-100 text-yellow-700 px-3 py-1.5 rounded-full text-sm font-medium">
               <Zap className="w-4 h-4" />
@@ -226,16 +346,26 @@ export default function Dashboard() {
 
         {/* Rank Card - Apenas Premium */}
         {isPremium && (
-          <RankCard profile={profile} onViewProgress={() => (window.location.href = createPageUrl("Progresso"))} />
+          <RankCard
+            profile={profile}
+            onViewProgress={() => (window.location.href = createPageUrl("Progresso"))}
+          />
         )}
 
         {/* Colesterol Tracker - Apenas Premium */}
         {isPremium && (
-          <ColesterolTracker records={colesterolRecords} onRecordAdded={() => window.location.reload()} />
+          <ColesterolTracker
+            records={colesterolRecords}
+            onRecordAdded={() => window.location.reload()}
+          />
         )}
 
         {/* Hidratação */}
-        <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="bg-white rounded-2xl p-5 mb-6 border border-gray-100 shadow-sm">
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="bg-white rounded-2xl p-5 mb-6 border border-gray-100 shadow-sm"
+        >
           <h2 className="font-semibold text-gray-900 flex items-center gap-2 mb-3">
             <Droplets className="w-5 h-5 text-blue-600" />
             Hidratação de Hoje
@@ -249,13 +379,19 @@ export default function Dashboard() {
         </motion.div>
 
         {/* Resumo do Perfil */}
-        <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="bg-white rounded-2xl p-5 mb-6 border border-gray-100 shadow-sm">
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="bg-white rounded-2xl p-5 mb-6 border border-gray-100 shadow-sm"
+        >
           <div className="flex items-center justify-between mb-3">
             <h2 className="font-semibold text-gray-900 flex items-center gap-2">
               <Target className="w-5 h-5 text-emerald-600" />
               Seu Perfil
             </h2>
-            <span className="text-xs text-red-600 bg-red-50 px-2 py-1 rounded-full">{profile?.objetivo}</span>
+            <span className="text-xs text-red-600 bg-red-50 px-2 py-1 rounded-full">
+              {profile?.objetivo}
+            </span>
           </div>
           <div className="grid grid-cols-2 gap-3 text-sm">
             <div className="bg-gray-50 rounded-lg p-3">
@@ -288,7 +424,9 @@ export default function Dashboard() {
               transition={{ delay: idx * 0.05 }}
               onClick={() => handleFeatureClick(feature)}
               className={`relative bg-white rounded-xl p-4 border text-left transition-all hover:shadow-md ${
-                feature.premium && !isPremium ? "border-gray-200 opacity-75" : "border-red-100 hover:border-red-300"
+                feature.premium && !isPremium
+                  ? "border-gray-200 opacity-75"
+                  : "border-red-100 hover:border-red-300"
               }`}
             >
               {feature.premium && !isPremium && (
@@ -296,9 +434,19 @@ export default function Dashboard() {
                   <Lock className="w-4 h-4 text-gray-400" />
                 </div>
               )}
-              <div className={`w-10 h-10 rounded-xl mb-3 flex items-center justify-center ${feature.premium && !isPremium ? "bg-gray-100" : "bg-red-100"}`}>
-                <feature.icon className={`w-5 h-5 ${feature.premium && !isPremium ? "text-gray-400" : "text-red-600"}`} />
+
+              <div
+                className={`w-10 h-10 rounded-xl mb-3 flex items-center justify-center ${
+                  feature.premium && !isPremium ? "bg-gray-100" : "bg-red-100"
+                }`}
+              >
+                <feature.icon
+                  className={`w-5 h-5 ${
+                    feature.premium && !isPremium ? "text-gray-400" : "text-red-600"
+                  }`}
+                />
               </div>
+
               <div className="font-medium text-gray-900 text-sm mb-1">{feature.title}</div>
               <div className="text-xs text-gray-500">{feature.desc}</div>
             </motion.button>
@@ -306,7 +454,12 @@ export default function Dashboard() {
         </div>
 
         {/* Dica do dia */}
-        <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.3 }} className="mt-6 bg-gradient-to-r from-red-500 to-rose-600 rounded-2xl p-5 text-white">
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.3 }}
+          className="mt-6 bg-gradient-to-r from-red-500 to-rose-600 rounded-2xl p-5 text-white"
+        >
           <div className="text-sm opacity-90 mb-1">💡 Dica do dia</div>
           <p className="font-medium">
             Inclua uma porção de aveia no café da manhã. As fibras solúveis ajudam a reduzir o colesterol LDL naturalmente.
@@ -317,13 +470,19 @@ export default function Dashboard() {
       {/* Modal de Bloqueio */}
       {showLockedModal && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
-          <motion.div initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} className="bg-white rounded-2xl p-6 max-w-sm w-full">
+          <motion.div
+            initial={{ opacity: 0, scale: 0.9 }}
+            animate={{ opacity: 1, scale: 1 }}
+            className="bg-white rounded-2xl p-6 max-w-sm w-full"
+          >
             <div className="text-center">
               <div className="w-16 h-16 bg-amber-100 rounded-full mx-auto mb-4 flex items-center justify-center">
                 <Crown className="w-8 h-8 text-amber-600" />
               </div>
               <h3 className="text-xl font-bold text-gray-900 mb-2">Funcionalidade Premium</h3>
-              <p className="text-gray-600 mb-6">Desbloqueie treinos gamificados, receitas exclusivas e acompanhamento de colesterol!</p>
+              <p className="text-gray-600 mb-6">
+                Desbloqueie treinos gamificados, receitas exclusivas e acompanhamento de colesterol!
+              </p>
               <div className="space-y-3">
                 <Button
                   onClick={() => (window.location.href = createPageUrl("Vendas"))}
@@ -331,7 +490,11 @@ export default function Dashboard() {
                 >
                   Ver Plano Premium
                 </Button>
-                <Button onClick={() => setShowLockedModal(false)} variant="ghost" className="w-full text-gray-500">
+                <Button
+                  onClick={() => setShowLockedModal(false)}
+                  variant="ghost"
+                  className="w-full text-gray-500"
+                >
                   Talvez depois
                 </Button>
               </div>
