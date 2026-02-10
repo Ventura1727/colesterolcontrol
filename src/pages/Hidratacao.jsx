@@ -266,21 +266,22 @@ export default function Hidratacao() {
           </motion.div>
         )}
 
-        {/* Dashboard de Hidratação */}
-        {waterNeeded && (
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.1 }}
-            className="bg-white rounded-2xl p-6 mb-6 border border-gray-100 shadow-sm"
-          >
-            <HydrationDashboard
-              waterLogs={waterLogs}
-              metaDiaria={Number(waterNeeded)}   {/* ✅ AQUI: agora é number */}
-              onLogAdded={registrarAgua}
-            />
-          </motion.div>
-        )}
+       {/* Dashboard de Hidratação */}
+{waterNeeded && (
+  <motion.div
+    initial={{ opacity: 0, y: 20 }}
+    animate={{ opacity: 1, y: 0 }}
+    transition={{ delay: 0.1 }}
+    className="bg-white rounded-2xl p-6 mb-6 border border-gray-100 shadow-sm"
+  >
+    {/* metaDiaria agora é numero */}
+    <HydrationDashboard
+      waterLogs={waterLogs}
+      metaDiaria={waterNeeded ? Number(String(waterNeeded).replace(",", ".")) : 0}
+      onLogAdded={registrarAgua}
+    />
+  </motion.div>
+)}
 
         {/* Por que Hidratação é Importante */}
         <motion.div
