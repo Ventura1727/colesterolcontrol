@@ -28,8 +28,8 @@ export default async function handler(req, res) {
     if (req.method === "GET") {
       const { data, error } = await supabase
         .from("water_logs")
-        .select("id, user_id, quantidade_ml, data, hora, created_at")
-        .eq("user_id", user.id)
+        .select("id, quantidade_ml, data, hora, created_at")
+        .eq("created_by", user.id)
         .order("created_at", { ascending: false })
         .limit(200);
 
@@ -50,7 +50,7 @@ export default async function handler(req, res) {
 
     const { error: insertError } = await supabase.from("water_logs").insert([
       {
-        user_id: user.id,
+        created_by: user.id, // <- AQUI é o fix
         quantidade_ml: Number(quantidade_ml),
         data,
         hora,
