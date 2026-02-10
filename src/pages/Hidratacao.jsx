@@ -1,6 +1,15 @@
 import React, { useState, useEffect } from "react";
 import { motion } from "framer-motion";
-import { ArrowLeft, Droplets, Calculator, Info, Heart, Zap, AlertCircle, CheckCircle2 } from "lucide-react";
+import {
+  ArrowLeft,
+  Droplets,
+  Calculator,
+  Info,
+  Heart,
+  Zap,
+  AlertCircle,
+  CheckCircle2,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { createPageUrl } from "@/utils";
@@ -11,17 +20,15 @@ export default function Hidratacao() {
   const [profile, setProfile] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
   const [form, setForm] = useState({ peso: "", altura: "", basal: "" });
-  const [waterNeeded, setWaterNeeded] = useState(null); // litros (string tipo "3.1")
+  const [waterNeeded, setWaterNeeded] = useState(null); // em litros (string "3.1")
   const [waterLogs, setWaterLogs] = useState([]);
 
   useEffect(() => {
     loadData();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const calculateWater = (peso, basal) => {
     if (!peso) return;
-
     let waterInMl = Number(peso) * 35;
 
     if (basal) {
@@ -45,52 +52,56 @@ export default function Hidratacao() {
         return;
       }
 
-      // 1) Perfil por ID (padrão consistente com Alimentacao.jsx)
+      // Perfil: usa a MESMA chave do resto do app: id = auth.uid()
       let prof = null;
-      try {
-        const { data, error } = await supabase.from("user_profiles").select("*").eq("id", user.id).single();
-        if (!error) prof = data;
-      } catch {
-        prof = null;
-      }
+      const { data: profData, error: profErr } = await supabase
+        .from("user_profiles")
+        .select("*")
+        .eq("id", user.id)
+        .single();
 
-      // Se não existir, cria mínimo
+      if (!profErr) prof = profData;
+
+      // Se não existir, cria mínimo (igual Alimentacao)
       if (!prof) {
         const payload = {
           id: user.id,
-          created_by: user.email,
           plano_ativo: true,
           rank: "Iniciante",
           xp_total: 0,
           metas_concluidas: 0,
           dias_consecutivos: 0,
+          peso_hidratacao: null,
+          altura_hidratacao: null,
+          basal_hidratacao: null,
         };
 
-        try {
-          const { data: created } = await supabase.from("user_profiles").insert(payload).select("*").single();
-          prof = created || payload;
-        } catch {
-          prof = payload;
-        }
+        const { data: created } = await supabase
+          .from("user_profiles")
+          .insert(payload)
+          .select("*")
+          .single();
+
+        prof = created || payload;
       }
 
       setProfile(prof);
 
-      // 2) set form + meta
+      // Preenche form e meta
       if (prof?.peso_hidratacao) {
         setForm({
-          peso: String(prof.peso_hidratacao ?? ""),
-          altura: String(prof.altura_hidratacao ?? ""),
-          basal: String(prof.basal_hidratacao ?? ""),
+          peso: prof.peso_hidratacao ?? "",
+          altura: prof.altura_hidratacao ?? "",
+          basal: prof.basal_hidratacao ?? "",
         });
         calculateWater(prof.peso_hidratacao, prof.basal_hidratacao);
       }
 
-      // 3) Logs direto do Supabase (SEM /api)
+      // Logs de água (direto do Supabase)
       const { data: logs, error: logsError } = await supabase
         .from("water_logs")
-        .select("id, created_by, quantidade_ml, data, hora, created_at")
-        .eq("created_by", user.email)
+        .select("id, user_id, quantidade_ml, data, hora, created_at")
+        .eq("user_id", user.id)
         .order("data", { ascending: false })
         .order("hora", { ascending: false })
         .limit(500);
@@ -130,38 +141,31 @@ export default function Hidratacao() {
     }
   };
 
-  // agora suporta também registrar em uma data específica (modal "Outro volume")
-  const registrarAgua = async (quantidade_ml, dataOverride) => {
+  const registrarAgua = async (quantidade_ml) => {
     try {
       const { data: userData } = await supabase.auth.getUser();
       const user = userData?.user;
-      if (!user?.email) throw new Error("Usuário não autenticado");
+      if (!user) throw new Error("Sem usuário logado");
 
       const agora = new Date();
-      const data = dataOverride || agora.toISOString().split("T")[0];
-      const hora = agora.toTimeString().split(" ")[0];
+      const data = agora.toISOString().slice(0, 10); // YYYY-MM-DD
+      const hora = agora.toTimeString().slice(0, 8); // HH:MM:SS
 
       const { error } = await supabase.from("water_logs").insert({
-        created_by: user.email,
-        quantidade_ml,
+        user_id: user.id,
+        quantidade_ml: Number(quantidade_ml),
         data,
         hora,
       });
 
-      if (error) throw error;
+      if (error) {
+        console.error("Erro ao registrar água:", error);
+        throw error;
+      }
 
-      // recarrega apenas logs (rápido)
-      const { data: logs } = await supabase
-        .from("water_logs")
-        .select("id, created_by, quantidade_ml, data, hora, created_at")
-        .eq("created_by", user.email)
-        .order("data", { ascending: false })
-        .order("hora", { ascending: false })
-        .limit(500);
-
-      setWaterLogs(Array.isArray(logs) ? logs : []);
+      await loadData();
     } catch (err) {
-      console.error("Erro ao registrar água:", err);
+      console.error("Falha ao registrar água:", err);
       alert("Não foi possível registrar a água. Tente novamente.");
     }
   };
@@ -196,7 +200,11 @@ export default function Hidratacao() {
         </div>
 
         {/* Calculadora */}
-        <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="bg-white rounded-2xl p-6 mb-6 border border-gray-100 shadow-sm">
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="bg-white rounded-2xl p-6 mb-6 border border-gray-100 shadow-sm"
+        >
           <div className="flex items-center gap-2 mb-4">
             <Calculator className="w-5 h-5 text-blue-600" />
             <h2 className="font-semibold text-gray-900">Calcule Sua Meta de Água</h2>
@@ -205,21 +213,44 @@ export default function Hidratacao() {
           <div className="space-y-4">
             <div>
               <label className="text-sm font-medium text-gray-700 mb-1 block">Peso (kg) *</label>
-              <Input type="number" placeholder="Ex: 70" value={form.peso} onChange={(e) => setForm({ ...form, peso: e.target.value })} className="w-full" />
+              <Input
+                type="number"
+                placeholder="Ex: 70"
+                value={form.peso}
+                onChange={(e) => setForm({ ...form, peso: e.target.value })}
+                className="w-full"
+              />
             </div>
 
             <div>
               <label className="text-sm font-medium text-gray-700 mb-1 block">Altura (cm)</label>
-              <Input type="number" placeholder="Ex: 170" value={form.altura} onChange={(e) => setForm({ ...form, altura: e.target.value })} className="w-full" />
+              <Input
+                type="number"
+                placeholder="Ex: 170"
+                value={form.altura}
+                onChange={(e) => setForm({ ...form, altura: e.target.value })}
+                className="w-full"
+              />
             </div>
 
             <div>
-              <label className="text-sm font-medium text-gray-700 mb-1 block">Taxa Metabólica Basal (kcal/dia)</label>
-              <Input type="number" placeholder="Ex: 1800" value={form.basal} onChange={(e) => setForm({ ...form, basal: e.target.value })} className="w-full" />
+              <label className="text-sm font-medium text-gray-700 mb-1 block">
+                Taxa Metabólica Basal (kcal/dia)
+              </label>
+              <Input
+                type="number"
+                placeholder="Ex: 1800"
+                value={form.basal}
+                onChange={(e) => setForm({ ...form, basal: e.target.value })}
+                className="w-full"
+              />
               <p className="text-xs text-gray-500 mt-1">Opcional: ajuda a personalizar sua meta</p>
             </div>
 
-            <Button onClick={handleCalculate} className="w-full bg-gradient-to-r from-blue-500 to-indigo-600 hover:from-blue-600 hover:to-indigo-700 text-white py-5 rounded-xl">
+            <Button
+              onClick={handleCalculate}
+              className="w-full bg-gradient-to-r from-blue-500 to-indigo-600 hover:from-blue-600 hover:to-indigo-700 text-white py-5 rounded-xl"
+            >
               <Calculator className="w-5 h-5 mr-2" />
               Calcular Meta Diária
             </Button>
@@ -228,23 +259,43 @@ export default function Hidratacao() {
 
         {/* Resultado */}
         {waterNeeded && (
-          <motion.div initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} className="bg-gradient-to-br from-blue-500 to-indigo-600 rounded-2xl p-6 mb-6 text-white text-center">
+          <motion.div
+            initial={{ opacity: 0, scale: 0.9 }}
+            animate={{ opacity: 1, scale: 1 }}
+            className="bg-gradient-to-br from-blue-500 to-indigo-600 rounded-2xl p-6 mb-6 text-white text-center"
+          >
             <Droplets className="w-12 h-12 mx-auto mb-3 opacity-90" />
             <div className="text-5xl font-bold mb-2">{waterNeeded}L</div>
             <p className="text-blue-100">Meta diária de água recomendada</p>
-            <p className="text-sm text-blue-100 mt-2">Aproximadamente {Math.ceil(Number(waterNeeded) / 0.25)} copos de 250ml</p>
+            <p className="text-sm text-blue-100 mt-2">
+              Aproximadamente {Math.ceil(Number(waterNeeded) / 0.25)} copos de 250ml
+            </p>
           </motion.div>
         )}
 
-        {/* Dashboard de Hidratação */}
+        {/* Dashboard */}
         {waterNeeded && (
-          <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 }} className="bg-white rounded-2xl p-6 mb-6 border border-gray-100 shadow-sm">
-            <HydrationDashboard waterLogs={waterLogs} metaDiaria={waterNeeded} onLogAdded={registrarAgua} />
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.1 }}
+            className="bg-white rounded-2xl p-6 mb-6 border border-gray-100 shadow-sm"
+          >
+            <HydrationDashboard
+              waterLogs={waterLogs}
+              metaDiaria={Number(waterNeeded)}  // <- número em litros
+              onLogAdded={registrarAgua}
+            />
           </motion.div>
         )}
 
-        {/* Por que Hidratação é Importante */}
-        <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 }} className="bg-white rounded-2xl p-6 mb-6 border border-gray-100 shadow-sm">
+        {/* Conteúdo educativo (mantive igual) */}
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.1 }}
+          className="bg-white rounded-2xl p-6 mb-6 border border-gray-100 shadow-sm"
+        >
           <div className="flex items-center gap-2 mb-4">
             <Info className="w-5 h-5 text-red-600" />
             <h2 className="font-semibold text-gray-900">Por Que Hidratação é Crucial?</h2>
@@ -257,7 +308,9 @@ export default function Hidratacao() {
               </div>
               <div>
                 <h3 className="font-medium text-gray-900 mb-1">Saúde Cardiovascular</h3>
-                <p className="text-sm text-gray-600">A água ajuda o sangue a circular melhor, reduzindo a carga no coração e mantendo a pressão arterial equilibrada.</p>
+                <p className="text-sm text-gray-600">
+                  A água ajuda o sangue a circular melhor, reduzindo a carga no coração e mantendo a pressão arterial equilibrada.
+                </p>
               </div>
             </div>
 
@@ -267,7 +320,9 @@ export default function Hidratacao() {
               </div>
               <div>
                 <h3 className="font-medium text-gray-900 mb-1">Controle do Apetite</h3>
-                <p className="text-sm text-gray-600">Beber água regularmente ajuda a saciar e reduz a sensação de fome, evitando excessos alimentares.</p>
+                <p className="text-sm text-gray-600">
+                  Beber água regularmente ajuda a saciar e reduz a sensação de fome, evitando excessos alimentares.
+                </p>
               </div>
             </div>
 
@@ -277,14 +332,20 @@ export default function Hidratacao() {
               </div>
               <div>
                 <h3 className="font-medium text-gray-900 mb-1">Metabolismo Ativo</h3>
-                <p className="text-sm text-gray-600">Estar bem hidratado melhora o metabolismo e facilita a eliminação de toxinas do organismo.</p>
+                <p className="text-sm text-gray-600">
+                  Estar bem hidratado melhora o metabolismo e facilita a eliminação de toxinas do organismo.
+                </p>
               </div>
             </div>
           </div>
         </motion.div>
 
-        {/* Sinais de Desidratação */}
-        <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2 }} className="bg-amber-50 rounded-2xl p-6 mb-6 border border-amber-200">
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.2 }}
+          className="bg-amber-50 rounded-2xl p-6 mb-6 border border-amber-200"
+        >
           <div className="flex items-center gap-2 mb-4">
             <AlertCircle className="w-5 h-5 text-amber-600" />
             <h2 className="font-semibold text-amber-900">Sinais de Desidratação</h2>
@@ -310,8 +371,12 @@ export default function Hidratacao() {
           </ul>
         </motion.div>
 
-        {/* Dicas Práticas */}
-        <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.3 }} className="bg-white rounded-2xl p-6 border border-gray-100 shadow-sm">
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.3 }}
+          className="bg-white rounded-2xl p-6 border border-gray-100 shadow-sm"
+        >
           <div className="flex items-center gap-2 mb-4">
             <CheckCircle2 className="w-5 h-5 text-green-600" />
             <h2 className="font-semibold text-gray-900">Dicas para Manter-se Hidratado</h2>
