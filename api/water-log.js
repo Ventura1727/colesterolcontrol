@@ -1,32 +1,77 @@
-// src/pages/api/water-log.js
-import { createClient } from '@supabase/supabase-js';
+// api/water-log.js
+import { createClient } from "@supabase/supabase-js";
 
 const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL,
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_ANON_KEY
 );
 
+function getBearerToken(req) {
+  const auth = req.headers.authorization || "";
+  const m = auth.match(/^Bearer\s+(.+)$/i);
+  return m ? m[1] : null;
+}
+
 export default async function handler(req, res) {
-  if (req.method !== 'GET') {
-    return res.status(405).json({ error: 'Método não permitido' });
+  try {
+    if (req.method !== "GET" && req.method !== "POST") {
+      return res.status(405).json({ error: "Método não permitido" });
+    }
+
+    const token = getBearerToken(req);
+    if (!token) {
+      return res.status(401).json({ error: "Token de autenticação ausente" });
+    }
+
+    const { data: userData, error: authError } = await supabase.auth.getUser(token);
+    const user = userData?.user;
+
+    if (authError || !user) {
+      return res.status(401).json({ error: "Usuário não autenticado" });
+    }
+
+    // ===== GET: listar logs =====
+    if (req.method === "GET") {
+      const { data, error } = await supabase
+        .from("water_logs")
+        .select("id, quantidade_ml, data, hora, created_at")
+        .eq("created_by", user.id)
+        .order("created_at", { ascending: false })
+        .limit(200);
+
+      if (error) {
+        return res.status(400).json({ error: error.message, details: error });
+      }
+
+      return res.status(200).json({ data });
+    }
+
+    // ===== POST: inserir log =====
+    const body = typeof req.body === "string" ? JSON.parse(req.body) : (req.body || {});
+    const { quantidade_ml, data, hora } = body;
+
+    if (quantidade_ml == null || !data || !hora) {
+      return res.status(400).json({ error: "Campos obrigatórios ausentes" });
+    }
+
+    const { error: insertError } = await supabase
+      .from("water_logs")
+      .insert([
+        {
+          created_by: user.id,
+          quantidade_ml: Number(quantidade_ml),
+          data,
+          hora,
+        },
+      ]);
+
+    if (insertError) {
+      return res.status(400).json({ error: insertError.message, details: insertError });
+    }
+
+    return res.status(201).json({ message: "Registro inserido com sucesso" });
+  } catch (e) {
+    console.error("water-log fatal:", e);
+    return res.status(500).json({ error: "Server error", message: e?.message || String(e) });
   }
-
-  // Recupera o token do usuário logado
-  const token = req.headers.authorization?.replace('Bearer ', '');
-  if (!token) {
-    return res.status(401).json({ error: 'Token de autenticação ausente' });
-  }
-
-  const {
-    data: { user },
-    error: authError,
-  } = await supabase.auth.getUser(token);
-
-  if (authError || !user) {
-    return res.status(401).json({ error: 'Usuário não autenticado' });
-  }
-
-  // Busca registros de hidratação do usuário
-  const { data, error } = await supabase
-    .from('water_logs')
-    .select('quantidade_ml, data, hora, created_at')
+}
