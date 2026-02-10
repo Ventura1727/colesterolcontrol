@@ -1,4 +1,4 @@
-import { supabase } from "./supabaseClient.js";
+import { createClient } from "@supabase/supabase-js";
 
 function getBearerToken(req) {
   const auth = req.headers.authorization || "";
@@ -17,19 +17,34 @@ export default async function handler(req, res) {
       return res.status(401).json({ error: "Token de autenticação ausente" });
     }
 
-    const { data: userData, error: authError } = await supabase.auth.getUser(token);
+    const supabaseUrl = process.env.SUPABASE_URL;
+    const supabaseAnonKey = process.env.SUPABASE_ANON_KEY;
+
+    if (!supabaseUrl || !supabaseAnonKey) {
+      return res.status(500).json({ error: "Missing SUPABASE_URL or SUPABASE_ANON_KEY" });
+    }
+
+    // ✅ Client autenticado com o JWT do usuário
+    const supabase = createClient(supabaseUrl, supabaseAnonKey, {
+      global: {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      },
+    });
+
+    // (opcional) validar usuário
+    const { data: userData, error: authError } = await supabase.auth.getUser();
     const user = userData?.user;
 
     if (authError || !user) {
       return res.status(401).json({ error: "Usuário não autenticado" });
     }
 
-    // GET: listar logs do usuário
     if (req.method === "GET") {
       const { data, error } = await supabase
         .from("water_logs")
         .select("id, quantidade_ml, data, hora, created_at")
-        .eq("created_by", user.id)
         .order("created_at", { ascending: false })
         .limit(200);
 
@@ -40,7 +55,6 @@ export default async function handler(req, res) {
       return res.status(200).json({ data });
     }
 
-    // POST: inserir log
     const body = typeof req.body === "string" ? JSON.parse(req.body) : (req.body || {});
     const { quantidade_ml, data, hora } = body;
 
@@ -50,7 +64,7 @@ export default async function handler(req, res) {
 
     const { error: insertError } = await supabase.from("water_logs").insert([
       {
-        created_by: user.id, // <- AQUI é o fix
+        created_by: user.id,
         quantidade_ml: Number(quantidade_ml),
         data,
         hora,
