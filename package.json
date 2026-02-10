@@ -1,8 +1,11 @@
 {
-  "name": "base44-app",
+  "name": "heartbalance",
   "private": true,
   "version": "0.0.0",
   "type": "module",
+  "engines": {
+    "node": "20.x"
+  },
   "scripts": {
     "dev": "vite",
     "build": "vite build",
