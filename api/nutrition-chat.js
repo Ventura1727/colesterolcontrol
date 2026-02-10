@@ -1,4 +1,3 @@
-// /api/nutrition-chat.js
 export default async function handler(req, res) {
   try {
     if (req.method !== "POST") {
@@ -17,58 +16,38 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: "Missing messages[]" });
     }
 
-    // Converte para o formato do Responses API
-    const input = messages.map((m) => {
-      const role =
-        m.role === "system" || m.role === "assistant" || m.role === "user"
-          ? m.role
-          : "user";
+    const safeMessages = messages.map((m) => ({
+      role: m.role || "user",
+      content:
+        typeof m.content === "string"
+          ? m.content
+          : (m?.content?.[0]?.text ?? String(m.content ?? "")),
+    }));
 
-      const text = String(m.content ?? "");
-      return {
-        role,
-        content: [{ type: "input_text", text }],
-      };
-    });
-
-    const r = await fetch("https://api.openai.com/v1/responses", {
+    const r = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: {
-        "Content-Type": "application/json",
         Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: "gpt-5-mini",
-        input,
-        temperature: 0.6,
-        // opcional: deixe uma instrução fixa “de nutricionista”
-        // instructions: "Você é uma nutricionista focada em redução de LDL. Responda em pt-BR, de forma prática.",
+        model: "gpt-4o-mini",
+        messages: safeMessages,
+        temperature: 0.7,
       }),
     });
 
-    const data = await r.json().catch(() => ({}));
+    const data = await r.json();
 
     if (!r.ok) {
-      // Isso aqui é o que você precisa ver quando der 500 no front
-      console.error("OpenAI error:", r.status, data);
-      return res.status(500).json({
-        error: "OpenAI request failed",
-        status: r.status,
-        details: data,
-      });
+      console.error("OpenAI error:", data);
+      return res.status(500).json({ error: "OpenAI error", details: data });
     }
 
-    const text =
-      data?.output_text ??
-      data?.output?.[0]?.content?.find?.((c) => c?.type === "output_text")?.text ??
-      "";
-
-    return res.status(200).json({ text });
-  } catch (err) {
-    console.error("nutrition-chat server error:", err);
-    return res.status(500).json({
-      error: "Server error",
-      message: err?.message || String(err),
-    });
+    const reply = data?.choices?.[0]?.message?.content ?? "";
+    return res.status(200).json({ reply });
+  } catch (e) {
+    console.error("nutrition-chat fatal:", e);
+    return res.status(500).json({ error: "Server error", message: e?.message || String(e) });
   }
 }
