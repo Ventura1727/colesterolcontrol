@@ -1,4 +1,3 @@
-// api/water-log.js
 import { supabase } from "./supabaseClient.js";
 
 function getBearerToken(req) {
@@ -25,10 +24,11 @@ export default async function handler(req, res) {
       return res.status(401).json({ error: "Usuário não autenticado" });
     }
 
+    // GET: listar logs do usuário
     if (req.method === "GET") {
       const { data, error } = await supabase
         .from("water_logs")
-        .select("id, quantidade_ml, data, hora, created_at")
+        .select("id, user_id, quantidade_ml, data, hora, created_at")
         .eq("user_id", user.id)
         .order("created_at", { ascending: false })
         .limit(200);
@@ -40,6 +40,7 @@ export default async function handler(req, res) {
       return res.status(200).json({ data });
     }
 
+    // POST: inserir log
     const body = typeof req.body === "string" ? JSON.parse(req.body) : (req.body || {});
     const { quantidade_ml, data, hora } = body;
 
