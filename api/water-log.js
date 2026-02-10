@@ -29,7 +29,7 @@ export default async function handler(req, res) {
       const { data, error } = await supabase
         .from("water_logs")
         .select("id, quantidade_ml, data, hora, created_at")
-        .eq("created_by", user.id)
+        .eq("user_id", user.id)
         .order("created_at", { ascending: false })
         .limit(200);
 
@@ -49,7 +49,7 @@ export default async function handler(req, res) {
 
     const { error: insertError } = await supabase.from("water_logs").insert([
       {
-        created_by: user.id,
+        user_id: user.id,
         quantidade_ml: Number(quantidade_ml),
         data,
         hora,
