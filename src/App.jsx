@@ -13,7 +13,6 @@ import GerarPix from "@/components/GerarPix";
 import AuthGate from "@/components/AuthGate";
 import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
-import Perfil from "@/pages/Perfil";
 
 // ✅ Ajustado para o local onde você criou o arquivo no print: src/components/Auth/Callback.jsx
 import AuthCallback from "@/components/Auth/Callback";
@@ -80,7 +79,8 @@ const RequireSubscription = ({ children }) => {
     path.startsWith("/vendas") ||
     path.startsWith("/checkout") ||
     path.startsWith("/finalizarcompra") ||
-    path.startsWith("/premium"); // se essa página antiga existir, não bloqueie aqui (evita loop)
+    path.startsWith("/premium") ||
+    path.startsWith("/quiz"); // ✅ alias do quiz -> não bloquear aqui
 
   useEffect(() => {
     let mounted = true;
@@ -222,8 +222,8 @@ const PUBLIC_PAGE_KEYS = new Set([
   "Vendas",
   "Checkout",
   "FinalizarCompra",
-  "Home", // se você usa Home como landing pública
-  "Premium", // existe no projeto, mas é “antiga”; manter pública evita loop
+  "Home",
+  "Premium",
 ]);
 
 /**
@@ -240,6 +240,9 @@ const AppPagesRoutes = () => {
 
   return (
     <Routes>
+      {/* ✅ Alias /quiz -> /onboarding (quiz do início) */}
+      <Route path="/quiz" element={<Navigate to="/onboarding" replace />} />
+
       {/* Main (/) */}
       <Route
         path="/"
