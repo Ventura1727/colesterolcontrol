@@ -1,3 +1,4 @@
+// src/pages/Alimentacao.jsx
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
@@ -183,7 +184,6 @@ function writeLocalDoneSet(day, set) {
 function sameDay(isoDatetimeOrDate, dayYYYYMMDD) {
   if (!isoDatetimeOrDate) return false;
   const s = String(isoDatetimeOrDate);
-  // aceita "2026-02-10" ou "2026-02-10T..."
   return s.slice(0, 10) === dayYYYYMMDD;
 }
 
@@ -227,41 +227,39 @@ export default function Alimentacao() {
       return;
     }
 
-    // Perfil (fonte de verdade)
+    /**
+     * PERFIL: Fonte única = public.profiles
+     * - maybeSingle evita 406 quando não há linha
+     * - upsert mínimo evita app quebrar caso user não tenha profile ainda
+     */
     let prof = null;
+
     try {
-      const { data, error } = await supabase.from("user_profiles").select("*").eq("id", user.id).single();
+      const { data, error } = await supabase
+        .from("profiles")
+        .select("id, role, plano_ativo, rank, xp_total, metas_concluidas, dias_consecutivos, objetivo, basal_kcal")
+        .eq("id", user.id)
+        .maybeSingle();
+
       if (!error) prof = data;
     } catch {
       prof = null;
     }
 
-    // Se não existir profile ainda, cria mínimo (não quebra app)
     if (!prof) {
-      const quizRaw = localStorage.getItem("heartbalance_quiz");
-      let quiz = null;
       try {
-        quiz = quizRaw ? JSON.parse(quizRaw) : null;
-      } catch {
-        quiz = null;
-      }
+        const { data: created, error: upsertErr } = await supabase
+          .from("profiles")
+          .upsert(
+            { id: user.id, rank: "Iniciante", xp_total: 0, metas_concluidas: 0, dias_consecutivos: 0 },
+            { onConflict: "id" }
+          )
+          .select("id, role, plano_ativo, rank, xp_total, metas_concluidas, dias_consecutivos, objetivo, basal_kcal")
+          .single();
 
-      const payload = {
-        id: user.id,
-        ...(quiz || {}),
-        plano_ativo: true, // se chegou aqui é premium/admin; seu guard já controla
-        rank: "Iniciante",
-        xp_total: 0,
-        metas_concluidas: 0,
-        dias_consecutivos: 0,
-      };
-
-      try {
-        const { data: created } = await supabase.from("user_profiles").insert(payload).select("*").single();
-        prof = created || payload;
-        localStorage.removeItem("heartbalance_quiz");
+        if (!upsertErr) prof = created;
       } catch {
-        prof = payload;
+        prof = { id: user.id, rank: "Iniciante", xp_total: 0, metas_concluidas: 0, dias_consecutivos: 0 };
       }
     }
 
@@ -276,7 +274,7 @@ export default function Alimentacao() {
     setActivities(acts);
     setColesterolRecords(colesterol);
 
-    // Atualiza também o localStorage set do dia (fallback) — mantém coerente
+    // Atualiza também o localStorage set do dia (fallback)
     setLocalDoneSet(readLocalDoneSet(day));
 
     setIsLoading(false);
@@ -295,7 +293,6 @@ export default function Alimentacao() {
   const completedTodaySet = useMemo(() => {
     const set = new Set();
 
-    // 1) via meal_logs (preferencial)
     const todaysMeals = Array.isArray(mealLogs)
       ? mealLogs.filter((m) => sameDay(m?.date || m?.created_at, day))
       : [];
@@ -307,7 +304,6 @@ export default function Alimentacao() {
       if (found) set.add(found.id);
     }
 
-    // 2) fallback local
     for (const id of localDoneSet) set.add(id);
 
     return set;
@@ -316,18 +312,15 @@ export default function Alimentacao() {
   const isCompletedToday = (receita) => completedTodaySet.has(receita.id);
 
   const sortedReceitas = useMemo(() => {
-    // não concluídas hoje primeiro; depois concluídas
     return [...receitas].sort((a, b) => {
       const aDone = completedTodaySet.has(a.id) ? 1 : 0;
       const bDone = completedTodaySet.has(b.id) ? 1 : 0;
       if (aDone !== bDone) return aDone - bDone;
 
-      // depois, por rank requerido (mais fácil primeiro)
       const ar = rankOrder.indexOf(a.rank_required);
       const br = rankOrder.indexOf(b.rank_required);
       if (ar !== br) return ar - br;
 
-      // depois, por xp
       return (a.xp || 0) - (b.xp || 0);
     });
   }, [completedTodaySet]);
@@ -335,7 +328,6 @@ export default function Alimentacao() {
   const completeReceita = async (receita) => {
     if (!profile?.id) return;
 
-    // evita XP duplicado no mesmo dia
     if (isCompletedToday(receita)) {
       setSelectedReceita(null);
       return;
@@ -358,7 +350,7 @@ export default function Alimentacao() {
           calories: receita.calories,
           is_healthy: true,
           ai_feedback: `Receita saudável: ${receita.benefit}`,
-          date: new Date().toISOString().slice(0, 10), // "YYYY-MM-DD"
+          date: new Date().toISOString().slice(0, 10),
         });
       } catch {
         // se falhar, mantém no localStorage (fallback)
@@ -377,14 +369,17 @@ export default function Alimentacao() {
         // ignore
       }
 
-      // 3) Atualiza XP/rank
-      const newXp = (profile.xp_total || 0) + receita.xp;
-      const newMetas = (profile.metas_concluidas || 0) + 1;
+      // 3) Atualiza XP/rank em profiles
+      const currentXp = Number(profile?.xp_total || 0);
+      const currentMetas = Number(profile?.metas_concluidas || 0);
+
+      const newXp = currentXp + (receita.xp || 0);
+      const newMetas = currentMetas + 1;
       const newRank = computeRankFromXp(newXp);
 
       try {
         await supabase
-          .from("user_profiles")
+          .from("profiles")
           .update({ xp_total: newXp, metas_concluidas: newMetas, rank: newRank })
           .eq("id", profile.id);
       } catch {
@@ -393,7 +388,6 @@ export default function Alimentacao() {
 
       setProfile({ ...profile, xp_total: newXp, metas_concluidas: newMetas, rank: newRank });
 
-      // Recarrega logs para refletir em gráficos/insights
       await loadData();
       setSelectedReceita(null);
     } finally {
@@ -403,6 +397,7 @@ export default function Alimentacao() {
 
   const handlePhotoSelect = (e) => {
     const file = e.target.files?.[0];
+    e.target.value = ""; // permite selecionar a mesma foto novamente
     if (!file) return;
 
     setPhotoFile(file);
@@ -477,12 +472,27 @@ export default function Alimentacao() {
         </div>
 
         {/* Dashboard de Calorias */}
-        <CaloriesDashboard mealLogs={mealLogs} basalRate={profile?.basal_hidratacao || 2000} />
+        <CaloriesDashboard mealLogs={mealLogs} basalRate={profile?.basal_kcal || 2000} />
 
         {/* Botões de Ação */}
         <div className="grid grid-cols-2 gap-3 mb-6">
-          <input type="file" ref={fileInputRef} onChange={handlePhotoSelect} accept="image/*" className="hidden" />
-          <input type="file" ref={cameraInputRef} onChange={handlePhotoSelect} accept="image/*" capture="environment" className="hidden" />
+          <input
+            type="file"
+            ref={fileInputRef}
+            onChange={handlePhotoSelect}
+            accept="image/*"
+            className="hidden"
+          />
+
+          <input
+            type="file"
+            ref={cameraInputRef}
+            onChange={handlePhotoSelect}
+            // alguns navegadores respeitam melhor esse accept
+            accept="image/*;capture=camera"
+            capture="environment"
+            className="hidden"
+          />
 
           <Button
             onClick={() => setShowCameraOptions(true)}
@@ -528,16 +538,27 @@ export default function Alimentacao() {
             const done = isCompletedToday(receita);
 
             return (
-              <motion.div key={receita.id} initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: idx * 0.03 }}>
+              <motion.div
+                key={receita.id}
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: idx * 0.03 }}
+              >
                 <button
                   onClick={() => unlocked && setSelectedReceita(receita)}
                   disabled={!unlocked}
                   className={`w-full text-left bg-white rounded-2xl p-4 border transition-all ${
-                    unlocked ? "border-red-100 hover:border-red-300 hover:shadow-md cursor-pointer" : "border-gray-200 opacity-60 cursor-not-allowed"
+                    unlocked
+                      ? "border-red-100 hover:border-red-300 hover:shadow-md cursor-pointer"
+                      : "border-gray-200 opacity-60 cursor-not-allowed"
                   } ${done ? "opacity-70" : ""}`}
                 >
                   <div className="flex items-center gap-4">
-                    <div className={`w-14 h-14 rounded-xl flex items-center justify-center text-3xl ${unlocked ? "bg-red-50" : "bg-gray-100"}`}>
+                    <div
+                      className={`w-14 h-14 rounded-xl flex items-center justify-center text-3xl ${
+                        unlocked ? "bg-red-50" : "bg-gray-100"
+                      }`}
+                    >
                       {unlocked ? receita.image : <Lock className="w-6 h-6 text-gray-400" />}
                     </div>
 
@@ -604,7 +625,10 @@ export default function Alimentacao() {
                   <Button
                     onClick={() => {
                       setShowCameraOptions(false);
-                      cameraInputRef.current?.click();
+                      if (cameraInputRef.current) {
+                        cameraInputRef.current.value = "";
+                        cameraInputRef.current.click();
+                      }
                     }}
                     className="w-full bg-gradient-to-r from-red-500 to-rose-600 hover:from-red-600 hover:to-rose-700 text-white py-5 rounded-xl flex items-center justify-center gap-3"
                   >
@@ -618,7 +642,10 @@ export default function Alimentacao() {
                   <Button
                     onClick={() => {
                       setShowCameraOptions(false);
-                      fileInputRef.current?.click();
+                      if (fileInputRef.current) {
+                        fileInputRef.current.value = "";
+                        fileInputRef.current.click();
+                      }
                     }}
                     variant="outline"
                     className="w-full border-2 border-gray-200 hover:bg-gray-50 py-5 rounded-xl flex items-center justify-center gap-3"
@@ -737,7 +764,11 @@ export default function Alimentacao() {
                       <span className="flex items-center gap-1 text-orange-500">
                         <Flame className="w-4 h-4" /> {selectedReceita.calories} kcal
                       </span>
-                      <span className={`flex items-center gap-1 ${isCompletedToday(selectedReceita) ? "text-gray-300" : "text-yellow-500"}`}>
+                      <span
+                        className={`flex items-center gap-1 ${
+                          isCompletedToday(selectedReceita) ? "text-gray-300" : "text-yellow-500"
+                        }`}
+                      >
                         <Zap className="w-4 h-4" /> +{selectedReceita.xp} XP
                       </span>
                     </div>
