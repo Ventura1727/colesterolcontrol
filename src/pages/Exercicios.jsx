@@ -4,14 +4,14 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   ArrowLeft,
   Dumbbell,
-  Target,
-  CheckCircle2,
-  Flame,
-  Timer,
-  ChevronRight,
-  RefreshCw,
-  Save,
   HeartPulse,
+  Footprints,
+  StretchHorizontal,
+  Target,
+  RefreshCcw,
+  CheckCircle2,
+  ChevronRight,
+  X,
   Info,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -19,240 +19,278 @@ import { Input } from "@/components/ui/input";
 import { supabase } from "@/lib/supabaseClient";
 import { createPageUrl } from "@/utils";
 
-const OBJECTIVE_PRESETS = [
-  { key: "perder_peso", label: "Perder peso", hints: ["emagrecer", "perder peso", "definir", "queimar"] },
-  { key: "melhorar_habitos", label: "Melhorar hábitos", hints: ["habitos", "hábitos", "saúde", "saude", "bem-estar", "rotina"] },
-  { key: "hipertrofia", label: "Hipertrofia", hints: ["hipertrofia", "massa", "ganhar massa", "fortalecer", "musculo", "músculo"] },
-  { key: "reduzir_colesterol", label: "Reduzir colesterol", hints: ["colesterol", "ldl", "hdl", "cardio"] },
+/**
+ * Objetivos suportados (sem rota /quiz).
+ * O “quiz” vira simplesmente o campo `objetivo` no profiles (ou user_profiles).
+ */
+const OBJETIVOS = [
+  { id: "melhorar_habitos", label: "Melhorar hábitos", hint: "Consistência + leve/moderado" },
+  { id: "perder_peso", label: "Perder peso", hint: "Cardio + força em circuito" },
+  { id: "hipertrofia", label: "Hipertrofia", hint: "Força progressiva" },
+  { id: "condicionamento", label: "Condicionamento", hint: "Resistência e fôlego" },
+  { id: "mobilidade", label: "Mobilidade", hint: "Alongamento e amplitude" },
 ];
 
-function normalizeText(s) {
-  return String(s || "")
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/\p{Diacritic}/gu, "")
-    .trim();
+function normalizeObjetivo(raw) {
+  const s = (raw || "").toString().trim().toLowerCase();
+  if (!s) return null;
+
+  if (s.includes("perder") || s.includes("emag")) return "perder_peso";
+  if (s.includes("hipertrof") || s.includes("massa")) return "hipertrofia";
+  if (s.includes("condicion") || s.includes("fôlego") || s.includes("cardio")) return "condicionamento";
+  if (s.includes("mobil") || s.includes("along")) return "mobilidade";
+  if (s.includes("hábito") || s.includes("habito") || s.includes("rotina")) return "melhorar_habitos";
+
+  // fallback: tenta match por label
+  const found = OBJETIVOS.find((o) => o.label.toLowerCase() === s);
+  return found?.id ?? "melhorar_habitos";
 }
 
-function inferObjectiveKey(objetivoRaw) {
-  const v = normalizeText(objetivoRaw);
-  if (!v) return null;
-
-  for (const p of OBJECTIVE_PRESETS) {
-    if (p.hints.some((h) => v.includes(normalizeText(h)))) return p.key;
-  }
-
-  // fallback leve
-  if (v.includes("peso") || v.includes("emagre")) return "perder_peso";
-  if (v.includes("hiper") || v.includes("massa") || v.includes("mus")) return "hipertrofia";
-  if (v.includes("colesterol") || v.includes("ldl") || v.includes("cardio")) return "reduzir_colesterol";
-  if (v.includes("hab") || v.includes("saud") || v.includes("rotina")) return "melhorar_habitos";
-  return "melhorar_habitos";
+function objetivoLabel(objId) {
+  return OBJETIVOS.find((o) => o.id === objId)?.label ?? "Não definido";
 }
 
-function buildPlan(objectiveKey) {
-  // Conteúdo “explicável”, simples e coerente (sem promessas médicas).
-  // Cada bloco tem: tipo, duração, intensidade, por que.
-  switch (objectiveKey) {
+/**
+ * Planos baseados em boas práticas gerais (educativo, não médico)
+ * Cada objetivo gera 3 cards principais + recomendação semanal.
+ */
+function buildPlan(objId) {
+  const common = {
+    disclaimer:
+      "Essas sugestões são educativas e baseadas em práticas comuns de treino. Se você tiver restrições médicas, adapte com um profissional.",
+  };
+
+  switch (objId) {
     case "perder_peso":
       return {
-        title: "Plano focado em Perda de Peso",
-        subtitle: "Cardio + força total do corpo para aumentar gasto calórico.",
-        blocks: [
+        ...common,
+        headline: "Plano focado em Perder Peso",
+        cards: [
           {
-            name: "Treino A (Full Body + Cardio leve)",
-            duration: "35–45 min",
-            intensity: "Moderada",
-            why: "Combina força (manter massa magra) + gasto calórico com cardio.",
+            key: "treino_a",
+            icon: Dumbbell,
+            title: "Treino A (Circuito Full Body)",
+            duration: "25–40 min",
+            intensity: "Leve/Moderada",
+            desc: "Força em circuito + pouco descanso para elevar gasto calórico.",
             items: [
-              "Agachamento (3x10)",
-              "Remada (3x10)",
-              "Flexão (3x8–12)",
+              "Agachamento (3x10–12)",
+              "Flexão inclinada (3x8–12)",
+              "Remada elástica (3x10–12)",
+              "Afundo alternado (3x10 cada perna)",
               "Prancha (3x30–45s)",
-              "Caminhada rápida (10–15 min)",
             ],
           },
           {
-            name: "Treino B (HIIT leve / intervalado)",
-            duration: "20–30 min",
-            intensity: "Moderada/Alta (ajustável)",
-            why: "Intervalos aumentam o consumo de energia no dia (sem precisar ser extremo).",
-            items: [
-              "Aquecimento 5 min",
-              "8–10 ciclos: 30s rápido + 60s leve",
-              "Desaceleração 5 min",
-              "Alongamento 3–5 min",
-            ],
-          },
-          {
-            name: "Treino C (Força + core)",
-            duration: "30–40 min",
+            key: "cardio",
+            icon: Footprints,
+            title: "Cardio (caminhada rápida)",
+            duration: "25–45 min",
             intensity: "Moderada",
-            why: "Força consistente melhora composição corporal e reduz risco de lesões.",
-            items: [
-              "Levantamento terra com halter (3x8–10)",
-              "Desenvolvimento ombro (3x10)",
-              "Avanço/lunge (3x10 cada perna)",
-              "Abdominal dead bug (3x10)",
-            ],
+            desc: "Zona confortável (consegue falar frases curtas).",
+            items: ["Caminhada contínua", "Opcional: 5x (1 min mais rápido / 2 min normal)"],
+          },
+          {
+            key: "mobilidade",
+            icon: StretchHorizontal,
+            title: "Mobilidade curta",
+            duration: "8–12 min",
+            intensity: "Leve",
+            desc: "Diminui tensão e melhora qualidade do movimento.",
+            items: ["Alongar peitoral e quadril", "Mobilidade coluna torácica", "Panturrilha e posterior"],
           },
         ],
-        weekly: [
-          "3 treinos/semana (A, B, C)",
-          "Caminhada 20–30 min em 2 dias extras (opcional)",
-          "Progredir: +1 série ou +5% de carga a cada 1–2 semanas",
-        ],
+        weekly: ["4 sessões/semana (2 força + 2 cardio)", "Meta: +5 min cardio/sem ou +1 série em 1 exercício"],
       };
 
     case "hipertrofia":
       return {
-        title: "Plano focado em Hipertrofia",
-        subtitle: "Força com progressão + volume semanal organizado.",
-        blocks: [
+        ...common,
+        headline: "Plano focado em Hipertrofia",
+        cards: [
           {
-            name: "Treino A (Peito + Tríceps)",
-            duration: "45–60 min",
-            intensity: "Moderada/Alta",
-            why: "Split clássico para aumentar volume por grupo muscular com qualidade.",
-            items: [
-              "Supino (4x6–10)",
-              "Crucifixo (3x10–12)",
-              "Paralelas ou tríceps banco (3x8–12)",
-              "Tríceps corda (3x10–12)",
-              "Core: prancha (3x45s)",
-            ],
-          },
-          {
-            name: "Treino B (Costas + Bíceps)",
-            duration: "45–60 min",
-            intensity: "Moderada/Alta",
-            why: "Puxadas/Remadas para dorsais + bíceps com sobrecarga gradual.",
-            items: [
-              "Puxada na barra/polia (4x6–10)",
-              "Remada (4x8–10)",
-              "Face pull (3x12–15)",
-              "Rosca direta (3x8–12)",
-              "Rosca martelo (2–3x10–12)",
-            ],
-          },
-          {
-            name: "Treino C (Pernas + Ombro)",
-            duration: "50–70 min",
-            intensity: "Moderada/Alta",
-            why: "Grandes grupamentos (pernas) + ombros para equilíbrio e ganho global.",
+            key: "treino_a",
+            icon: Dumbbell,
+            title: "Treino A (Força Progressiva)",
+            duration: "35–55 min",
+            intensity: "Moderada",
+            desc: "Volume e progressão (aumentar repetições/carga ao longo das semanas).",
             items: [
               "Agachamento (4x6–10)",
-              "Stiff/RDL (3x8–10)",
-              "Leg press (3x10–12)",
-              "Elevação lateral (3x12–15)",
-              "Desenvolvimento (3x8–10)",
+              "Flexão/ Supino (4x6–12)",
+              "Remada (4x8–12)",
+              "Elevação pélvica (3x10–12)",
+              "Core: prancha (3x45–60s)",
             ],
           },
+          {
+            key: "treino_b",
+            icon: Dumbbell,
+            title: "Treino B (Ênfase superiores)",
+            duration: "35–55 min",
+            intensity: "Moderada",
+            desc: "Mais estímulo para costas/peito/braços.",
+            items: [
+              "Remada (4x8–12)",
+              "Flexão (4x8–15)",
+              "Desenvolvimento ombro (3x8–12)",
+              "Rosca bíceps (3x10–12)",
+              "Tríceps (3x10–12)",
+            ],
+          },
+          {
+            key: "recuperacao",
+            icon: HeartPulse,
+            title: "Recuperação ativa",
+            duration: "15–25 min",
+            intensity: "Leve",
+            desc: "Ajuda a manter consistência sem estourar fadiga.",
+            items: ["Caminhada leve", "Mobilidade 10 min", "Sono e hidratação como prioridade"],
+          },
         ],
-        weekly: [
-          "3–4 treinos/semana (A, B, C, opcional repetir o mais fraco)",
-          "Progredir: quando bater topo de reps, subir carga",
-          "Descanso 60–120s nos multiarticulares",
-        ],
+        weekly: ["3–4 sessões/semana (A/B alternando)", "Meta: +1 rep por semana até o topo do range, depois aumenta carga"],
       };
 
-    case "reduzir_colesterol":
+    case "condicionamento":
       return {
-        title: "Plano focado em Redução de Colesterol",
-        subtitle: "Aeróbico moderado consistente + força 2–3x/semana.",
-        blocks: [
+        ...common,
+        headline: "Plano focado em Condicionamento",
+        cards: [
           {
-            name: "Aeróbico Moderado",
-            duration: "30–45 min",
-            intensity: "Moderada (consegue falar frases curtas)",
-            why: "Consistência em aeróbico moderado é útil para saúde cardiovascular.",
-            items: [
-              "Caminhada rápida / bike / elíptico",
-              "Ritmo contínuo",
-              "Finalizar com 5 min leve",
-            ],
+            key: "intervalado",
+            icon: Footprints,
+            title: "Cardio intervalado leve",
+            duration: "20–30 min",
+            intensity: "Moderada",
+            desc: "Melhora fôlego sem ser agressivo.",
+            items: ["5 min aquecimento", "8x (1 min rápido + 1 min leve)", "5 min desaquecimento"],
           },
           {
-            name: "Força Essencial (Full Body)",
-            duration: "30–40 min",
+            key: "forca_base",
+            icon: Dumbbell,
+            title: "Força básica",
+            duration: "25–35 min",
             intensity: "Leve/Moderada",
-            why: "Força ajuda metabolismo e saúde geral sem exigir alta intensidade.",
-            items: [
-              "Agachamento (3x10)",
-              "Remada (3x10)",
-              "Flexão (3x8–12)",
-              "Elevação pélvica (3x12)",
-              "Alongamento 5 min",
-            ],
+            desc: "Base muscular para sustentar evolução do cardio.",
+            items: ["Agachamento (3x10)", "Remada (3x10)", "Flexão (3x8–12)", "Prancha (3x30–45s)"],
           },
           {
-            name: "Mobilidade / Recuperação",
-            duration: "15–20 min",
+            key: "mobilidade",
+            icon: StretchHorizontal,
+            title: "Mobilidade + respiração",
+            duration: "10–15 min",
             intensity: "Leve",
-            why: "Melhora adesão e reduz dores — mantém o hábito.",
-            items: [
-              "Mobilidade quadril/tornozelo",
-              "Alongamento posterior",
-              "Respiração 2–3 min",
-            ],
+            desc: "Melhora relaxamento e padrão respiratório.",
+            items: ["Alongamento de quadril", "Torácica", "Respiração diafragmática 3–5 min"],
           },
         ],
-        weekly: [
-          "Aeróbico 3–5x/semana",
-          "Força 2–3x/semana",
-          "Aumentar duração do aeróbico gradualmente (+5 min/semana)",
+        weekly: ["4 sessões/semana (2 cardio + 2 força)", "Meta: +1 intervalo por semana ou +2 min total"],
+      };
+
+    case "mobilidade":
+      return {
+        ...common,
+        headline: "Plano focado em Mobilidade",
+        cards: [
+          {
+            key: "rotina_mob",
+            icon: StretchHorizontal,
+            title: "Rotina diária (mobilidade)",
+            duration: "10–15 min",
+            intensity: "Leve",
+            desc: "Amplitude + postura para reduzir dores e rigidez.",
+            items: ["Coluna torácica", "Quadril", "Tornozelo", "Peitoral"],
+          },
+          {
+            key: "forca_suave",
+            icon: Dumbbell,
+            title: "Força suave",
+            duration: "20–30 min",
+            intensity: "Leve",
+            desc: "Fortalece sem travar. Priorize controle do movimento.",
+            items: ["Agachamento lento (3x8–10)", "Remada elástica (3x10)", "Ponte glútea (3x12)", "Prancha (3x30s)"],
+          },
+          {
+            key: "caminhada",
+            icon: Footprints,
+            title: "Caminhada leve",
+            duration: "15–30 min",
+            intensity: "Leve",
+            desc: "Circulação + consistência.",
+            items: ["Passo confortável", "Foco em regularidade"],
+          },
         ],
+        weekly: ["5–6 sessões/semana (curtas)", "Meta: +2 min na rotina de mobilidade a cada semana"],
       };
 
     case "melhorar_habitos":
     default:
       return {
-        title: "Plano focado em Melhorar Hábitos",
-        subtitle: "Rotina simples: consistência > intensidade.",
-        blocks: [
+        ...common,
+        headline: "Plano focado em Melhorar Hábitos",
+        cards: [
           {
-            name: "Treino A (Força Básica)",
+            key: "forca_base",
+            icon: Dumbbell,
+            title: "Treino A (Força Básica)",
             duration: "25–35 min",
             intensity: "Leve/Moderada",
-            why: "Base para postura, dor lombar, energia e confiança.",
-            items: [
-              "Agachamento com peso do corpo (3x12)",
-              "Remada elástica (3x12)",
-              "Flexão inclinada (3x8–12)",
-              "Prancha (3x30s)",
-            ],
+            desc: "Base para postura, energia e confiança.",
+            items: ["Agachamento com peso do corpo (3x12)", "Remada elástica (3x12)", "Flexão inclinada (3x8–12)", "Prancha (3x30s)"],
           },
           {
-            name: "Cardio leve (caminhada)",
+            key: "cardio_leve",
+            icon: Footprints,
+            title: "Cardio leve (caminhada)",
             duration: "20–30 min",
             intensity: "Leve/Moderada",
-            why: "Fácil de manter e tem ótimo custo-benefício para saúde.",
+            desc: "Fácil de manter e ótimo custo-benefício para saúde.",
             items: ["Caminhada contínua", "Sem sofrimento: manter regularidade"],
           },
           {
-            name: "Mobilidade curta",
+            key: "mobilidade",
+            icon: StretchHorizontal,
+            title: "Mobilidade curta",
             duration: "8–12 min",
             intensity: "Leve",
-            why: "Reduz tensão e melhora qualidade do movimento.",
+            desc: "Reduz tensão e melhora qualidade do movimento.",
             items: ["Alongar peitoral e quadril", "Mobilidade coluna torácica"],
           },
         ],
-        weekly: [
-          "3 sessões/semana (A + caminhada + mobilidade)",
-          "Meta: 1% melhor por semana (mais 1 série, 5 min a mais, etc.)",
-        ],
+        weekly: ["3 sessões/semana (força + caminhada + mobilidade)", "Meta: 1% melhor por semana (mais 1 série, +5 min, etc.)"],
       };
   }
 }
 
+function toNumberOrNull(v) {
+  if (v == null) return null;
+  const s = String(v).trim().replace(",", ".");
+  if (!s) return null;
+  const n = Number(s);
+  return Number.isFinite(n) ? n : null;
+}
+
 export default function Exercicios() {
   const [loading, setLoading] = useState(true);
-  const [savingObjective, setSavingObjective] = useState(false);
 
-  const [profile, setProfile] = useState(null);
+  const [userEmail, setUserEmail] = useState("");
+  const [profileRow, setProfileRow] = useState(null); // public.profiles (tem objetivo? pode ter)
+  const [userProfileRow, setUserProfileRow] = useState(null); // user_profiles (quiz/objetivo etc)
 
-  const [showObjectiveModal, setShowObjectiveModal] = useState(false);
-  const [objectiveDraft, setObjectiveDraft] = useState("");
+  const [showGoalModal, setShowGoalModal] = useState(false);
+  const [goalDraft, setGoalDraft] = useState("melhorar_habitos");
+
+  const [showCustomize, setShowCustomize] = useState(false);
+  const [customizePlanKey, setCustomizePlanKey] = useState(null);
+
+  // Personalização simples (UI-only)
+  const [custom, setCustom] = useState({
+    nivel: "iniciante", // iniciante | intermediario | avancado
+    diasSemana: 3,
+    tempoMin: 30,
+    local: "casa", // casa | academia
+    limitacoes: "",
+  });
 
   useEffect(() => {
     (async () => {
@@ -261,75 +299,101 @@ export default function Exercicios() {
 
         const { data: sessionData } = await supabase.auth.getSession();
         const session = sessionData?.session;
-
         if (!session?.user) {
           window.location.href = `/login?next=${encodeURIComponent("/exercicios")}`;
           return;
         }
 
-        const { data: prof, error } = await supabase
-          .from("profiles")
-          .select("id, objetivo, xp_total, rank")
-          .eq("id", session.user.id)
-          .maybeSingle();
+        setUserEmail(session.user.email || "");
 
-        if (!error && prof) {
-          setProfile(prof);
-          setObjectiveDraft(prof?.objetivo || "");
-        } else if (!error && !prof) {
-          // garante profile mínimo pra não quebrar
-          const { data: created } = await supabase
+        // 1) profiles (fonte do guard/premium) — pode conter objetivo também
+        let prof = null;
+        try {
+          const { data, error } = await supabase
             .from("profiles")
-            .upsert({ id: session.user.id }, { onConflict: "id" })
-            .select("id, objetivo, xp_total, rank")
-            .single();
-
-          setProfile(created || { id: session.user.id, objetivo: "" });
-          setObjectiveDraft(created?.objetivo || "");
-        } else {
-          setProfile({ id: session.user.id, objetivo: "" });
+            .select("id, objetivo")
+            .eq("id", session.user.id)
+            .maybeSingle();
+          if (!error && data) prof = data;
+        } catch {
+          prof = null;
         }
+
+        // 2) user_profiles (dados ricos)
+        let up = null;
+        try {
+          const { data, error } = await supabase
+            .from("user_profiles")
+            .select("id, objetivo")
+            .eq("id", session.user.id)
+            .maybeSingle();
+          if (!error && data) up = data;
+        } catch {
+          up = null;
+        }
+
+        setProfileRow(prof);
+        setUserProfileRow(up);
+
+        // define draft inicial
+        const existingRaw = up?.objetivo ?? prof?.objetivo ?? "";
+        const normalized = normalizeObjetivo(existingRaw) || "melhorar_habitos";
+        setGoalDraft(normalized);
       } finally {
         setLoading(false);
       }
     })();
   }, []);
 
-  const objectiveKey = useMemo(() => inferObjectiveKey(profile?.objetivo), [profile?.objetivo]);
-  const plan = useMemo(() => buildPlan(objectiveKey), [objectiveKey]);
+  const objetivoId = useMemo(() => {
+    const raw = userProfileRow?.objetivo ?? profileRow?.objetivo ?? "";
+    return normalizeObjetivo(raw);
+  }, [userProfileRow, profileRow]);
 
-  const objectiveLabel = useMemo(() => {
-    const key = objectiveKey || "melhorar_habitos";
-    return OBJECTIVE_PRESETS.find((p) => p.key === key)?.label || "Melhorar hábitos";
-  }, [objectiveKey]);
+  const objetivoAtualLabel = objetivoLabel(objetivoId);
+  const plan = useMemo(() => buildPlan(objetivoId || "melhorar_habitos"), [objetivoId]);
 
-  async function saveObjective(newObjectiveText) {
-    const trimmed = String(newObjectiveText || "").trim();
-    setSavingObjective(true);
+  async function saveObjetivo(newObjId) {
+    const newLabel = objetivoLabel(newObjId);
+
+    const { data: sessionData } = await supabase.auth.getSession();
+    const session = sessionData?.session;
+    if (!session?.user) throw new Error("Sessão expirada. Faça login novamente.");
+
+    const userId = session.user.id;
+
+    // salva em user_profiles (preferencial) e também em profiles (para consistência com outras telas)
+    try {
+      await supabase.from("user_profiles").upsert({ id: userId, objetivo: newLabel }, { onConflict: "id" });
+    } catch {
+      // ignore
+    }
 
     try {
-      const { data: sessionData } = await supabase.auth.getSession();
-      const session = sessionData?.session;
-      if (!session?.user) throw new Error("Sessão expirada.");
-
-      const payload = {
-        id: session.user.id,
-        objetivo: trimmed ? trimmed : null,
-        updated_at: new Date().toISOString(),
-      };
-
-      const { error } = await supabase.from("profiles").upsert(payload, { onConflict: "id" });
-      if (error) throw error;
-
-      setProfile((p) => ({ ...(p || {}), id: session.user.id, objetivo: trimmed }));
-      setShowObjectiveModal(false);
-    } catch (e) {
-      console.error("Save objective error:", e);
-      alert(e?.message || "Erro ao salvar objetivo.");
-    } finally {
-      setSavingObjective(false);
+      await supabase.from("profiles").upsert({ id: userId, objetivo: newLabel }, { onConflict: "id" });
+    } catch {
+      // ignore
     }
+
+    // atualiza estado local
+    setUserProfileRow((p) => ({ ...(p || { id: userId }), objetivo: newLabel }));
+    setProfileRow((p) => ({ ...(p || { id: userId }), objetivo: newLabel }));
   }
+
+  function openCustomize(cardKey) {
+    setCustomizePlanKey(cardKey);
+    setShowCustomize(true);
+  }
+
+  // Ajusta “texto” do plano baseado na personalização (UI-only)
+  const customizationSummary = useMemo(() => {
+    const dias = Math.min(Math.max(toNumberOrNull(custom.diasSemana) || 3, 1), 7);
+    const tempo = Math.min(Math.max(toNumberOrNull(custom.tempoMin) || 30, 10), 120);
+    const nivel = (custom.nivel || "iniciante").toLowerCase();
+    const local = (custom.local || "casa").toLowerCase();
+
+    return { dias, tempo, nivel, local };
+  }, [custom]);
 
   if (loading) {
     return (
@@ -345,236 +409,366 @@ export default function Exercicios() {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-indigo-50">
-      <div className="max-w-5xl mx-auto px-4 pt-6 pb-24">
+      <div className="max-w-6xl mx-auto px-4 pt-6 pb-24">
         {/* Header */}
-        <div className="flex items-center gap-3 mb-6">
-          <button
-            onClick={() => (window.location.href = createPageUrl("Dashboard"))}
-            className="w-10 h-10 rounded-xl bg-white border border-gray-200 flex items-center justify-center"
-          >
-            <ArrowLeft className="w-5 h-5 text-gray-600" />
-          </button>
-          <div className="flex-1">
-            <h1 className="text-xl font-bold text-gray-900">Exercícios</h1>
-            <p className="text-sm text-gray-500">Treinos coerentes com seu objetivo</p>
+        <div className="flex items-center justify-between gap-4 mb-6">
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => (window.location.href = createPageUrl("Dashboard"))}
+              className="w-10 h-10 rounded-xl bg-white border border-gray-200 flex items-center justify-center"
+            >
+              <ArrowLeft className="w-5 h-5 text-gray-600" />
+            </button>
+            <div>
+              <h1 className="text-xl font-bold text-gray-900">Exercícios</h1>
+              <p className="text-sm text-gray-500">Treinos coerentes com seu objetivo</p>
+            </div>
           </div>
 
           <Button
-            onClick={() => setShowObjectiveModal(true)}
+            onClick={() => setShowGoalModal(true)}
             variant="outline"
-            className="border-gray-200"
+            className="rounded-xl"
           >
-            <RefreshCw className="w-4 h-4 mr-2" />
+            <RefreshCcw className="w-4 h-4 mr-2" />
             Redefinir objetivo
           </Button>
         </div>
 
-        {/* Objetivo atual */}
+        {/* Card objetivo */}
         <div className="bg-white rounded-2xl p-5 border border-gray-100 shadow-sm mb-5">
-          <div className="flex items-start justify-between gap-3">
+          <div className="flex items-start justify-between gap-4">
             <div>
-              <div className="flex items-center gap-2 text-sm text-gray-500">
-                <Target className="w-4 h-4 text-emerald-600" />
+              <div className="text-sm text-gray-500 flex items-center gap-2">
+                <Target className="w-4 h-4" />
                 Objetivo atual
               </div>
-              <div className="text-xl font-bold text-gray-900 mt-1">{objectiveLabel}</div>
+              <div className="text-2xl font-bold text-gray-900 mt-1">{objetivoAtualLabel}</div>
               <div className="text-sm text-gray-600 mt-1">
-                {profile?.objetivo ? (
-                  <span className="font-medium">“{profile.objetivo}”</span>
+                {objetivoId ? (
+                  OBJETIVOS.find((o) => o.id === objetivoId)?.hint
                 ) : (
-                  <span className="text-gray-500">Não definido — recomendamos escolher um objetivo para personalizar melhor.</span>
+                  "Não definido — recomendamos escolher um objetivo para personalizar melhor."
                 )}
               </div>
-            </div>
 
-            <div className="bg-indigo-50 border border-indigo-100 rounded-xl p-3">
-              <div className="flex items-center gap-2 text-indigo-800 text-sm font-semibold">
-                <Dumbbell className="w-4 h-4" />
-                Plano sugerido
+              <div className="mt-3 flex items-start gap-2 text-xs text-gray-500">
+                <Info className="w-4 h-4 mt-0.5" />
+                <div>{plan.disclaimer}</div>
               </div>
-              <div className="text-xs text-indigo-700 mt-1">{plan?.title}</div>
             </div>
-          </div>
 
-          <div className="mt-4 flex items-start gap-2 text-xs text-gray-500">
-            <Info className="w-4 h-4 mt-0.5" />
-            <p>
-              Essas sugestões são educativas e baseadas em práticas comuns de treino. Se você tiver restrições médicas,
-              adapte com um profissional.
-            </p>
+            <div className="bg-indigo-50 border border-indigo-100 rounded-xl p-4 min-w-[220px] hidden md:block">
+              <div className="text-xs text-indigo-700 font-semibold mb-1">Plano sugerido</div>
+              <div className="text-sm text-indigo-900">{plan.headline}</div>
+              <div className="text-xs text-indigo-700 mt-2">
+                {customizationSummary.dias}x/sem • {customizationSummary.tempo} min • {customizationSummary.local}
+              </div>
+            </div>
           </div>
         </div>
 
-        {/* Plano */}
+        {/* Cards do plano */}
         <div className="grid lg:grid-cols-3 gap-4 mb-6">
-          {(plan?.blocks || []).map((b, idx) => (
-            <motion.div
-              key={b.name}
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: idx * 0.05 }}
-              className="bg-white rounded-2xl p-5 border border-gray-100 shadow-sm"
-            >
-              <div className="flex items-start justify-between gap-3 mb-3">
-                <div>
-                  <div className="font-semibold text-gray-900">{b.name}</div>
-                  <div className="text-xs text-gray-500 mt-1">{b.why}</div>
+          {plan.cards.map((c) => {
+            const Icon = c.icon;
+            return (
+              <div key={c.key} className="bg-white rounded-2xl p-5 border border-gray-100 shadow-sm">
+                <div className="flex items-center justify-between mb-3">
+                  <div className="flex items-center gap-2">
+                    <Icon className="w-5 h-5 text-indigo-700" />
+                    <div className="font-semibold text-gray-900">{c.title}</div>
+                  </div>
+                  <div className="text-xs text-gray-500">{c.duration}</div>
                 </div>
-                <div className="text-right">
-                  <div className="inline-flex items-center gap-1 text-xs bg-slate-50 border border-slate-100 rounded-full px-2 py-1 text-slate-700">
-                    <Timer className="w-3 h-3" />
-                    {b.duration}
-                  </div>
-                  <div className="mt-2 inline-flex items-center gap-1 text-xs bg-rose-50 border border-rose-100 rounded-full px-2 py-1 text-rose-700">
-                    <Flame className="w-3 h-3" />
-                    {b.intensity}
-                  </div>
+
+                <div className="text-sm text-gray-600 mb-3">{c.desc}</div>
+
+                <div className="inline-flex items-center gap-2 text-xs px-2 py-1 rounded-full border bg-slate-50 text-slate-700 mb-3">
+                  <HeartPulse className="w-3 h-3" />
+                  Intensidade: {c.intensity}
                 </div>
-              </div>
 
-              <div className="space-y-2">
-                {(b.items || []).map((it, i) => (
-                  <div key={i} className="flex items-start gap-2 text-sm text-gray-700">
-                    <CheckCircle2 className="w-4 h-4 text-emerald-600 mt-0.5 flex-shrink-0" />
-                    <span>{it}</span>
-                  </div>
-                ))}
-              </div>
+                <ul className="space-y-2 text-sm">
+                  {c.items.map((it, idx) => (
+                    <li key={idx} className="flex items-start gap-2 text-gray-700">
+                      <CheckCircle2 className="w-4 h-4 text-emerald-600 mt-0.5" />
+                      <span>{it}</span>
+                    </li>
+                  ))}
+                </ul>
 
-              <Button
-                onClick={() => alert("Por enquanto é só UI (sem salvar logs). Em seguida podemos criar logs de treino no Supabase.")}
-                variant="outline"
-                className="mt-4 w-full"
-              >
-                Personalizar treino <ChevronRight className="w-4 h-4 ml-1" />
-              </Button>
-            </motion.div>
-          ))}
+                <Button
+                  onClick={() => openCustomize(c.key)}
+                  variant="outline"
+                  className="mt-4 w-full"
+                >
+                  Personalizar treino <ChevronRight className="w-4 h-4 ml-1" />
+                </Button>
+              </div>
+            );
+          })}
         </div>
 
-        {/* Recomendações semana */}
-        <div className="bg-white rounded-2xl p-5 border border-gray-100 shadow-sm mb-6">
+        {/* Recomendação semanal */}
+        <div className="bg-white rounded-2xl p-5 border border-gray-100 shadow-sm">
           <div className="flex items-center gap-2 mb-3">
             <HeartPulse className="w-5 h-5 text-rose-600" />
             <div className="font-semibold text-gray-900">Recomendação semanal</div>
           </div>
 
           <div className="grid md:grid-cols-2 gap-3">
-            {(plan?.weekly || []).map((w, idx) => (
-              <div key={idx} className="bg-slate-50 border border-slate-100 rounded-xl p-4 text-sm text-gray-700">
-                {w}
-              </div>
-            ))}
-          </div>
-
-          <div className="mt-4 text-xs text-gray-500">
-            Dica: se o usuário quer mudar objetivo (ex: de “perder peso” para “melhorar hábitos”), isso é normal — o app deve ajustar as sugestões automaticamente.
+            <div className="bg-slate-50 border border-slate-100 rounded-xl p-4 text-sm text-gray-700">
+              {plan.weekly[0]}
+            </div>
+            <div className="bg-slate-50 border border-slate-100 rounded-xl p-4 text-sm text-gray-700">
+              {plan.weekly[1]}
+            </div>
           </div>
         </div>
-      </div>
 
-      {/* Modal redefinir objetivo */}
-      <AnimatePresence>
-        {showObjectiveModal && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4"
-            onClick={() => !savingObjective && setShowObjectiveModal(false)}
-          >
+        {/* Modal: Redefinir objetivo */}
+        <AnimatePresence>
+          {showGoalModal && (
             <motion.div
-              initial={{ scale: 0.96, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              exit={{ scale: 0.96, opacity: 0 }}
-              onClick={(e) => e.stopPropagation()}
-              className="bg-white rounded-3xl w-full max-w-md overflow-hidden"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4"
+              onClick={() => setShowGoalModal(false)}
             >
-              <div className="p-6">
-                <div className="flex items-start justify-between gap-3 mb-4">
+              <motion.div
+                initial={{ scale: 0.95, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                exit={{ scale: 0.95, opacity: 0 }}
+                onClick={(e) => e.stopPropagation()}
+                className="bg-white rounded-3xl w-full max-w-lg overflow-hidden"
+              >
+                <div className="p-6 border-b border-gray-100 flex items-center justify-between">
                   <div>
                     <div className="text-lg font-bold text-gray-900">Redefinir objetivo</div>
-                    <div className="text-sm text-gray-500">Isso ajusta automaticamente as sugestões de treino.</div>
+                    <div className="text-sm text-gray-500">
+                      Isso muda as sugestões de treino automaticamente.
+                    </div>
                   </div>
-                  {!savingObjective && (
-                    <button
-                      onClick={() => setShowObjectiveModal(false)}
-                      className="text-gray-400 hover:text-gray-600"
-                    >
-                      ✕
-                    </button>
-                  )}
+                  <button
+                    className="w-10 h-10 rounded-xl border border-gray-200 flex items-center justify-center"
+                    onClick={() => setShowGoalModal(false)}
+                  >
+                    <X className="w-5 h-5 text-gray-500" />
+                  </button>
                 </div>
 
-                <div className="space-y-3">
+                <div className="p-6 space-y-3">
+                  {OBJETIVOS.map((o) => (
+                    <button
+                      key={o.id}
+                      onClick={() => setGoalDraft(o.id)}
+                      className={`w-full text-left rounded-2xl p-4 border transition ${
+                        goalDraft === o.id
+                          ? "border-indigo-300 bg-indigo-50"
+                          : "border-gray-200 bg-white hover:bg-gray-50"
+                      }`}
+                    >
+                      <div className="font-semibold text-gray-900">{o.label}</div>
+                      <div className="text-sm text-gray-500">{o.hint}</div>
+                    </button>
+                  ))}
+
+                  <div className="flex gap-3 pt-2">
+                    <Button
+                      variant="outline"
+                      className="w-full rounded-xl"
+                      onClick={() => setShowGoalModal(false)}
+                    >
+                      Cancelar
+                    </Button>
+                    <Button
+                      className="w-full rounded-xl bg-gradient-to-r from-indigo-600 to-blue-600 hover:from-indigo-700 hover:to-blue-700"
+                      onClick={async () => {
+                        await saveObjetivo(goalDraft);
+                        setShowGoalModal(false);
+                      }}
+                    >
+                      Salvar objetivo
+                    </Button>
+                  </div>
+                </div>
+              </motion.div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* Modal: Personalizar treino (UI-only, sem alert) */}
+        <AnimatePresence>
+          {showCustomize && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4"
+              onClick={() => setShowCustomize(false)}
+            >
+              <motion.div
+                initial={{ scale: 0.95, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                exit={{ scale: 0.95, opacity: 0 }}
+                onClick={(e) => e.stopPropagation()}
+                className="bg-white rounded-3xl w-full max-w-2xl overflow-hidden"
+              >
+                <div className="p-6 border-b border-gray-100 flex items-center justify-between">
                   <div>
-                    <div className="text-sm font-medium text-gray-700 mb-2">Escolha rápida</div>
-                    <div className="grid grid-cols-2 gap-2">
-                      {OBJECTIVE_PRESETS.map((p) => (
-                        <Button
-                          key={p.key}
-                          type="button"
-                          variant="outline"
-                          className="justify-start"
-                          onClick={() => setObjectiveDraft(p.label)}
-                          disabled={savingObjective}
-                        >
-                          <Target className="w-4 h-4 mr-2 text-emerald-600" />
-                          {p.label}
-                        </Button>
-                      ))}
+                    <div className="text-lg font-bold text-gray-900">Personalizar treino</div>
+                    <div className="text-sm text-gray-500">
+                      Ajuste preferências. (Ainda sem salvar logs — apenas UI.)
+                    </div>
+                  </div>
+                  <button
+                    className="w-10 h-10 rounded-xl border border-gray-200 flex items-center justify-center"
+                    onClick={() => setShowCustomize(false)}
+                  >
+                    <X className="w-5 h-5 text-gray-500" />
+                  </button>
+                </div>
+
+                <div className="p-6 grid md:grid-cols-2 gap-4">
+                  <div className="bg-slate-50 border border-slate-100 rounded-2xl p-4">
+                    <div className="font-semibold text-gray-900 mb-3">Preferências</div>
+
+                    <div className="space-y-3">
+                      <div>
+                        <label className="text-sm text-gray-600">Nível</label>
+                        <div className="grid grid-cols-3 gap-2 mt-2">
+                          {["iniciante", "intermediario", "avancado"].map((n) => (
+                            <button
+                              key={n}
+                              onClick={() => setCustom((p) => ({ ...p, nivel: n }))}
+                              className={`py-2 rounded-xl border text-sm ${
+                                custom.nivel === n
+                                  ? "border-indigo-300 bg-indigo-50 text-indigo-900"
+                                  : "border-gray-200 bg-white text-gray-700"
+                              }`}
+                            >
+                              {n === "iniciante" ? "Iniciante" : n === "intermediario" ? "Intermediário" : "Avançado"}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-3">
+                        <div>
+                          <label className="text-sm text-gray-600">Dias/semana</label>
+                          <Input
+                            value={custom.diasSemana}
+                            onChange={(e) => setCustom((p) => ({ ...p, diasSemana: e.target.value }))}
+                            inputMode="numeric"
+                            className="mt-2"
+                            placeholder="Ex: 3"
+                          />
+                        </div>
+                        <div>
+                          <label className="text-sm text-gray-600">Tempo (min)</label>
+                          <Input
+                            value={custom.tempoMin}
+                            onChange={(e) => setCustom((p) => ({ ...p, tempoMin: e.target.value }))}
+                            inputMode="numeric"
+                            className="mt-2"
+                            placeholder="Ex: 30"
+                          />
+                        </div>
+                      </div>
+
+                      <div>
+                        <label className="text-sm text-gray-600">Local</label>
+                        <div className="grid grid-cols-2 gap-2 mt-2">
+                          {[
+                            { id: "casa", label: "Casa" },
+                            { id: "academia", label: "Academia" },
+                          ].map((opt) => (
+                            <button
+                              key={opt.id}
+                              onClick={() => setCustom((p) => ({ ...p, local: opt.id }))}
+                              className={`py-2 rounded-xl border text-sm ${
+                                custom.local === opt.id
+                                  ? "border-indigo-300 bg-indigo-50 text-indigo-900"
+                                  : "border-gray-200 bg-white text-gray-700"
+                              }`}
+                            >
+                              {opt.label}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
+                      <div>
+                        <label className="text-sm text-gray-600">Limitações / observações</label>
+                        <Input
+                          value={custom.limitacoes}
+                          onChange={(e) => setCustom((p) => ({ ...p, limitacoes: e.target.value }))}
+                          className="mt-2"
+                          placeholder="Ex: dor no joelho / sem impacto"
+                        />
+                      </div>
                     </div>
                   </div>
 
-                  <div>
-                    <div className="text-sm font-medium text-gray-700 mb-2">Ou escreva do seu jeito</div>
-                    <Input
-                      value={objectiveDraft}
-                      onChange={(e) => setObjectiveDraft(e.target.value)}
-                      placeholder="Ex: Perder peso / Melhorar hábitos / Hipertrofia"
-                      disabled={savingObjective}
-                    />
+                  <div className="bg-white border border-gray-100 rounded-2xl p-4 shadow-sm">
+                    <div className="font-semibold text-gray-900 mb-2">Resumo (UI)</div>
+                    <div className="text-sm text-gray-600 mb-4">
+                      Card selecionado: <span className="font-semibold">{customizePlanKey || "—"}</span>
+                    </div>
+
+                    <div className="space-y-2 text-sm">
+                      <div className="flex justify-between">
+                        <span className="text-gray-500">Objetivo</span>
+                        <span className="font-semibold text-gray-900">{objetivoAtualLabel}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-gray-500">Frequência</span>
+                        <span className="font-semibold text-gray-900">{customizationSummary.dias}x/sem</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-gray-500">Tempo</span>
+                        <span className="font-semibold text-gray-900">{customizationSummary.tempo} min</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-gray-500">Nível</span>
+                        <span className="font-semibold text-gray-900">{customizationSummary.nivel}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-gray-500">Local</span>
+                        <span className="font-semibold text-gray-900">{customizationSummary.local}</span>
+                      </div>
+                    </div>
+
+                    <div className="mt-4 bg-indigo-50 border border-indigo-100 rounded-xl p-4 text-sm text-indigo-900">
+                      Próximo passo (quando você quiser): salvar preferências e logs de treino no Supabase
+                      para calcular streak/XP por semana.
+                    </div>
+
+                    <div className="flex gap-3 mt-4">
+                      <Button variant="outline" className="w-full rounded-xl" onClick={() => setShowCustomize(false)}>
+                        Fechar
+                      </Button>
+                      <Button
+                        className="w-full rounded-xl bg-gradient-to-r from-indigo-600 to-blue-600 hover:from-indigo-700 hover:to-blue-700"
+                        onClick={() => setShowCustomize(false)}
+                      >
+                        Aplicar (UI)
+                      </Button>
+                    </div>
                   </div>
                 </div>
-
-                <div className="mt-5 space-y-2">
-                  <Button
-                    onClick={() => saveObjective(objectiveDraft)}
-                    disabled={savingObjective}
-                    className="w-full bg-gradient-to-r from-indigo-600 to-blue-600 hover:from-indigo-700 hover:to-blue-700 text-white py-6 rounded-2xl text-lg font-semibold"
-                  >
-                    {savingObjective ? (
-                      <motion.div
-                        animate={{ rotate: 360 }}
-                        transition={{ repeat: Infinity, duration: 1, ease: "linear" }}
-                        className="w-6 h-6 border-2 border-white border-t-transparent rounded-full"
-                      />
-                    ) : (
-                      <>
-                        <Save className="w-5 h-5 mr-2" />
-                        Salvar objetivo
-                      </>
-                    )}
-                  </Button>
-
-                  <Button
-                    onClick={() => setShowObjectiveModal(false)}
-                    disabled={savingObjective}
-                    variant="ghost"
-                    className="w-full text-gray-500"
-                  >
-                    Cancelar
-                  </Button>
-                </div>
-
-                <div className="mt-4 text-xs text-gray-500">
-                  Observação: por enquanto o treino não gera logs. Depois adicionamos uma tabela de “training_logs” com XP e streak.
-                </div>
-              </div>
+              </motion.div>
             </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+          )}
+        </AnimatePresence>
+
+        {/* Rodapé discreto */}
+        <div className="mt-8 text-xs text-gray-500">
+          Logado como: <span className="font-medium">{userEmail || "usuário"}</span>
+        </div>
+      </div>
     </div>
   );
 }
