@@ -21,7 +21,9 @@ export default async function handler(req, res) {
     const supabaseAnonKey = process.env.SUPABASE_ANON_KEY;
 
     if (!supabaseUrl || !supabaseAnonKey) {
-      return res.status(500).json({ error: "Missing SUPABASE_URL or SUPABASE_ANON_KEY" });
+      return res
+        .status(500)
+        .json({ error: "Missing SUPABASE_URL or SUPABASE_ANON_KEY" });
     }
 
     // ✅ Client autenticado com o JWT do usuário
@@ -33,7 +35,7 @@ export default async function handler(req, res) {
       },
     });
 
-    // (opcional) validar usuário
+    // ✅ validar usuário
     const { data: userData, error: authError } = await supabase.auth.getUser();
     const user = userData?.user;
 
@@ -55,29 +57,37 @@ export default async function handler(req, res) {
       return res.status(200).json({ data });
     }
 
-    const body = typeof req.body === "string" ? JSON.parse(req.body) : (req.body || {});
+    // POST
+    const body =
+      typeof req.body === "string" ? JSON.parse(req.body) : req.body || {};
     const { quantidade_ml, data, hora } = body;
 
     if (quantidade_ml == null || !data || !hora) {
       return res.status(400).json({ error: "Campos obrigatórios ausentes" });
     }
 
-    const { error: insertError } = await supabase.from("water_logs").insert([
-      {
-        created_by: user.id,
-        quantidade_ml: Number(quantidade_ml),
-        data,
-        hora,
-      },
-    ]);
+    const payload = {
+      user_id: user.id, // ✅ ESSENCIAL: evita user_id null no banco
+      quantidade_ml: Number(quantidade_ml),
+      data,
+      hora,
+    };
+
+    const { error: insertError } = await supabase
+      .from("water_logs")
+      .insert([payload]);
 
     if (insertError) {
-      return res.status(400).json({ error: insertError.message, details: insertError });
+      return res
+        .status(400)
+        .json({ error: insertError.message, details: insertError });
     }
 
     return res.status(201).json({ message: "Registro inserido com sucesso" });
   } catch (e) {
     console.error("water-log fatal:", e);
-    return res.status(500).json({ error: "Server error", message: e?.message || String(e) });
+    return res
+      .status(500)
+      .json({ error: "Server error", message: e?.message || String(e) });
   }
 }
