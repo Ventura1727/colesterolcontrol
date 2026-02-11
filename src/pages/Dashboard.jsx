@@ -1,5 +1,5 @@
 // src/pages/Dashboard.jsx
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
 import {
   Heart,
@@ -19,7 +19,6 @@ import { createPageUrl } from "@/utils";
 import RankCard from "@/components/dashboard/RankCard";
 import ColesterolTracker from "@/components/dashboard/ColesterolTracker";
 import { supabase } from "@/lib/supabaseClient";
-import { waterLogList } from "@/lib/waterApi";
 
 const features = [
   { id: "nutricionista", title: "Nutricionista IA", desc: "Planos e análise de pratos", icon: Bot, premium: true, page: "Nutricionista" },
@@ -30,14 +29,9 @@ const features = [
   { id: "educacao", title: "Conteúdo", desc: "Artigos sobre saúde", icon: BookOpen, premium: false, page: "Conteudo" },
 ];
 
-function isFutureDate(value) {
-  if (!value) return false;
-  const d = new Date(value);
-  return Number.isFinite(d.getTime()) && d > new Date();
-}
-
 export default function Dashboard() {
-  const [profile, setProfile] = useState(null);
+  const [profile, setProfile] = useState(null);         // dados do user (quiz/idade/etc) -> pode vir de user_profiles
+  const [access, setAccess] = useState({ role: null, plano_ativo: false, premium_until: null, is_premium: null }); // FONTE DO PREMIUM
   const [colesterolRecords, setColesterolRecords] = useState([]);
   const [historicoAgua, setHistoricoAgua] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -52,95 +46,103 @@ export default function Dashboard() {
 
         const { data: sessionData } = await supabase.auth.getSession();
         const session = sessionData?.session;
-        const user = session?.user;
 
-        if (!user) {
+        if (!session?.user) {
           window.location.href = `/login?next=${encodeURIComponent("/dashboard")}`;
           return;
         }
 
-        // 1) PERFIL (fonte única)
-        // Observação: aqui eu assumo que você já tem as colunas no public.profiles:
-        // role, plano_ativo, premium_until, is_premium, objetivo, peso_kg, altura_cm, basal_kcal,
-        // xp_total, rank, metas_concluidas, dias_consecutivos (se alguma não existir, só não mostra).
+        const userId = session.user.id;
+
+        /**
+         * A) FONTE ÚNICA DO PREMIUM (igual ao RequireSubscription do App.jsx):
+         *    public.profiles.role + public.profiles.plano_ativo
+         *    + opcional: premium_until/is_premium (se existirem)
+         */
+        let role = null;
+        let plano_ativo = false;
+        let premium_until = null;
+        let is_premium = null;
+
         const { data: prof, error: profErr } = await supabase
           .from("profiles")
-          .select(`
-            id,
-            role,
-            plano_ativo,
-            plano_tipo,
-            plano_inicio,
-            plano_fim,
-            is_premium,
-            premium_until,
-            objetivo,
-            peso_kg,
-            altura_cm,
-            basal_kcal,
-            meta_agua_litros,
-            rank,
-            xp_total,
-            metas_concluidas,
-            dias_consecutivos
-          `)
-          .eq("id", user.id)
+          .select("role, plano_ativo, premium_until, is_premium")
+          .eq("id", userId)
           .maybeSingle();
 
-        if (profErr) console.error("Dashboard: load profile error:", profErr);
-
-        // Se não existe linha ainda, garante criação mínima (evita telas vazias)
-        let finalProfile = prof || null;
-        if (!finalProfile) {
-          const { data: created, error: upsertErr } = await supabase
+        if (!profErr && prof) {
+          role = prof?.role ?? null;
+          plano_ativo = Boolean(prof?.plano_ativo);
+          premium_until = prof?.premium_until ?? null;
+          is_premium = prof?.is_premium ?? null;
+        } else if (!profErr && !prof) {
+          // garante linha mínima para não quebrar
+          const { data: created } = await supabase
             .from("profiles")
-            .upsert({ id: user.id }, { onConflict: "id" })
-            .select(`
-              id,
-              role,
-              plano_ativo,
-              is_premium,
-              premium_until,
-              objetivo,
-              peso_kg,
-              altura_cm,
-              basal_kcal,
-              meta_agua_litros,
-              rank,
-              xp_total,
-              metas_concluidas,
-              dias_consecutivos
-            `)
+            .upsert({ id: userId }, { onConflict: "id" })
+            .select("role, plano_ativo, premium_until, is_premium")
             .single();
 
-          if (!upsertErr) finalProfile = created;
+          role = created?.role ?? null;
+          plano_ativo = Boolean(created?.plano_ativo);
+          premium_until = created?.premium_until ?? null;
+          is_premium = created?.is_premium ?? null;
+        }
+
+        /**
+         * B) Perfil “rico” (quiz/idade/exercicios/alimentacao etc.)
+         *    Se você usa user_profiles, ok — mas NÃO use isso para premium.
+         *    (Se não existir, não quebra.)
+         */
+        let richProfile = null;
+        try {
+          const { data: up, error: upErr } = await supabase
+            .from("user_profiles")
+            .select("*")
+            .eq("id", userId)
+            .maybeSingle();
+          if (!upErr && up) richProfile = up;
+        } catch {
+          richProfile = null;
+        }
+
+        // fallback: se não existir user_profiles, usa o mínimo
+        if (!richProfile) {
+          richProfile = { id: userId, xp_total: 0, rank: "Iniciante", dias_consecutivos: 0, metas_concluidas: 0 };
         }
 
         if (!mounted) return;
-        setProfile(finalProfile);
 
-        // 2) COLESTEROL (não quebra se tabela não existir)
+        setAccess({ role, plano_ativo, premium_until, is_premium });
+        setProfile(richProfile);
+
+        /**
+         * C) Colesterol (não quebra se tabela não existir)
+         */
         try {
           const { data: recs } = await supabase
             .from("colesterol_records")
             .select("*")
             .order("data_exame", { ascending: false })
             .limit(10);
-
-          if (!mounted) return;
           setColesterolRecords(Array.isArray(recs) ? recs : []);
         } catch {
-          if (!mounted) return;
           setColesterolRecords([]);
         }
 
-        // 3) ÁGUA (usa helper já padronizado)
+        /**
+         * D) Water logs via API (se ok, ótimo; se falhar, não quebra)
+         */
         try {
-          const logs = await waterLogList();
-          if (!mounted) return;
-          setHistoricoAgua(Array.isArray(logs) ? logs : []);
+          const token = session?.access_token;
+          const res = await fetch("/api/water-log", { headers: { Authorization: `Bearer ${token}` } });
+          if (!res.ok) {
+            setHistoricoAgua([]);
+          } else {
+            const data = await res.json().catch(() => []);
+            setHistoricoAgua(Array.isArray(data) ? data : []);
+          }
         } catch {
-          if (!mounted) return;
           setHistoricoAgua([]);
         }
       } finally {
@@ -149,21 +151,22 @@ export default function Dashboard() {
     }
 
     load();
-    return () => {
-      mounted = false;
-    };
+    return () => { mounted = false; };
   }, []);
 
-  // Premium unificado
+  /**
+   * Premium FINAL: baseado na mesma regra do guard (profiles)
+   */
   const isPremium = useMemo(() => {
-    const premiumUntilOk = isFutureDate(profile?.premium_until);
+    const premiumUntilOk = access?.premium_until ? new Date(access.premium_until) > new Date() : false;
+
     return (
-      profile?.role === "admin" ||
-      profile?.plano_ativo === true ||
-      profile?.is_premium === true ||
+      access?.role === "admin" ||
+      access?.plano_ativo === true ||
+      access?.is_premium === true ||
       premiumUntilOk
     );
-  }, [profile]);
+  }, [access]);
 
   const handleFeatureClick = (feature) => {
     if (feature.premium && !isPremium) {
@@ -185,15 +188,16 @@ export default function Dashboard() {
     );
   }
 
-  // Hidratação de hoje (meta vinda do profile)
+  // Hidratação: meta deveria vir do profiles.meta_agua_litros, mas como seu dashboard ainda não busca,
+  // deixo um fallback coerente: se tiver profile.meta_agua_litros no user_profiles, usa. senão 2000ml.
   const hoje = new Date().toISOString().split("T")[0];
   const consumoHoje = (historicoAgua || [])
     .filter((item) => item?.data === hoje)
-    .reduce((total, item) => total + Number(item?.quantidade_ml || 0), 0);
+    .reduce((total, item) => total + (item?.quantidade_ml || 0), 0);
 
-  const metaLitros = Number(profile?.meta_agua_litros || 2.5);
-  const metaDiariaMl = metaLitros * 1000;
-  const progresso = Math.min((consumoHoje / metaDiariaMl) * 100, 100);
+  const metaLitros = Number(profile?.meta_agua_litros || 2.0);
+  const metaDiaria = Math.round(metaLitros * 1000);
+  const progresso = Math.min((consumoHoje / Math.max(metaDiaria, 1)) * 100, 100);
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-red-50 via-white to-rose-50 p-4 pb-24">
@@ -227,7 +231,7 @@ export default function Dashboard() {
           )}
         </div>
 
-        {/* Rank Card - Premium */}
+        {/* Rank Card - Apenas Premium */}
         {isPremium && (
           <RankCard
             profile={profile}
@@ -235,7 +239,7 @@ export default function Dashboard() {
           />
         )}
 
-        {/* Colesterol Tracker - Premium */}
+        {/* Colesterol Tracker - Apenas Premium */}
         {isPremium && (
           <ColesterolTracker
             records={colesterolRecords}
@@ -249,35 +253,19 @@ export default function Dashboard() {
           animate={{ opacity: 1, y: 0 }}
           className="bg-white rounded-2xl p-5 mb-6 border border-gray-100 shadow-sm"
         >
-          <div className="flex items-center justify-between mb-3">
-            <h2 className="font-semibold text-gray-900 flex items-center gap-2">
-              <Droplets className="w-5 h-5 text-blue-600" />
-              Hidratação de Hoje
-            </h2>
-            <button
-              onClick={() => (window.location.href = "/hidratacao")}
-              className="text-sm text-blue-700 hover:underline"
-            >
-              Abrir
-            </button>
-          </div>
-
+          <h2 className="font-semibold text-gray-900 flex items-center gap-2 mb-3">
+            <Droplets className="w-5 h-5 text-blue-600" />
+            Hidratação de Hoje
+          </h2>
           <div className="w-full bg-gray-200 rounded-full h-4 mb-2">
             <div className="bg-blue-500 h-4 rounded-full" style={{ width: `${progresso}%` }} />
           </div>
-
           <p className="text-sm text-gray-700">
-            {consumoHoje}ml / {metaDiariaMl}ml ({metaLitros.toFixed(1)}L)
+            {consumoHoje}ml / {metaDiaria}ml
           </p>
-
-          {!profile?.meta_agua_litros && (
-            <p className="text-xs text-gray-500 mt-2">
-              Dica: preencha peso/altura/basal em <span className="font-semibold">Perfil</span> para calcular a meta automaticamente.
-            </p>
-          )}
         </motion.div>
 
-        {/* Resumo do Perfil (agora baseado no profiles real) */}
+        {/* Resumo do Perfil */}
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
@@ -288,34 +276,22 @@ export default function Dashboard() {
               <Target className="w-5 h-5 text-emerald-600" />
               Seu Perfil
             </h2>
-
-            <Button
-              onClick={() => (window.location.href = "/perfil")}
-              variant="outline"
-              className="h-8 px-3"
-            >
-              Editar
-            </Button>
-          </div>
-
-          <div className="mb-3">
-            <span className="text-xs text-emerald-700 bg-emerald-50 px-2 py-1 rounded-full">
-              Objetivo: {profile?.objetivo || "não definido"}
+            <span className="text-xs text-red-600 bg-red-50 px-2 py-1 rounded-full">
+              {profile?.objetivo || "—"}
             </span>
           </div>
-
           <div className="grid grid-cols-2 gap-3 text-sm">
             <div className="bg-gray-50 rounded-lg p-3">
-              <div className="text-gray-500 text-xs">Peso</div>
-              <div className="font-medium">{profile?.peso_kg ? `${profile.peso_kg} kg` : "—"}</div>
+              <div className="text-gray-500 text-xs">Idade</div>
+              <div className="font-medium">{profile?.idade ? `${profile.idade} anos` : "—"}</div>
             </div>
             <div className="bg-gray-50 rounded-lg p-3">
-              <div className="text-gray-500 text-xs">Altura</div>
-              <div className="font-medium">{profile?.altura_cm ? `${profile.altura_cm} cm` : "—"}</div>
+              <div className="text-gray-500 text-xs">Alimentação</div>
+              <div className="font-medium">{profile?.alimentacao || "—"}</div>
             </div>
             <div className="bg-gray-50 rounded-lg p-3">
-              <div className="text-gray-500 text-xs">Basal</div>
-              <div className="font-medium">{profile?.basal_kcal ? `${profile.basal_kcal} kcal` : "—"}</div>
+              <div className="text-gray-500 text-xs">Exercícios</div>
+              <div className="font-medium">{profile?.exercicios || "—"}</div>
             </div>
             <div className="bg-gray-50 rounded-lg p-3">
               <div className="text-gray-500 text-xs">Dias seguidos</div>
