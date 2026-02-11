@@ -112,7 +112,7 @@ export default function Perfil() {
       if (error) throw error;
 
       alert("✅ Perfil atualizado com sucesso!");
-      window.location.href = "/progresso";
+      window.location.assign("/progresso");
     } catch (e) {
       console.error("Perfil save error:", e);
       alert(e?.message || "Erro ao salvar perfil.");
