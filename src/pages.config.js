@@ -9,10 +9,10 @@ import Hidratacao from './pages/Hidratacao';
 import Home from './pages/Home';
 import Nutricionista from './pages/Nutricionista';
 import Onboarding from './pages/Onboarding';
-import Perfil from './pages/Perfil';
 import Premium from './pages/Premium';
 import Progresso from './pages/Progresso';
 import Vendas from './pages/Vendas';
+import Perfil from './pages/Perfil'; // ✅ ADICIONE
 
 export const PAGES = {
   Alimentacao,
@@ -26,10 +26,10 @@ export const PAGES = {
   Home,
   Nutricionista,
   Onboarding,
-  Perfil,
   Premium,
   Progresso,
   Vendas,
+  Perfil, // ✅ ADICIONE
 };
 
 export const pagesConfig = {
