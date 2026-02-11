@@ -9,29 +9,30 @@ import Hidratacao from './pages/Hidratacao';
 import Home from './pages/Home';
 import Nutricionista from './pages/Nutricionista';
 import Onboarding from './pages/Onboarding';
+import Perfil from './pages/Perfil';
 import Premium from './pages/Premium';
 import Progresso from './pages/Progresso';
 import Vendas from './pages/Vendas';
 
-
 export const PAGES = {
-    "Alimentacao": Alimentacao,
-    "Checkout": Checkout,
-    "Conteudo": Conteudo,
-    "Dashboard": Dashboard,
-    "Diagnostico": Diagnostico,
-    "Exercicios": Exercicios,
-    "FinalizarCompra": FinalizarCompra,
-    "Hidratacao": Hidratacao,
-    "Home": Home,
-    "Nutricionista": Nutricionista,
-    "Onboarding": Onboarding,
-    "Premium": Premium,
-    "Progresso": Progresso,
-    "Vendas": Vendas,
-}
+  Alimentacao,
+  Checkout,
+  Conteudo,
+  Dashboard,
+  Diagnostico,
+  Exercicios,
+  FinalizarCompra,
+  Hidratacao,
+  Home,
+  Nutricionista,
+  Onboarding,
+  Perfil,
+  Premium,
+  Progresso,
+  Vendas,
+};
 
 export const pagesConfig = {
-    mainPage: "Onboarding",
-    Pages: PAGES,
+  mainPage: "Onboarding",
+  Pages: PAGES,
 };
