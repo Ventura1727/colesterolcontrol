@@ -1,3 +1,4 @@
+// src/pages/Dashboard.jsx
 import React, { useState, useEffect, useMemo } from "react";
 import { motion } from "framer-motion";
 import {
@@ -18,64 +19,29 @@ import { createPageUrl } from "@/utils";
 import RankCard from "@/components/dashboard/RankCard";
 import ColesterolTracker from "@/components/dashboard/ColesterolTracker";
 import { supabase } from "@/lib/supabaseClient";
+import { waterLogList } from "@/lib/waterApi";
 
 const features = [
-  {
-    id: "nutricionista",
-    title: "Nutricionista IA",
-    desc: "Planos e análise de pratos",
-    icon: Bot,
-    premium: true,
-    page: "Nutricionista",
-  },
-  {
-    id: "exercicios",
-    title: "Exercícios",
-    desc: "Treinos que liberam XP",
-    icon: Dumbbell,
-    premium: true,
-    page: "Exercicios",
-  },
-  {
-    id: "alimentacao",
-    title: "Receitas",
-    desc: "Pratos anti-colesterol",
-    icon: Salad,
-    premium: true,
-    page: "Alimentacao",
-  },
-  {
-    id: "progresso",
-    title: "Meu Progresso",
-    desc: "Acompanhe sua evolução",
-    icon: TrendingDown,
-    premium: true,
-    page: "Progresso",
-  },
-  {
-    id: "hidratacao",
-    title: "Hidratação",
-    desc: "Calcule sua meta diária",
-    icon: Droplets,
-    premium: true,
-    page: "Hidratacao",
-  },
-  {
-    id: "educacao",
-    title: "Conteúdo",
-    desc: "Artigos sobre saúde",
-    icon: BookOpen,
-    premium: false,
-    page: "Conteudo",
-  },
+  { id: "nutricionista", title: "Nutricionista IA", desc: "Planos e análise de pratos", icon: Bot, premium: true, page: "Nutricionista" },
+  { id: "exercicios", title: "Exercícios", desc: "Treinos que liberam XP", icon: Dumbbell, premium: true, page: "Exercicios" },
+  { id: "alimentacao", title: "Receitas", desc: "Pratos anti-colesterol", icon: Salad, premium: true, page: "Alimentacao" },
+  { id: "progresso", title: "Meu Progresso", desc: "Acompanhe sua evolução", icon: TrendingDown, premium: true, page: "Progresso" },
+  { id: "hidratacao", title: "Hidratação", desc: "Calcule sua meta diária", icon: Droplets, premium: true, page: "Hidratacao" },
+  { id: "educacao", title: "Conteúdo", desc: "Artigos sobre saúde", icon: BookOpen, premium: false, page: "Conteudo" },
 ];
+
+function isFutureDate(value) {
+  if (!value) return false;
+  const d = new Date(value);
+  return Number.isFinite(d.getTime()) && d > new Date();
+}
 
 export default function Dashboard() {
   const [profile, setProfile] = useState(null);
   const [colesterolRecords, setColesterolRecords] = useState([]);
+  const [historicoAgua, setHistoricoAgua] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [showLockedModal, setShowLockedModal] = useState(false);
-  const [historicoAgua, setHistoricoAgua] = useState([]);
 
   useEffect(() => {
     let mounted = true;
@@ -84,141 +50,76 @@ export default function Dashboard() {
       try {
         setIsLoading(true);
 
-        const { data: userData } = await supabase.auth.getUser();
-        const user = userData?.user;
+        const { data: sessionData } = await supabase.auth.getSession();
+        const session = sessionData?.session;
+        const user = session?.user;
 
         if (!user) {
-          // manda pro login com next (seu App.jsx já tem /login)
           window.location.href = `/login?next=${encodeURIComponent("/dashboard")}`;
           return;
         }
 
-        /**
-         * 1) Fonte auxiliar: public.profiles (role + flags legacy)
-         *    - usamos maybeSingle para NÃO gerar 406 quando não existir linha.
-         */
-        let role = null;
-        let isPremiumLegacy = null;
-        let premiumUntilLegacy = null;
-
-        try {
-          const { data: prof, error: profErr } = await supabase
-            .from("profiles")
-            .select("role, is_premium, premium_until, plano_ativo")
-            .eq("id", user.id)
-            .maybeSingle();
-
-          if (!profErr && prof) {
-            role = prof?.role ?? null;
-            isPremiumLegacy = prof?.is_premium ?? null;
-            premiumUntilLegacy = prof?.premium_until ?? null;
-          }
-        } catch {
-          // ignore
-        }
-
-        /**
-         * 2) Fonte principal: public.user_profiles
-         *    - também com maybeSingle() para evitar 406.
-         */
-        const { data: up, error: upErr } = await supabase
-          .from("user_profiles")
-          .select("*")
+        // 1) PERFIL (fonte única)
+        // Observação: aqui eu assumo que você já tem as colunas no public.profiles:
+        // role, plano_ativo, premium_until, is_premium, objetivo, peso_kg, altura_cm, basal_kcal,
+        // xp_total, rank, metas_concluidas, dias_consecutivos (se alguma não existir, só não mostra).
+        const { data: prof, error: profErr } = await supabase
+          .from("profiles")
+          .select(`
+            id,
+            role,
+            plano_ativo,
+            plano_tipo,
+            plano_inicio,
+            plano_fim,
+            is_premium,
+            premium_until,
+            objetivo,
+            peso_kg,
+            altura_cm,
+            basal_kcal,
+            meta_agua_litros,
+            rank,
+            xp_total,
+            metas_concluidas,
+            dias_consecutivos
+          `)
           .eq("id", user.id)
           .maybeSingle();
 
-        let finalProfile = upErr ? null : up;
+        if (profErr) console.error("Dashboard: load profile error:", profErr);
 
-        /**
-         * 2.1) Se existe user_profiles, injeta role e normaliza premium
-         *      (evita “Plano Gratuito” mesmo com admin/premium em public.profiles).
-         */
-        if (finalProfile) {
-          // premium_until pode existir em user_profiles OU vir do legacy profiles
-          const premiumUntil = finalProfile?.premium_until ?? premiumUntilLegacy ?? null;
-          const premiumUntilOk = premiumUntil ? new Date(premiumUntil) > new Date() : false;
-
-          finalProfile = {
-            ...finalProfile,
-            role: finalProfile?.role ?? role,
-            // Se for admin, sempre premium
-            plano_ativo:
-              role === "admin" ? true : Boolean(finalProfile?.plano_ativo ?? false),
-            // legado opcional (não quebra se não existir)
-            is_premium: finalProfile?.is_premium ?? isPremiumLegacy ?? null,
-            premium_until: premiumUntil,
-            // Se tiver premium_until válido, também considera premium
-            __premium_until_ok: premiumUntilOk,
-          };
-        }
-
-        /**
-         * 3) Se ainda não existe user_profiles, tenta criar a partir do quiz (ou cria mínimo)
-         */
+        // Se não existe linha ainda, garante criação mínima (evita telas vazias)
+        let finalProfile = prof || null;
         if (!finalProfile) {
-          const quizDataRaw = localStorage.getItem("heartbalance_quiz");
-          let quiz = null;
-          try {
-            quiz = quizDataRaw ? JSON.parse(quizDataRaw) : null;
-          } catch {
-            quiz = null;
-          }
-
-          // premium_until legado (se existir)
-          const premiumUntilOk =
-            premiumUntilLegacy && new Date(premiumUntilLegacy) > new Date();
-
-          const insertPayload = {
-            id: user.id,
-            ...(quiz || {}),
-            role: role ?? "user",
-            // Se for admin, premium. Se tiver legado premium, premium. Se premium_until no futuro, premium.
-            plano_ativo:
-              role === "admin"
-                ? true
-                : Boolean(isPremiumLegacy) || Boolean(premiumUntilOk),
-            plano_tipo: null,
-            plano_inicio: null,
-            plano_fim: null,
-            premium_until: premiumUntilLegacy ?? null,
-            rank: "Iniciante",
-            xp_total: 0,
-            metas_concluidas: 0,
-            dias_consecutivos: 0,
-          };
-
-          const { data: created, error: createErr } = await supabase
-            .from("user_profiles")
-            .insert(insertPayload)
-            .select("*")
+          const { data: created, error: upsertErr } = await supabase
+            .from("profiles")
+            .upsert({ id: user.id }, { onConflict: "id" })
+            .select(`
+              id,
+              role,
+              plano_ativo,
+              is_premium,
+              premium_until,
+              objetivo,
+              peso_kg,
+              altura_cm,
+              basal_kcal,
+              meta_agua_litros,
+              rank,
+              xp_total,
+              metas_concluidas,
+              dias_consecutivos
+            `)
             .single();
 
-          if (!createErr) {
-            // Normaliza premium no objeto recém-criado
-            const premiumUntil = created?.premium_until ?? premiumUntilLegacy ?? null;
-            const premiumUntilOk2 = premiumUntil ? new Date(premiumUntil) > new Date() : false;
-
-            finalProfile = {
-              ...created,
-              role: created?.role ?? role,
-              plano_ativo:
-                role === "admin" ? true : Boolean(created?.plano_ativo ?? false),
-              is_premium: created?.is_premium ?? isPremiumLegacy ?? null,
-              premium_until: premiumUntil,
-              __premium_until_ok: premiumUntilOk2,
-            };
-
-            localStorage.removeItem("heartbalance_quiz");
-          }
+          if (!upsertErr) finalProfile = created;
         }
 
         if (!mounted) return;
-
         setProfile(finalProfile);
 
-        /**
-         * 4) Colesterol records: se sua tabela ainda não existe/nome diferente, não quebra.
-         */
+        // 2) COLESTEROL (não quebra se tabela não existir)
         try {
           const { data: recs } = await supabase
             .from("colesterol_records")
@@ -226,29 +127,20 @@ export default function Dashboard() {
             .order("data_exame", { ascending: false })
             .limit(10);
 
+          if (!mounted) return;
           setColesterolRecords(Array.isArray(recs) ? recs : []);
         } catch {
+          if (!mounted) return;
           setColesterolRecords([]);
         }
 
-        /**
-         * 5) Water logs: não pode quebrar o app se API falhar
-         */
+        // 3) ÁGUA (usa helper já padronizado)
         try {
-          const session = await supabase.auth.getSession();
-          const token = session?.data?.session?.access_token;
-
-          const res = await fetch("/api/water-log", {
-            headers: { Authorization: `Bearer ${token}` },
-          });
-
-          if (!res.ok) {
-            setHistoricoAgua([]);
-          } else {
-            const data = await res.json().catch(() => []);
-            setHistoricoAgua(Array.isArray(data) ? data : []);
-          }
+          const logs = await waterLogList();
+          if (!mounted) return;
+          setHistoricoAgua(Array.isArray(logs) ? logs : []);
         } catch {
+          if (!mounted) return;
           setHistoricoAgua([]);
         }
       } finally {
@@ -257,29 +149,19 @@ export default function Dashboard() {
     }
 
     load();
-
     return () => {
       mounted = false;
     };
   }, []);
 
-  /**
-   * Premium final (unificado):
-   * - admin => premium
-   * - plano_ativo => premium
-   * - is_premium legacy => premium
-   * - premium_until no futuro => premium
-   */
+  // Premium unificado
   const isPremium = useMemo(() => {
-    const premiumUntilOk =
-      profile?.premium_until && new Date(profile.premium_until) > new Date();
-
+    const premiumUntilOk = isFutureDate(profile?.premium_until);
     return (
       profile?.role === "admin" ||
       profile?.plano_ativo === true ||
       profile?.is_premium === true ||
-      premiumUntilOk ||
-      profile?.__premium_until_ok === true
+      premiumUntilOk
     );
   }, [profile]);
 
@@ -303,14 +185,15 @@ export default function Dashboard() {
     );
   }
 
-  // cálculo do progresso de água
+  // Hidratação de hoje (meta vinda do profile)
   const hoje = new Date().toISOString().split("T")[0];
-  const consumoHoje = historicoAgua
-    .filter((item) => item.data === hoje)
-    .reduce((total, item) => total + (item.quantidade_ml || 0), 0);
+  const consumoHoje = (historicoAgua || [])
+    .filter((item) => item?.data === hoje)
+    .reduce((total, item) => total + Number(item?.quantidade_ml || 0), 0);
 
-  const metaDiaria = 2000;
-  const progresso = Math.min((consumoHoje / metaDiaria) * 100, 100);
+  const metaLitros = Number(profile?.meta_agua_litros || 2.5);
+  const metaDiariaMl = metaLitros * 1000;
+  const progresso = Math.min((consumoHoje / metaDiariaMl) * 100, 100);
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-red-50 via-white to-rose-50 p-4 pb-24">
@@ -344,7 +227,7 @@ export default function Dashboard() {
           )}
         </div>
 
-        {/* Rank Card - Apenas Premium */}
+        {/* Rank Card - Premium */}
         {isPremium && (
           <RankCard
             profile={profile}
@@ -352,7 +235,7 @@ export default function Dashboard() {
           />
         )}
 
-        {/* Colesterol Tracker - Apenas Premium */}
+        {/* Colesterol Tracker - Premium */}
         {isPremium && (
           <ColesterolTracker
             records={colesterolRecords}
@@ -366,19 +249,35 @@ export default function Dashboard() {
           animate={{ opacity: 1, y: 0 }}
           className="bg-white rounded-2xl p-5 mb-6 border border-gray-100 shadow-sm"
         >
-          <h2 className="font-semibold text-gray-900 flex items-center gap-2 mb-3">
-            <Droplets className="w-5 h-5 text-blue-600" />
-            Hidratação de Hoje
-          </h2>
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="font-semibold text-gray-900 flex items-center gap-2">
+              <Droplets className="w-5 h-5 text-blue-600" />
+              Hidratação de Hoje
+            </h2>
+            <button
+              onClick={() => (window.location.href = "/hidratacao")}
+              className="text-sm text-blue-700 hover:underline"
+            >
+              Abrir
+            </button>
+          </div>
+
           <div className="w-full bg-gray-200 rounded-full h-4 mb-2">
             <div className="bg-blue-500 h-4 rounded-full" style={{ width: `${progresso}%` }} />
           </div>
+
           <p className="text-sm text-gray-700">
-            {consumoHoje}ml / {metaDiaria}ml
+            {consumoHoje}ml / {metaDiariaMl}ml ({metaLitros.toFixed(1)}L)
           </p>
+
+          {!profile?.meta_agua_litros && (
+            <p className="text-xs text-gray-500 mt-2">
+              Dica: preencha peso/altura/basal em <span className="font-semibold">Perfil</span> para calcular a meta automaticamente.
+            </p>
+          )}
         </motion.div>
 
-        {/* Resumo do Perfil */}
+        {/* Resumo do Perfil (agora baseado no profiles real) */}
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
@@ -389,22 +288,34 @@ export default function Dashboard() {
               <Target className="w-5 h-5 text-emerald-600" />
               Seu Perfil
             </h2>
-            <span className="text-xs text-red-600 bg-red-50 px-2 py-1 rounded-full">
-              {profile?.objetivo}
+
+            <Button
+              onClick={() => (window.location.href = "/perfil")}
+              variant="outline"
+              className="h-8 px-3"
+            >
+              Editar
+            </Button>
+          </div>
+
+          <div className="mb-3">
+            <span className="text-xs text-emerald-700 bg-emerald-50 px-2 py-1 rounded-full">
+              Objetivo: {profile?.objetivo || "não definido"}
             </span>
           </div>
+
           <div className="grid grid-cols-2 gap-3 text-sm">
             <div className="bg-gray-50 rounded-lg p-3">
-              <div className="text-gray-500 text-xs">Idade</div>
-              <div className="font-medium">{profile?.idade ? `${profile.idade} anos` : "—"}</div>
+              <div className="text-gray-500 text-xs">Peso</div>
+              <div className="font-medium">{profile?.peso_kg ? `${profile.peso_kg} kg` : "—"}</div>
             </div>
             <div className="bg-gray-50 rounded-lg p-3">
-              <div className="text-gray-500 text-xs">Alimentação</div>
-              <div className="font-medium">{profile?.alimentacao || "—"}</div>
+              <div className="text-gray-500 text-xs">Altura</div>
+              <div className="font-medium">{profile?.altura_cm ? `${profile.altura_cm} cm` : "—"}</div>
             </div>
             <div className="bg-gray-50 rounded-lg p-3">
-              <div className="text-gray-500 text-xs">Exercícios</div>
-              <div className="font-medium">{profile?.exercicios || "—"}</div>
+              <div className="text-gray-500 text-xs">Basal</div>
+              <div className="font-medium">{profile?.basal_kcal ? `${profile.basal_kcal} kcal` : "—"}</div>
             </div>
             <div className="bg-gray-50 rounded-lg p-3">
               <div className="text-gray-500 text-xs">Dias seguidos</div>
