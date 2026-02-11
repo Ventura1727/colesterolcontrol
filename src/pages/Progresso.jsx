@@ -1,471 +1,270 @@
+// src/pages/Progresso.jsx
 import React, { useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
 import {
   ArrowLeft,
-  TrendingUp,
   Droplets,
-  Activity,
-  HeartPulse,
-  Ruler,
   Scale,
+  Ruler,
+  HeartPulse,
+  Trophy,
+  Flame,
   Calendar,
-  AlertCircle,
-  CheckCircle2,
+  ChevronRight,
+  BadgeCheck,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { createPageUrl } from "@/utils";
 import { supabase } from "@/lib/supabaseClient";
+import { createPageUrl } from "@/utils";
 import { waterLogList } from "@/lib/waterApi";
 
-function toISODateLocal(d = new Date()) {
-  // yyyy-mm-dd no fuso local (evita problemas de UTC)
-  const local = new Date(d.getTime() - d.getTimezoneOffset() * 60000);
-  return local.toISOString().slice(0, 10);
-}
-
-function normalizeLogs(resp) {
-  if (Array.isArray(resp)) return resp;
-  if (resp && Array.isArray(resp.data)) return resp.data;
-  if (resp && Array.isArray(resp.logs)) return resp.logs;
-  return [];
+function calcIMC(pesoKg, alturaCm) {
+  if (!pesoKg || !alturaCm) return null;
+  const h = alturaCm / 100;
+  if (!h) return null;
+  const v = pesoKg / (h * h);
+  return Number.isFinite(v) ? v : null;
 }
 
 export default function Progresso() {
-  const [isLoading, setIsLoading] = useState(true);
-  const [fatalError, setFatalError] = useState("");
-  const [user, setUser] = useState(null);
+  const [loading, setLoading] = useState(true);
   const [profile, setProfile] = useState(null);
   const [waterLogs, setWaterLogs] = useState([]);
+  const [userEmail, setUserEmail] = useState("");
 
-  const hoje = useMemo(() => toISODateLocal(new Date()), []);
-
-  const metaLitros = useMemo(() => {
-    // tenta achar alguma meta no profile; senão fallback 2.8
-    const candidates = [
-      profile?.meta_agua_litros,
-      profile?.water_goal_liters,
-      profile?.meta_diaria_agua_litros,
-      profile?.meta_agua_ml ? Number(profile.meta_agua_ml) / 1000 : null,
-      profile?.water_goal_ml ? Number(profile.water_goal_ml) / 1000 : null,
-    ].filter((v) => v != null);
-
-    const v = candidates.length ? Number(String(candidates[0]).replace(",", ".")) : 2.8;
-    return Number.isFinite(v) && v > 0 ? v : 2.8;
-  }, [profile]);
-
-  const metaML = useMemo(() => Math.round(metaLitros * 1000), [metaLitros]);
-
-  const consumoHojeML = useMemo(() => {
-    const logs = Array.isArray(waterLogs) ? waterLogs : [];
-    return logs
-      .filter((l) => (l?.data || "").slice(0, 10) === hoje)
-      .reduce((sum, l) => sum + (Number(l?.quantidade_ml) || 0), 0);
-  }, [waterLogs, hoje]);
-
-  const consumoHojeL = useMemo(() => consumoHojeML / 1000, [consumoHojeML]);
-
-  const restanteHojeML = useMemo(() => Math.max(metaML - consumoHojeML, 0), [metaML, consumoHojeML]);
-
-  const pctHoje = useMemo(() => {
-    if (!metaML) return 0;
-    const pct = (consumoHojeML / metaML) * 100;
-    return Math.max(0, Math.min(100, pct));
-  }, [consumoHojeML, metaML]);
-
-  const week = useMemo(() => {
-    const logs = Array.isArray(waterLogs) ? waterLogs : [];
-    const arr = [];
-    for (let i = 6; i >= 0; i--) {
-      const d = new Date();
-      d.setDate(d.getDate() - i);
-      const iso = toISODateLocal(d);
-
-      const total = logs
-        .filter((l) => (l?.data || "").slice(0, 10) === iso)
-        .reduce((sum, l) => sum + (Number(l?.quantidade_ml) || 0), 0);
-
-      const label = ["D", "S", "T", "Q", "Q", "S", "S"][d.getDay()] || "";
-      arr.push({ iso, totalML: total, litros: (total / 1000).toFixed(1), label });
-    }
-    return arr;
-  }, [waterLogs]);
-
-  const maxWeekML = useMemo(() => {
-    const max = Math.max(...week.map((d) => d.totalML), metaML);
-    return max > 0 ? max : metaML || 2500;
-  }, [week, metaML]);
-
-  const pesoKg = useMemo(() => {
-    const v =
-      profile?.peso ??
-      profile?.peso_kg ??
-      profile?.weight ??
-      profile?.weight_kg ??
-      null;
-    const n = v != null ? Number(String(v).replace(",", ".")) : null;
-    return Number.isFinite(n) && n > 0 ? n : null;
-  }, [profile]);
-
-  const alturaCm = useMemo(() => {
-    const v =
-      profile?.altura ??
-      profile?.altura_cm ??
-      profile?.height ??
-      profile?.height_cm ??
-      null;
-    const n = v != null ? Number(String(v).replace(",", ".")) : null;
-    return Number.isFinite(n) && n > 0 ? n : null;
-  }, [profile]);
-
-  const imc = useMemo(() => {
-    if (!pesoKg || !alturaCm) return null;
-    const m = alturaCm / 100;
-    const v = pesoKg / (m * m);
-    return Number.isFinite(v) ? v : null;
-  }, [pesoKg, alturaCm]);
-
-  const displayName = useMemo(() => {
-    const fromProfile =
-      profile?.nome ||
-      profile?.name ||
-      profile?.full_name ||
-      profile?.display_name ||
-      null;
-
-    const fromAuth =
-      user?.user_metadata?.name ||
-      user?.user_metadata?.full_name ||
-      user?.email ||
-      null;
-
-    return fromProfile || fromAuth || "Usuário";
-  }, [profile, user]);
-
-  async function loadAll() {
-    setIsLoading(true);
-    setFatalError("");
-
-    try {
-      const { data: sessionData, error: sessionErr } = await supabase.auth.getSession();
-      if (sessionErr) throw sessionErr;
-
-      const session = sessionData?.session;
-      const u = session?.user;
-
-      if (!u) {
-        window.location.href = createPageUrl("Login");
-        return;
-      }
-
-      setUser(u);
-
-      // Profile é "best effort" (não pode quebrar)
-      try {
-        const { data: p, error: pErr } = await supabase
-          .from("profiles")
-          .select("*")
-          .eq("id", u.id)
-          .maybeSingle();
-
-        if (!pErr) setProfile(p || null);
-      } catch {
-        // ignore
-      }
-
-      // Logs de água (fonte real do progresso)
-      const resp = await waterLogList();
-      setWaterLogs(normalizeLogs(resp));
-    } catch (e) {
-      console.error("Progresso fatal:", e);
-      setFatalError(e?.message || String(e));
-    } finally {
-      setIsLoading(false);
-    }
-  }
+  const hoje = new Date().toISOString().split("T")[0];
 
   useEffect(() => {
-    loadAll();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    (async () => {
+      try {
+        setLoading(true);
+
+        const { data: sessionData } = await supabase.auth.getSession();
+        const session = sessionData?.session;
+        if (!session?.user) {
+          window.location.href = createPageUrl("Login");
+          return;
+        }
+
+        setUserEmail(session.user.email || "");
+
+        const { data: prof, error } = await supabase
+          .from("profiles")
+          .select("id, peso_kg, altura_cm, basal_kcal, meta_agua_litros, objetivo")
+          .eq("id", session.user.id)
+          .maybeSingle();
+
+        if (error) console.error("Progresso load profile error:", error);
+        setProfile(prof || null);
+
+        const logs = await waterLogList();
+        setWaterLogs(Array.isArray(logs) ? logs : []);
+      } finally {
+        setLoading(false);
+      }
+    })();
   }, []);
 
-  const statusHidratacao = useMemo(() => {
-    if (pctHoje >= 100) return { icon: CheckCircle2, text: "Meta atingida hoje", tone: "text-green-700" };
-    if (pctHoje >= 60) return { icon: Droplets, text: "Bom ritmo hoje", tone: "text-blue-700" };
-    return { icon: AlertCircle, text: "Vamos melhorar hoje", tone: "text-amber-700" };
-  }, [pctHoje]);
+  const metaLitros = Number(profile?.meta_agua_litros || 2.5);
+  const metaMl = metaLitros * 1000;
 
-  const StatusIcon = statusHidratacao.icon;
+  const consumoHojeMl = useMemo(() => {
+    return (waterLogs || [])
+      .filter((l) => l?.data === hoje)
+      .reduce((sum, l) => sum + Number(l?.quantidade_ml || 0), 0);
+  }, [waterLogs, hoje]);
+
+  const pct = Math.min((consumoHojeMl / metaMl) * 100, 100);
+  const faltamMl = Math.max(metaMl - consumoHojeMl, 0);
+
+  // Gamificação simples (eficaz e “explicável”):
+  // - pontos por hidratação: 1 ponto a cada 250ml hoje
+  // - badge se bateu meta
+  const pontosHoje = Math.floor(consumoHojeMl / 250);
+  const metaBatida = consumoHojeMl >= metaMl;
+
+  const peso = profile?.peso_kg ?? null;
+  const altura = profile?.altura_cm ?? null;
+  const imc = calcIMC(peso, altura);
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-indigo-50 flex items-center justify-center">
+        <motion.div
+          animate={{ rotate: 360 }}
+          transition={{ repeat: Infinity, duration: 1, ease: "linear" }}
+          className="w-8 h-8 border-2 border-indigo-600 border-t-transparent rounded-full"
+        />
+      </div>
+    );
+  }
 
   return (
-    <div className="min-h-screen bg-background">
-      <div className="max-w-5xl mx-auto p-4 md:p-6">
+    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-indigo-50">
+      <div className="max-w-5xl mx-auto px-4 pt-6 pb-24">
         {/* Header */}
         <div className="flex items-center gap-3 mb-6">
-          <Button
-            variant="ghost"
+          <button
             onClick={() => (window.location.href = createPageUrl("Dashboard"))}
+            className="w-10 h-10 rounded-xl bg-white border border-gray-200 flex items-center justify-center"
           >
-            <ArrowLeft className="w-4 h-4 mr-2" />
-            Voltar
-          </Button>
+            <ArrowLeft className="w-5 h-5 text-gray-600" />
+          </button>
           <div>
-            <h1 className="text-2xl font-semibold">Progresso</h1>
-            <p className="text-muted-foreground">Acompanhe sua evolução</p>
+            <h1 className="text-xl font-bold text-gray-900">Progresso</h1>
+            <p className="text-sm text-gray-500">Acompanhe sua evolução</p>
           </div>
         </div>
 
-        {isLoading && (
-          <div className="text-sm text-muted-foreground">Carregando progresso...</div>
-        )}
-
-        {!isLoading && fatalError && (
-          <div className="rounded-2xl border p-5 bg-red-50">
-            <div className="flex items-center gap-2 text-red-700 font-semibold">
-              <AlertCircle className="w-5 h-5" />
-              Erro ao carregar Progresso
+        {/* Hero acolhedor */}
+        <div className="bg-white rounded-2xl p-5 border border-gray-100 shadow-sm mb-5">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <div className="text-sm text-gray-500 flex items-center gap-2">
+                <Calendar className="w-4 h-4" />
+                Hoje ({hoje})
+              </div>
+              <div className="text-xl font-bold text-gray-900 mt-1">Olá, {userEmail || "usuário"}</div>
+              <div className="text-sm text-gray-600 mt-1">
+                Objetivo: <span className="font-semibold">{profile?.objetivo || "não definido"}</span>
+              </div>
             </div>
-            <div className="text-sm text-red-700 mt-2 break-words">{fatalError}</div>
-            <Button className="mt-4" onClick={loadAll}>
-              Tentar novamente
+
+            <div className={`px-3 py-2 rounded-xl border text-sm flex items-center gap-2 ${
+              metaBatida ? "bg-green-50 border-green-200 text-green-800" : "bg-indigo-50 border-indigo-200 text-indigo-800"
+            }`}>
+              {metaBatida ? <BadgeCheck className="w-4 h-4" /> : <Trophy className="w-4 h-4" />}
+              {metaBatida ? "Meta de hidratação atingida" : "Missão do dia: bater a meta"}
+            </div>
+          </div>
+        </div>
+
+        {/* Cards 3 colunas */}
+        <div className="grid lg:grid-cols-3 gap-4 mb-5">
+          {/* Hidratação */}
+          <div className="bg-white rounded-2xl p-5 border border-gray-100 shadow-sm">
+            <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center gap-2">
+                <Droplets className="w-5 h-5 text-blue-600" />
+                <div className="font-semibold text-gray-900">Hidratação</div>
+              </div>
+              <div className="text-xs text-gray-500">Hoje</div>
+            </div>
+
+            <div className="flex items-end justify-between mb-2">
+              <div>
+                <div className="text-3xl font-bold text-gray-900">{(consumoHojeMl / 1000).toFixed(1)}L</div>
+                <div className="text-xs text-gray-500">de {metaLitros.toFixed(1)}L</div>
+              </div>
+              <div className="text-right">
+                <div className="text-xl font-bold text-blue-700">{(faltamMl / 1000).toFixed(1)}L</div>
+                <div className="text-xs text-gray-500">faltam</div>
+              </div>
+            </div>
+
+            <div className="w-full bg-gray-100 rounded-full h-3">
+              <motion.div
+                initial={{ width: 0 }}
+                animate={{ width: `${pct}%` }}
+                transition={{ duration: 0.5 }}
+                className="h-3 rounded-full bg-gradient-to-r from-blue-500 to-indigo-600"
+              />
+            </div>
+
+            <div className="mt-3 flex items-center justify-between text-xs text-gray-500">
+              <span>{Math.round(pct)}% da meta</span>
+              <span className="flex items-center gap-1">
+                <Flame className="w-3 h-3" /> {pontosHoje} pts hoje
+              </span>
+            </div>
+
+            <Button
+              onClick={() => (window.location.href = "/hidratacao")}
+              variant="outline"
+              className="mt-4 w-full"
+            >
+              Abrir Hidratação <ChevronRight className="w-4 h-4 ml-1" />
             </Button>
           </div>
-        )}
 
-        {!isLoading && !fatalError && (
-          <>
-            {/* Boas-vindas + resumo */}
-            <motion.div
-              initial={{ opacity: 0, y: 8 }}
-              animate={{ opacity: 1, y: 0 }}
-              className="rounded-2xl border bg-card p-6 mb-6"
-            >
-              <div className="flex items-center justify-between gap-4">
-                <div>
-                  <div className="flex items-center gap-2 mb-1">
-                    <TrendingUp className="w-5 h-5 text-indigo-600" />
-                    <h2 className="text-lg font-semibold">Olá, {displayName}</h2>
-                  </div>
-                  <div className="text-sm text-muted-foreground flex items-center gap-2">
-                    <Calendar className="w-4 h-4" />
-                    Hoje ({hoje})
-                  </div>
-                </div>
-
-                <div className={`flex items-center gap-2 text-sm ${statusHidratacao.tone}`}>
-                  <StatusIcon className="w-4 h-4" />
-                  {statusHidratacao.text}
-                </div>
-              </div>
-            </motion.div>
-
-            {/* Cards principais */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
-              {/* Hidratação hoje */}
-              <motion.div
-                initial={{ opacity: 0, y: 8 }}
-                animate={{ opacity: 1, y: 0 }}
-                className="rounded-2xl border bg-card p-5"
-              >
-                <div className="flex items-center justify-between mb-3">
-                  <div className="flex items-center gap-2">
-                    <Droplets className="w-5 h-5 text-blue-600" />
-                    <div className="font-semibold">Hidratação</div>
-                  </div>
-                  <div className="text-xs text-muted-foreground">Hoje</div>
-                </div>
-
-                <div className="flex items-end justify-between mb-2">
-                  <div>
-                    <div className="text-3xl font-bold">{consumoHojeL.toFixed(1)}L</div>
-                    <div className="text-sm text-muted-foreground">de {metaLitros.toFixed(1)}L</div>
-                  </div>
-                  <div className="text-right">
-                    <div className="text-xl font-bold text-blue-600">
-                      {(restanteHojeML / 1000).toFixed(1)}L
-                    </div>
-                    <div className="text-xs text-muted-foreground">faltam</div>
-                  </div>
-                </div>
-
-                <div className="w-full bg-muted rounded-full h-3">
-                  <div
-                    className="h-3 rounded-full bg-gradient-to-r from-blue-500 to-indigo-600"
-                    style={{ width: `${pctHoje}%` }}
-                  />
-                </div>
-                <div className="text-xs text-muted-foreground mt-2">
-                  {Math.round(pctHoje)}% da meta diária
-                </div>
-              </motion.div>
-
-              {/* IMC / medidas */}
-              <motion.div
-                initial={{ opacity: 0, y: 8 }}
-                animate={{ opacity: 1, y: 0 }}
-                className="rounded-2xl border bg-card p-5"
-              >
-                <div className="flex items-center gap-2 mb-3">
-                  <Scale className="w-5 h-5 text-indigo-600" />
-                  <div className="font-semibold">Medidas</div>
-                </div>
-
-                <div className="space-y-2 text-sm">
-                  <div className="flex items-center justify-between">
-                    <span className="text-muted-foreground flex items-center gap-2">
-                      <Scale className="w-4 h-4" /> Peso
-                    </span>
-                    <span className="font-semibold">
-                      {pesoKg ? `${pesoKg.toFixed(1)} kg` : "Não cadastrado"}
-                    </span>
-                  </div>
-
-                  <div className="flex items-center justify-between">
-                    <span className="text-muted-foreground flex items-center gap-2">
-                      <Ruler className="w-4 h-4" /> Altura
-                    </span>
-                    <span className="font-semibold">
-                      {alturaCm ? `${alturaCm.toFixed(0)} cm` : "Não cadastrado"}
-                    </span>
-                  </div>
-
-                  <div className="flex items-center justify-between">
-                    <span className="text-muted-foreground flex items-center gap-2">
-                      <Activity className="w-4 h-4" /> IMC
-                    </span>
-                    <span className="font-semibold">
-                      {imc ? imc.toFixed(1) : "—"}
-                    </span>
-                  </div>
-                </div>
-
-                <Button
-                  variant="outline"
-                  className="mt-4 w-full"
-                  onClick={() => (window.location.href = createPageUrl("Perfil"))}
-                >
-                  Atualizar dados
-                </Button>
-              </motion.div>
-
-              {/* Saúde cardiometabólica (placeholder seguro) */}
-              <motion.div
-                initial={{ opacity: 0, y: 8 }}
-                animate={{ opacity: 1, y: 0 }}
-                className="rounded-2xl border bg-card p-5"
-              >
-                <div className="flex items-center gap-2 mb-3">
-                  <HeartPulse className="w-5 h-5 text-rose-600" />
-                  <div className="font-semibold">Saúde</div>
-                </div>
-
-                <div className="text-sm text-muted-foreground">
-                  Aqui podemos mostrar pressão, colesterol e metas clínicas assim que confirmarmos
-                  onde esses dados estão armazenados no Supabase.
-                </div>
-
-                <Button
-                  className="mt-4 w-full"
-                  onClick={() => (window.location.href = createPageUrl("Dashboard"))}
-                >
-                  Ver recomendações
-                </Button>
-              </motion.div>
+          {/* Medidas */}
+          <div className="bg-white rounded-2xl p-5 border border-gray-100 shadow-sm">
+            <div className="flex items-center gap-2 mb-3">
+              <Scale className="w-5 h-5 text-gray-700" />
+              <div className="font-semibold text-gray-900">Medidas</div>
             </div>
 
-            {/* Últimos 7 dias - hidratação */}
-            <motion.div
-              initial={{ opacity: 0, y: 8 }}
-              animate={{ opacity: 1, y: 0 }}
-              className="rounded-2xl border bg-card p-6 mb-6"
-            >
-              <div className="flex items-center justify-between mb-4">
-                <div className="flex items-center gap-2">
-                  <Droplets className="w-5 h-5 text-blue-600" />
-                  <div className="font-semibold">Últimos 7 dias</div>
-                </div>
-                <div className="text-xs text-muted-foreground">
-                  Meta: {metaLitros.toFixed(1)}L/dia
-                </div>
+            <div className="space-y-2 text-sm">
+              <div className="flex items-center justify-between">
+                <span className="text-gray-500 flex items-center gap-2">
+                  <Scale className="w-4 h-4" /> Peso
+                </span>
+                <span className="font-semibold text-gray-900">{peso ? `${peso} kg` : "Não cadastrado"}</span>
               </div>
 
-              <div className="flex items-end justify-between gap-2 h-32">
-                {week.map((d) => {
-                  const h = (d.totalML / maxWeekML) * 100;
-                  const isToday = d.iso === hoje;
-                  return (
-                    <div key={d.iso} className="flex-1 flex flex-col items-center gap-2">
-                      <div className="w-full flex flex-col justify-end h-full">
-                        <motion.div
-                          initial={{ height: 0 }}
-                          animate={{ height: `${h}%` }}
-                          transition={{ duration: 0.35 }}
-                          className={`w-full rounded-t-lg ${
-                            isToday
-                              ? "bg-gradient-to-t from-blue-500 to-indigo-600"
-                              : "bg-blue-200"
-                          }`}
-                        />
-                      </div>
-                      <div className="text-center">
-                        <div className="text-[10px] text-muted-foreground font-medium">
-                          {d.label}
-                        </div>
-                        <div className="text-xs font-bold">{d.litros}L</div>
-                      </div>
-                    </div>
-                  );
-                })}
+              <div className="flex items-center justify-between">
+                <span className="text-gray-500 flex items-center gap-2">
+                  <Ruler className="w-4 h-4" /> Altura
+                </span>
+                <span className="font-semibold text-gray-900">{altura ? `${altura} cm` : "Não cadastrado"}</span>
               </div>
-            </motion.div>
 
-            {/* Próximos blocos (sem quebrar) */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <motion.div
-                initial={{ opacity: 0, y: 8 }}
-                animate={{ opacity: 1, y: 0 }}
-                className="rounded-2xl border bg-card p-6"
-              >
-                <div className="flex items-center gap-2 mb-2">
-                  <Activity className="w-5 h-5 text-emerald-600" />
-                  <div className="font-semibold">Exercícios</div>
-                </div>
-                <div className="text-sm text-muted-foreground">
-                  Vamos conectar aqui seus treinos e minutos ativos assim que ajustarmos a página de Exercícios
-                  (está em branco hoje).
-                </div>
-                <Button
-                  variant="outline"
-                  className="mt-4 w-full"
-                  onClick={() => (window.location.href = createPageUrl("Exercicios"))}
-                >
-                  Ir para Exercícios
-                </Button>
-              </motion.div>
-
-              <motion.div
-                initial={{ opacity: 0, y: 8 }}
-                animate={{ opacity: 1, y: 0 }}
-                className="rounded-2xl border bg-card p-6"
-              >
-                <div className="flex items-center gap-2 mb-2">
-                  <HeartPulse className="w-5 h-5 text-indigo-600" />
-                  <div className="font-semibold">Nutrição</div>
-                </div>
-                <div className="text-sm text-muted-foreground">
-                  Vamos resumir aqui calorias, macros e aderência ao plano quando o Nutricionista IA estiver
-                  retornando respostas sem erro.
-                </div>
-                <Button
-                  variant="outline"
-                  className="mt-4 w-full"
-                  onClick={() => (window.location.href = createPageUrl("Nutricionista"))}
-                >
-                  Ir para Nutricionista IA
-                </Button>
-              </motion.div>
+              <div className="flex items-center justify-between">
+                <span className="text-gray-500">IMC</span>
+                <span className="font-semibold text-gray-900">{imc ? imc.toFixed(1) : "—"}</span>
+              </div>
             </div>
-          </>
-        )}
+
+            <Button
+              onClick={() => (window.location.href = "/perfil")}
+              className="mt-4 w-full bg-gradient-to-r from-indigo-600 to-blue-600 hover:from-indigo-700 hover:to-blue-700 text-white"
+            >
+              Atualizar dados
+            </Button>
+          </div>
+
+          {/* Saúde (placeholder “limpo” e útil) */}
+          <div className="bg-white rounded-2xl p-5 border border-gray-100 shadow-sm">
+            <div className="flex items-center gap-2 mb-3">
+              <HeartPulse className="w-5 h-5 text-rose-600" />
+              <div className="font-semibold text-gray-900">Saúde</div>
+            </div>
+
+            <div className="text-sm text-gray-600">
+              Aqui vamos consolidar indicadores (colesterol, pressão, etc.) assim que confirmarmos as tabelas no Supabase.
+            </div>
+
+            <div className="mt-4 bg-rose-50 border border-rose-100 rounded-xl p-4">
+              <div className="text-xs text-gray-600 mb-1">Status</div>
+              <div className="font-semibold text-gray-900">Pronto para integrar dados clínicos</div>
+              <div className="text-[11px] text-gray-500 mt-1">
+                Próximo passo: conectar registros de colesterol e medições.
+              </div>
+            </div>
+
+            <Button
+              onClick={() => alert("Em seguida, vamos conectar colesterol/pressão quando confirmarmos as tabelas.")}
+              variant="outline"
+              className="mt-4 w-full"
+            >
+              Ver recomendações <ChevronRight className="w-4 h-4 ml-1" />
+            </Button>
+          </div>
+        </div>
+
+        {/* Rodapé gamificado */}
+        <div className="bg-gradient-to-r from-indigo-600 to-blue-600 rounded-2xl p-5 text-white">
+          <div className="flex items-center justify-between">
+            <div>
+              <div className="text-sm opacity-90">Seu progresso hoje</div>
+              <div className="text-2xl font-extrabold">{pontosHoje} pontos</div>
+              <div className="text-xs opacity-90 mt-1">
+                Ganhe pontos bebendo água (1 ponto a cada 250ml). Amanhã adicionamos streak semanal aqui.
+              </div>
+            </div>
+            <Trophy className="w-10 h-10 opacity-90" />
+          </div>
+        </div>
       </div>
     </div>
   );
