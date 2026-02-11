@@ -11,13 +11,21 @@ import { waterLogCreate, waterLogList } from "@/lib/waterApi";
  * Props:
  * - waterLogs: array [{ id, quantidade_ml, data, hora, created_at, created_by? }]
  * - metaDiaria: number|string (litros)
- * - onLogsUpdated?: (logs) => void   // opcional: pai atualizar o state
+ * - onLogsUpdated?: (logsArray) => void   // opcional: pai atualizar o state
  */
 export default function HydrationDashboard({ waterLogs = [], metaDiaria, onLogsUpdated }) {
   const [showAddModal, setShowAddModal] = useState(false);
   const [quantidade, setQuantidade] = useState("");
   const [data, setData] = useState(new Date().toISOString().split("T")[0]);
   const [isLogging, setIsLogging] = useState(false);
+
+  // ✅ Normaliza waterLogs (caso o pai tenha passado objeto por engano)
+  const safeLogs = useMemo(() => {
+    if (Array.isArray(waterLogs)) return waterLogs;
+    if (waterLogs && Array.isArray(waterLogs.data)) return waterLogs.data;
+    if (waterLogs && Array.isArray(waterLogs.logs)) return waterLogs.logs;
+    return [];
+  }, [waterLogs]);
 
   // Meta diária em ml (aceita number ou string tipo "3.1" / "3,1")
   const metaLitros =
@@ -29,15 +37,16 @@ export default function HydrationDashboard({ waterLogs = [], metaDiaria, onLogsU
 
   const metaDiariaML = Number.isFinite(metaLitros) ? metaLitros * 1000 : 2500;
 
+  // ⚠️ hoje em ISO via toISOString() usa UTC; mantém como está para bater com seus logs (que já estão em ISO)
   const hoje = new Date().toISOString().split("T")[0];
 
   const consumoHoje = useMemo(() => {
     return (
-      (waterLogs || [])
-        .filter((log) => log?.data === hoje)
+      (safeLogs || [])
+        .filter((log) => (log?.data || "").slice(0, 10) === hoje)
         .reduce((sum, log) => sum + Number(log?.quantidade_ml || 0), 0) || 0
     );
-  }, [waterLogs, hoje]);
+  }, [safeLogs, hoje]);
 
   const percentualMeta = Math.min((consumoHoje / metaDiariaML) * 100, 100);
   const mlRestantes = Math.max(metaDiariaML - consumoHoje, 0);
@@ -48,7 +57,8 @@ export default function HydrationDashboard({ waterLogs = [], metaDiaria, onLogsU
       const dateObj = new Date();
       dateObj.setDate(dateObj.getDate() - i);
       const dateStr = dateObj.toISOString().split("T")[0];
-      const dayLogs = (waterLogs || []).filter((log) => log?.data === dateStr);
+
+      const dayLogs = (safeLogs || []).filter((log) => (log?.data || "").slice(0, 10) === dateStr);
       const totalML = dayLogs.reduce((sum, log) => sum + Number(log?.quantidade_ml || 0), 0);
 
       arr.push({
@@ -60,14 +70,22 @@ export default function HydrationDashboard({ waterLogs = [], metaDiaria, onLogsU
       });
     }
     return arr;
-  }, [waterLogs]);
+  }, [safeLogs]);
 
   const maxML = Math.max(...hoje7dias.map((d) => d.ml), metaDiariaML);
   const infoHoje = hoje7dias.find((d) => d.date === hoje);
 
+  function normalizeLogs(resp) {
+    if (Array.isArray(resp)) return resp;
+    if (resp && Array.isArray(resp.data)) return resp.data;
+    if (resp && Array.isArray(resp.logs)) return resp.logs;
+    return [];
+  }
+
   async function refreshLogs() {
-    const logs = await waterLogList();
-    if (typeof onLogsUpdated === "function") onLogsUpdated(logs);
+    const resp = await waterLogList();
+    const logsArr = normalizeLogs(resp);
+    if (typeof onLogsUpdated === "function") onLogsUpdated(logsArr);
   }
 
   function makeHora() {
