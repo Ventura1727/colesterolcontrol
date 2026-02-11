@@ -1,3 +1,4 @@
+// api/water-log.js
 import { createClient } from "@supabase/supabase-js";
 
 function getBearerToken(req) {
@@ -21,21 +22,15 @@ export default async function handler(req, res) {
     const supabaseAnonKey = process.env.SUPABASE_ANON_KEY;
 
     if (!supabaseUrl || !supabaseAnonKey) {
-      return res
-        .status(500)
-        .json({ error: "Missing SUPABASE_URL or SUPABASE_ANON_KEY" });
+      return res.status(500).json({ error: "Missing SUPABASE_URL or SUPABASE_ANON_KEY" });
     }
 
-    // ✅ Client autenticado com o JWT do usuário
+    // Client autenticado com o JWT do usuário (RLS vai aplicar)
     const supabase = createClient(supabaseUrl, supabaseAnonKey, {
-      global: {
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-      },
+      global: { headers: { Authorization: `Bearer ${token}` } },
     });
 
-    // ✅ validar usuário
+    // Validar usuário
     const { data: userData, error: authError } = await supabase.auth.getUser();
     const user = userData?.user;
 
@@ -46,7 +41,8 @@ export default async function handler(req, res) {
     if (req.method === "GET") {
       const { data, error } = await supabase
         .from("water_logs")
-        .select("id, quantidade_ml, data, hora, created_at")
+        .select("id, quantidade_ml, data, hora, created_at, created_by, user_id")
+        .eq("user_id", user.id)
         .order("created_at", { ascending: false })
         .limit(200);
 
@@ -54,44 +50,37 @@ export default async function handler(req, res) {
         return res.status(400).json({ error: error.message, details: error });
       }
 
-      return res.status(200).json({ data });
+      return res.status(200).json({ data: data || [] });
     }
 
-    // POST
-    const body =
-      typeof req.body === "string" ? JSON.parse(req.body) : req.body || {};
+    const body = typeof req.body === "string" ? JSON.parse(req.body) : (req.body || {});
     const { quantidade_ml, data, hora } = body;
 
-    if (quantidade_ml == null || !data) {
+    if (quantidade_ml == null || !data || !hora) {
       return res.status(400).json({ error: "Campos obrigatórios ausentes" });
     }
 
     const payload = {
-      // ✅ ESSENCIAL: sua tabela exige os dois como NOT NULL
-      created_by: user.id,
-      user_id: user.id,
-
+      user_id: user.id,       // ✅ coluna NOT NULL
+      created_by: user.id,    // ✅ mantém compatibilidade com regras antigas
       quantidade_ml: Number(quantidade_ml),
       data,
-      // hora é nullable no banco (YES), então só manda se vier
-      ...(hora ? { hora } : {}),
+      hora,
     };
 
-    const { error: insertError } = await supabase
+    const { data: inserted, error: insertError } = await supabase
       .from("water_logs")
-      .insert([payload]);
+      .insert([payload])
+      .select("id, quantidade_ml, data, hora, created_at")
+      .single();
 
     if (insertError) {
-      return res
-        .status(400)
-        .json({ error: insertError.message, details: insertError });
+      return res.status(400).json({ error: insertError.message, details: insertError });
     }
 
-    return res.status(201).json({ message: "Registro inserido com sucesso" });
+    return res.status(201).json({ message: "Registro inserido com sucesso", data: inserted });
   } catch (e) {
     console.error("water-log fatal:", e);
-    return res
-      .status(500)
-      .json({ error: "Server error", message: e?.message || String(e) });
+    return res.status(500).json({ error: "Server error", message: e?.message || String(e) });
   }
 }
