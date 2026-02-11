@@ -13,6 +13,7 @@ import GerarPix from "@/components/GerarPix";
 import AuthGate from "@/components/AuthGate";
 import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
+import Perfil from "@/pages/Perfil";
 
 // ✅ Ajustado para o local onde você criou o arquivo no print: src/components/Auth/Callback.jsx
 import AuthCallback from "@/components/Auth/Callback";
