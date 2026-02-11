@@ -62,15 +62,19 @@ export default async function handler(req, res) {
       typeof req.body === "string" ? JSON.parse(req.body) : req.body || {};
     const { quantidade_ml, data, hora } = body;
 
-    if (quantidade_ml == null || !data || !hora) {
+    if (quantidade_ml == null || !data) {
       return res.status(400).json({ error: "Campos obrigatórios ausentes" });
     }
 
     const payload = {
-      user_id: user.id, // ✅ ESSENCIAL: evita user_id null no banco
+      // ✅ ESSENCIAL: sua tabela exige os dois como NOT NULL
+      created_by: user.id,
+      user_id: user.id,
+
       quantidade_ml: Number(quantidade_ml),
       data,
-      hora,
+      // hora é nullable no banco (YES), então só manda se vier
+      ...(hora ? { hora } : {}),
     };
 
     const { error: insertError } = await supabase
