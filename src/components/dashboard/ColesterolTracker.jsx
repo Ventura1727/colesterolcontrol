@@ -42,6 +42,15 @@ function daysBetween(startDate, endDate) {
   return Math.floor(ms / (1000 * 60 * 60 * 24));
 }
 
+// Targets “simples” (podemos ajustar depois)
+const TARGETS = {
+  ldl: { target: 100, direction: "down", label: "LDL", unit: "mg/dL" },
+  total: { target: 200, direction: "down", label: "Total", unit: "mg/dL" },
+  triglicerides: { target: 150, direction: "down", label: "Triglicerídeos", unit: "mg/dL" },
+  // sem sexo no perfil -> uso >= 50 como alvo conservador
+  hdl: { target: 50, direction: "up", label: "HDL", unit: "mg/dL" },
+};
+
 export default function ColesterolTracker({ records, onRecordAdded }) {
   const [isOpen, setIsOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
@@ -57,15 +66,6 @@ export default function ColesterolTracker({ records, onRecordAdded }) {
 
   const latestRecord = records?.[0] || null;
   const previousRecord = records?.[1] || null;
-
-  const meta = useMemo(() => {
-    const ldl = toNum(latestRecord?.ldl);
-    if (!ldl) return null;
-    if (ldl > 160) return { target: Math.max(ldl - 30, 0), desc: "Meta: reduzir ~30 pontos em 90 dias", urgency: "high" };
-    if (ldl > 130) return { target: Math.max(ldl - 20, 0), desc: "Meta: reduzir ~20 pontos em 60 dias", urgency: "medium" };
-    if (ldl > 100) return { target: Math.max(ldl - 10, 0), desc: "Meta: reduzir ~10 pontos em 45 dias", urgency: "low" };
-    return { target: ldl, desc: "Meta: manter níveis saudáveis", urgency: "success" };
-  }, [latestRecord]);
 
   const urgencyColors = {
     high: "text-red-700 bg-red-50 border-red-200",
@@ -92,7 +92,7 @@ export default function ColesterolTracker({ records, onRecordAdded }) {
     triglicerides: latestRecord?.triglicerides,
   });
 
-  // ✅ Contador 90 dias a partir do record_date do último exame
+  // Contador 90 dias a partir do record_date do último exame
   const cycle = useMemo(() => {
     if (!latestRecord?.record_date) return null;
 
@@ -114,22 +114,13 @@ export default function ColesterolTracker({ records, onRecordAdded }) {
     return { startISO: latestRecord.record_date, dayNumber, daysPassed, totalDays, remaining, progress, due };
   }, [latestRecord?.record_date]);
 
-  // ✅ helper de seta intuitiva
-  // invert=false: menor é melhor (LDL/Total/TG)
-  // invert=true: maior é melhor (HDL)
+  // Setas intuitivas: LDL/Total/TG menor é melhor; HDL maior é melhor
   const renderDelta = (delta, invert = false) => {
     if (delta == null) return null;
-
-    const improved = invert ? delta >= 0 : delta <= 0; // HDL invertido
+    const improved = invert ? delta >= 0 : delta <= 0;
     const cls = improved ? "text-emerald-600" : "text-red-600";
-
-    // seta: se improved -> seta verde "boa"; senão seta vermelha "ruim"
-    // para LDL/Total/TG: delta negativo é bom => TrendingDown
-    // para HDL: delta positivo é bom => TrendingUp
     const Icon = improved ? (invert ? TrendingUp : TrendingDown) : (invert ? TrendingDown : TrendingUp);
-
     const label = delta > 0 ? `+${fmt(delta)}` : fmt(delta);
-
     return (
       <span className={`text-xs flex items-center gap-1 ${cls}`}>
         <Icon className="w-3 h-3" />
@@ -137,6 +128,70 @@ export default function ColesterolTracker({ records, onRecordAdded }) {
       </span>
     );
   };
+
+  // ✅ Metas sugeridas para TODOS os marcadores fora
+  const goals = useMemo(() => {
+    if (!latestRecord) return { items: [], summary: null };
+
+    const values = {
+      ldl: toNum(latestRecord.ldl),
+      hdl: toNum(latestRecord.hdl),
+      total: toNum(latestRecord.total),
+      triglicerides: toNum(latestRecord.triglicerides),
+    };
+
+    const items = [];
+
+    const add = (key) => {
+      const v = values[key];
+      if (v == null) return;
+
+      const cfg = TARGETS[key];
+      const target = cfg.target;
+
+      // direction down: fora se v > target
+      // direction up: fora se v < target
+      const out = cfg.direction === "down" ? v > target : v < target;
+      if (!out) return;
+
+      const diff = Math.abs(v - target);
+      const directionText = cfg.direction === "down" ? "reduzir" : "aumentar";
+
+      // “urgência” simples (depois refinamos)
+      let urgency = "low";
+      if (key === "ldl") urgency = v >= 160 ? "high" : v >= 130 ? "medium" : "low";
+      if (key === "total") urgency = v >= 240 ? "high" : v >= 220 ? "medium" : "low";
+      if (key === "triglicerides") urgency = v >= 500 ? "high" : v >= 200 ? "medium" : "low";
+      if (key === "hdl") urgency = v < 35 ? "high" : v < 45 ? "medium" : "low";
+
+      items.push({
+        key,
+        label: cfg.label,
+        direction: cfg.direction,
+        directionText,
+        current: v,
+        target,
+        diff,
+        urgency,
+      });
+    };
+
+    add("ldl");
+    add("total");
+    add("triglicerides");
+    add("hdl");
+
+    // priorização: high -> medium -> low
+    const order = { high: 0, medium: 1, low: 2 };
+    items.sort((a, b) => order[a.urgency] - order[b.urgency]);
+
+    const summary =
+      items.length === 0
+        ? "Parabéns — seus resultados estão dentro das metas de referência. Continue mantendo hábitos saudáveis."
+        : null;
+
+    return { items, summary };
+  }, [latestRecord]);
 
   const handleSubmit = async () => {
     setErrorMsg("");
@@ -183,11 +238,9 @@ export default function ColesterolTracker({ records, onRecordAdded }) {
         throw new Error(`Falha ao salvar exame (HTTP ${res.status}). ${txt}`);
       }
 
-      // ✅ Fecha, notifica e RECARREGA (Item A)
       setIsOpen(false);
       onRecordAdded?.();
 
-      // Limpa form
       setForm({
         ldl: "",
         hdl: "",
@@ -196,7 +249,6 @@ export default function ColesterolTracker({ records, onRecordAdded }) {
         data_exame: new Date().toISOString().split("T")[0],
       });
 
-      // força refletir o registro novo como "último"
       setTimeout(() => window.location.reload(), 300);
     } catch (err) {
       console.error("Erro ao salvar exame:", err);
@@ -236,7 +288,6 @@ export default function ColesterolTracker({ records, onRecordAdded }) {
               <span className="font-medium text-gray-800">{latestRecord?.record_date || "—"}</span>
             </div>
 
-            {/* ✅ Progresso 90 dias */}
             {cycle && (
               <div className="mb-3">
                 <div className="flex items-center justify-between text-xs text-gray-600 mb-1">
@@ -246,10 +297,7 @@ export default function ColesterolTracker({ records, onRecordAdded }) {
                   </span>
                 </div>
                 <div className="w-full bg-gray-200 rounded-full h-3">
-                  <div
-                    className="bg-red-500 h-3 rounded-full transition-all"
-                    style={{ width: `${cycle.progress}%` }}
-                  />
+                  <div className="bg-red-500 h-3 rounded-full transition-all" style={{ width: `${cycle.progress}%` }} />
                 </div>
 
                 {cycle.due ? (
@@ -322,16 +370,41 @@ export default function ColesterolTracker({ records, onRecordAdded }) {
               </div>
             </div>
 
-            {meta && (
-              <div className={`mt-3 rounded-xl border p-3 flex items-start gap-2 ${urgencyColors[meta.urgency]}`}>
-                <Target className="w-5 h-5 mt-0.5 flex-shrink-0" />
+            {/* ✅ Metas sugeridas para todos que estiverem fora */}
+            <div className="mt-3 rounded-xl border border-red-200 bg-red-50 p-3">
+              <div className="flex items-start gap-2">
+                <Target className="w-5 h-5 mt-0.5 flex-shrink-0 text-red-600" />
                 <div className="text-sm">
-                  <div className="font-semibold">Meta sugerida</div>
-                  <div>{meta.desc}</div>
-                  <div className="text-xs mt-1 opacity-80">Alvo LDL: {fmt(meta.target)}</div>
+                  <div className="font-semibold text-red-700">Metas sugeridas (90 dias)</div>
+
+                  {goals.summary ? (
+                    <div className="text-xs text-red-700/80 mt-1">{goals.summary}</div>
+                  ) : (
+                    <div className="mt-2 space-y-2">
+                      {goals.items.map((g) => (
+                        <div key={g.key} className="bg-white/70 border border-red-100 rounded-lg p-2">
+                          <div className="flex items-center justify-between">
+                            <div className="font-medium text-gray-900">
+                              {g.label}: <span className="font-bold">{fmt(g.current)}</span>
+                            </div>
+                            <div className="text-xs text-gray-600">
+                              alvo: <span className="font-semibold">{fmt(g.target)}</span> {TARGETS[g.key].unit}
+                            </div>
+                          </div>
+                          <div className="text-xs text-gray-700 mt-1">
+                            Precisa <span className="font-semibold">{g.directionText}</span>{" "}
+                            <span className="font-semibold">{fmt(g.diff)}</span> pontos para atingir o alvo.
+                          </div>
+                        </div>
+                      ))}
+                      <div className="text-xs text-gray-600">
+                        *Sugestões baseadas em referências gerais. Ajustes individuais devem ser feitos com seu médico.
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
-            )}
+            </div>
           </>
         ) : (
           <div className="text-sm text-gray-700">
@@ -400,9 +473,7 @@ export default function ColesterolTracker({ records, onRecordAdded }) {
             </div>
 
             {errorMsg && (
-              <div className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-xl p-3">
-                {errorMsg}
-              </div>
+              <div className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-xl p-3">{errorMsg}</div>
             )}
 
             <div className="flex gap-2 pt-2">
