@@ -1,10 +1,10 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { motion } from "framer-motion";
 import { Send, Paperclip, ArrowLeft, Bot, Image as ImageIcon, X, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { createPageUrl } from "@/utils";
 import MessageBubble from "@/components/nutrition/MessageBubble";
+import { supabase } from "@/lib/supabaseClient";
 
 const STORAGE_KEY = "heartbalance_nutrition_chat_messages_v1";
 
@@ -13,7 +13,7 @@ export default function Nutricionista() {
   const [inputValue, setInputValue] = useState("");
   const [isLoading, setIsLoading] = useState(false);
 
-  // Mantive o UI de anexo, mas por enquanto NÃO envia imagem (a gente faz depois)
+  // UI anexo (ainda não envia imagem)
   const [selectedFile, setSelectedFile] = useState(null);
   const [isUploading, setIsUploading] = useState(false);
 
@@ -52,6 +52,18 @@ export default function Nutricionista() {
     if (f) setSelectedFile(f);
   };
 
+  const pushAssistantError = (text) => {
+    setMessages((prev) => [
+      ...prev,
+      {
+        role: "assistant",
+        content:
+          text ||
+          "Não consegui responder agora. Tente novamente em instantes.\n\n(Se persistir, me mande o erro do console/network).",
+      },
+    ]);
+  };
+
   const handleSendMessage = async (e) => {
     e.preventDefault();
     if (!canSend) return;
@@ -71,37 +83,44 @@ export default function Nutricionista() {
     setMessages(nextMessages);
 
     try {
+      // ✅ pega token do usuário (mesmo padrão do water-log/colesterol)
+      const { data: sessionData, error: sessionErr } = await supabase.auth.getSession();
+      if (sessionErr) throw sessionErr;
+
+      const token = sessionData?.session?.access_token;
+      if (!token) throw new Error("Sessão inválida. Faça login novamente.");
+
       const resp = await fetch("/api/nutrition-chat", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
         body: JSON.stringify({ messages: nextMessages.slice(-20) }),
       });
 
       const data = await resp.json().catch(() => ({}));
 
-      if (!resp.ok || !data?.assistant) {
-        setMessages((prev) => [
-          ...prev,
-          {
-            role: "assistant",
-            content:
-              "Não consegui responder agora. Tente novamente em instantes.\n\n(Se persistir, me mande o erro do console/network).",
-          },
-        ]);
-        setIsLoading(false);
+      if (!resp.ok) {
+        // ✅ mostra erro real do backend
+        pushAssistantError(
+          data?.error ||
+            `Erro no servidor (HTTP ${resp.status}). Se persistir, verifique logs do Vercel e me mande o print.`
+        );
+        return;
+      }
+
+      if (!data?.assistant) {
+        pushAssistantError("Resposta vazia do servidor. Verifique logs do Vercel (/api/nutrition-chat).");
         return;
       }
 
       setMessages((prev) => [...prev, { role: "assistant", content: data.assistant }]);
     } catch (err) {
-      setMessages((prev) => [
-        ...prev,
-        {
-          role: "assistant",
-          content:
-            "Falha de conexão com o servidor do chat. Verifique se o deploy está ok e tente novamente.",
-        },
-      ]);
+      console.error("Nutricionista IA erro:", err);
+      pushAssistantError(
+        `Falha de conexão com o servidor do chat.\n\nDetalhe: ${err?.message || "erro desconhecido"}`
+      );
     } finally {
       setIsLoading(false);
     }
@@ -142,7 +161,7 @@ export default function Nutricionista() {
               Olá! Eu sou seu nutricionista.
             </h3>
             <p className="text-sm text-gray-500 max-w-xs">
-              Posso sugerir um cardápio para reduzir LDL/colesterol, analisar hábitos e montar metas semanais.
+              Posso sugerir cardápios para reduzir LDL/colesterol, ajustar hábitos e montar metas semanais.
             </p>
           </div>
         )}
