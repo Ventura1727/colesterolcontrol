@@ -30,12 +30,8 @@ const features = [
 ];
 
 export default function Dashboard() {
-  // ✅ agora o “perfil rico” vem de profiles (fonte única)
   const [profile, setProfile] = useState(null);
-
-  // FONTE DO PREMIUM
   const [access, setAccess] = useState({ role: null, plano_ativo: false, premium_until: null, is_premium: null });
-
   const [colesterolRecords, setColesterolRecords] = useState([]);
   const [historicoAgua, setHistoricoAgua] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -58,80 +54,80 @@ export default function Dashboard() {
 
         const userId = session.user.id;
 
-        /**
-         * A) Perfis + Premium (tudo de profiles)
-         *    - premium: role, plano_ativo, premium_until, is_premium
-         *    - perfil: idade/objetivo/alimentacao/exercicios + XP/rank/streak + meta_agua_litros
-         */
-        const selectFields =
-          "role, plano_ativo, premium_until, is_premium, " +
-          "idade, objetivo, alimentacao_objetivo, exercicios_objetivo, " +
-          "xp_total, rank, dias_consecutivos, metas_concluidas, meta_agua_litros";
+        // A) Premium: fonte única em profiles
+        let role = null;
+        let plano_ativo = false;
+        let premium_until = null;
+        let is_premium = null;
 
-        let { data: prof, error: profErr } = await supabase
+        const { data: prof, error: profErr } = await supabase
           .from("profiles")
-          .select(selectFields)
+          .select("role, plano_ativo, premium_until, is_premium")
           .eq("id", userId)
           .maybeSingle();
 
-        if (!profErr && !prof) {
-          // garante linha mínima para não quebrar e já retorna os campos
-          const { data: created, error: upsertErr } = await supabase
+        if (!profErr && prof) {
+          role = prof?.role ?? null;
+          plano_ativo = Boolean(prof?.plano_ativo);
+          premium_until = prof?.premium_until ?? null;
+          is_premium = prof?.is_premium ?? null;
+        } else if (!profErr && !prof) {
+          const { data: created } = await supabase
             .from("profiles")
-            .upsert({ id: userId, updated_at: new Date().toISOString() }, { onConflict: "id" })
-            .select(selectFields)
+            .upsert({ id: userId }, { onConflict: "id" })
+            .select("role, plano_ativo, premium_until, is_premium")
             .single();
 
-          if (!upsertErr) prof = created;
+          role = created?.role ?? null;
+          plano_ativo = Boolean(created?.plano_ativo);
+          premium_until = created?.premium_until ?? null;
+          is_premium = created?.is_premium ?? null;
+        } else {
+          role = null;
+          plano_ativo = false;
         }
 
-        if (mounted && prof) {
-          setAccess({
-            role: prof?.role ?? null,
-            plano_ativo: Boolean(prof?.plano_ativo),
-            premium_until: prof?.premium_until ?? null,
-            is_premium: prof?.is_premium ?? null,
-          });
-
-          // normaliza defaults para não quebrar UI
-          setProfile({
-            id: userId,
-            idade: prof?.idade ?? null,
-            objetivo: prof?.objetivo ?? null,
-            alimentacao_objetivo: prof?.alimentacao_objetivo ?? null,
-            exercicios_objetivo: prof?.exercicios_objetivo ?? null,
-            xp_total: prof?.xp_total ?? 0,
-            rank: prof?.rank ?? "Iniciante",
-            dias_consecutivos: prof?.dias_consecutivos ?? 0,
-            metas_concluidas: prof?.metas_concluidas ?? 0,
-            meta_agua_litros: prof?.meta_agua_litros ?? null,
-          });
-        }
-
-        /**
-         * B) Colesterol (não quebra se tabela não existir)
-         */
+        // B) Perfil “rico” em user_profiles (quiz/xp/rank/etc)
+        let richProfile = null;
         try {
-  const { data: recs, error: recErr } = await supabase
-    .from("cholesterol_records")
-    .select("*")
-    .eq("user_id", userId)
-    .order("record_date", { ascending: false })
-    .limit(10);
+          const { data: up, error: upErr } = await supabase
+            .from("user_profiles")
+            .select("*")
+            .eq("id", userId)
+            .maybeSingle();
+          if (!upErr && up) richProfile = up;
+        } catch {
+          richProfile = null;
+        }
 
-  if (!recErr && mounted) setColesterolRecords(Array.isArray(recs) ? recs : []);
-  if (recErr && mounted) setColesterolRecords([]);
-} catch {
-  if (mounted) setColesterolRecords([]);
-}
+        if (!richProfile) {
+          richProfile = { id: userId, xp_total: 0, rank: "Iniciante", dias_consecutivos: 0, metas_concluidas: 0 };
+        }
 
-        /**
-         * C) Water logs via API (se ok, ótimo; se falhar, não quebra)
-         */
+        if (!mounted) return;
+
+        setAccess({ role, plano_ativo, premium_until, is_premium });
+        setProfile(richProfile);
+
+        // C) Colesterol (tabela correta: cholesterol_records)
+        try {
+          const { data: recs } = await supabase
+            .from("cholesterol_records")
+            .select("*")
+            .eq("user_id", userId)
+            .order("record_date", { ascending: false })
+            .order("id", { ascending: false })
+            .limit(10);
+
+          setColesterolRecords(Array.isArray(recs) ? recs : []);
+        } catch {
+          setColesterolRecords([]);
+        }
+
+        // D) Water logs via API
         try {
           const token = session?.access_token;
           const res = await fetch("/api/water-log", { headers: { Authorization: `Bearer ${token}` } });
-          if (!mounted) return;
           if (!res.ok) {
             setHistoricoAgua([]);
           } else {
@@ -139,7 +135,7 @@ export default function Dashboard() {
             setHistoricoAgua(Array.isArray(data) ? data : []);
           }
         } catch {
-          if (mounted) setHistoricoAgua([]);
+          setHistoricoAgua([]);
         }
       } finally {
         if (mounted) setIsLoading(false);
@@ -150,9 +146,6 @@ export default function Dashboard() {
     return () => { mounted = false; };
   }, []);
 
-  /**
-   * Premium FINAL: baseado na mesma regra do guard (profiles)
-   */
   const isPremium = useMemo(() => {
     const premiumUntilOk = access?.premium_until ? new Date(access.premium_until) > new Date() : false;
 
@@ -184,7 +177,6 @@ export default function Dashboard() {
     );
   }
 
-  // Hidratação: agora tenta vir do profiles.meta_agua_litros; fallback 2.0L
   const hoje = new Date().toISOString().split("T")[0];
   const consumoHoje = (historicoAgua || [])
     .filter((item) => item?.data === hoje)
@@ -197,7 +189,6 @@ export default function Dashboard() {
   return (
     <div className="min-h-screen bg-gradient-to-br from-red-50 via-white to-rose-50 p-4 pb-24">
       <div className="max-w-lg mx-auto pt-6">
-        {/* Header */}
         <div className="flex items-center justify-between mb-6">
           <div className="flex items-center gap-3">
             <div className="w-12 h-12 bg-gradient-to-br from-red-500 to-rose-600 rounded-xl flex items-center justify-center shadow-lg shadow-red-200">
@@ -226,7 +217,6 @@ export default function Dashboard() {
           )}
         </div>
 
-        {/* Rank Card - Apenas Premium */}
         {isPremium && (
           <RankCard
             profile={profile}
@@ -234,15 +224,17 @@ export default function Dashboard() {
           />
         )}
 
-        {/* Colesterol Tracker - Apenas Premium */}
+        {/* ✅ Colesterol Tracker */}
         {isPremium && (
           <ColesterolTracker
             records={colesterolRecords}
-            onRecordAdded={() => window.location.reload()}
+            onRecordAdded={() => {
+              // ✅ Garantia extra (além do reload dentro do tracker)
+              setTimeout(() => window.location.reload(), 200);
+            }}
           />
         )}
 
-        {/* Hidratação */}
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
@@ -260,7 +252,6 @@ export default function Dashboard() {
           </p>
         </motion.div>
 
-        {/* Resumo do Perfil */}
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
@@ -275,23 +266,19 @@ export default function Dashboard() {
               {profile?.objetivo || "—"}
             </span>
           </div>
-
           <div className="grid grid-cols-2 gap-3 text-sm">
             <div className="bg-gray-50 rounded-lg p-3">
               <div className="text-gray-500 text-xs">Idade</div>
               <div className="font-medium">{profile?.idade ? `${profile.idade} anos` : "—"}</div>
             </div>
-
             <div className="bg-gray-50 rounded-lg p-3">
               <div className="text-gray-500 text-xs">Alimentação</div>
-              <div className="font-medium">{profile?.alimentacao_objetivo || "—"}</div>
+              <div className="font-medium">{profile?.alimentacao || "—"}</div>
             </div>
-
             <div className="bg-gray-50 rounded-lg p-3">
               <div className="text-gray-500 text-xs">Exercícios</div>
-              <div className="font-medium">{profile?.exercicios_objetivo || "—"}</div>
+              <div className="font-medium">{profile?.exercicios || "—"}</div>
             </div>
-
             <div className="bg-gray-50 rounded-lg p-3">
               <div className="text-gray-500 text-xs">Dias seguidos</div>
               <div className="font-medium">{profile?.dias_consecutivos || 0} dias 🔥</div>
@@ -299,7 +286,6 @@ export default function Dashboard() {
           </div>
         </motion.div>
 
-        {/* Grid de Funcionalidades */}
         <h2 className="font-semibold text-gray-900 mb-4">Funcionalidades</h2>
         <div className="grid grid-cols-2 gap-3">
           {features.map((feature, idx) => (
@@ -339,7 +325,6 @@ export default function Dashboard() {
           ))}
         </div>
 
-        {/* Dica do dia */}
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
@@ -353,7 +338,6 @@ export default function Dashboard() {
         </motion.div>
       </div>
 
-      {/* Modal de Bloqueio */}
       {showLockedModal && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
           <motion.div
