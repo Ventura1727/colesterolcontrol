@@ -30,8 +30,12 @@ const features = [
 ];
 
 export default function Dashboard() {
-  const [profile, setProfile] = useState(null);         // dados do user (quiz/idade/etc) -> pode vir de user_profiles
-  const [access, setAccess] = useState({ role: null, plano_ativo: false, premium_until: null, is_premium: null }); // FONTE DO PREMIUM
+  // ✅ agora o “perfil rico” vem de profiles (fonte única)
+  const [profile, setProfile] = useState(null);
+
+  // FONTE DO PREMIUM
+  const [access, setAccess] = useState({ role: null, plano_ativo: false, premium_until: null, is_premium: null });
+
   const [colesterolRecords, setColesterolRecords] = useState([]);
   const [historicoAgua, setHistoricoAgua] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -55,69 +59,57 @@ export default function Dashboard() {
         const userId = session.user.id;
 
         /**
-         * A) FONTE ÚNICA DO PREMIUM (igual ao RequireSubscription do App.jsx):
-         *    public.profiles.role + public.profiles.plano_ativo
-         *    + opcional: premium_until/is_premium (se existirem)
+         * A) Perfis + Premium (tudo de profiles)
+         *    - premium: role, plano_ativo, premium_until, is_premium
+         *    - perfil: idade/objetivo/alimentacao/exercicios + XP/rank/streak + meta_agua_litros
          */
-        let role = null;
-        let plano_ativo = false;
-        let premium_until = null;
-        let is_premium = null;
+        const selectFields =
+          "role, plano_ativo, premium_until, is_premium, " +
+          "idade, objetivo, alimentacao_objetivo, exercicios_objetivo, " +
+          "xp_total, rank, dias_consecutivos, metas_concluidas, meta_agua_litros";
 
-        const { data: prof, error: profErr } = await supabase
+        let { data: prof, error: profErr } = await supabase
           .from("profiles")
-          .select("role, plano_ativo, premium_until, is_premium")
+          .select(selectFields)
           .eq("id", userId)
           .maybeSingle();
 
-        if (!profErr && prof) {
-          role = prof?.role ?? null;
-          plano_ativo = Boolean(prof?.plano_ativo);
-          premium_until = prof?.premium_until ?? null;
-          is_premium = prof?.is_premium ?? null;
-        } else if (!profErr && !prof) {
-          // garante linha mínima para não quebrar
-          const { data: created } = await supabase
+        if (!profErr && !prof) {
+          // garante linha mínima para não quebrar e já retorna os campos
+          const { data: created, error: upsertErr } = await supabase
             .from("profiles")
-            .upsert({ id: userId }, { onConflict: "id" })
-            .select("role, plano_ativo, premium_until, is_premium")
+            .upsert({ id: userId, updated_at: new Date().toISOString() }, { onConflict: "id" })
+            .select(selectFields)
             .single();
 
-          role = created?.role ?? null;
-          plano_ativo = Boolean(created?.plano_ativo);
-          premium_until = created?.premium_until ?? null;
-          is_premium = created?.is_premium ?? null;
+          if (!upsertErr) prof = created;
+        }
+
+        if (mounted && prof) {
+          setAccess({
+            role: prof?.role ?? null,
+            plano_ativo: Boolean(prof?.plano_ativo),
+            premium_until: prof?.premium_until ?? null,
+            is_premium: prof?.is_premium ?? null,
+          });
+
+          // normaliza defaults para não quebrar UI
+          setProfile({
+            id: userId,
+            idade: prof?.idade ?? null,
+            objetivo: prof?.objetivo ?? null,
+            alimentacao_objetivo: prof?.alimentacao_objetivo ?? null,
+            exercicios_objetivo: prof?.exercicios_objetivo ?? null,
+            xp_total: prof?.xp_total ?? 0,
+            rank: prof?.rank ?? "Iniciante",
+            dias_consecutivos: prof?.dias_consecutivos ?? 0,
+            metas_concluidas: prof?.metas_concluidas ?? 0,
+            meta_agua_litros: prof?.meta_agua_litros ?? null,
+          });
         }
 
         /**
-         * B) Perfil “rico” (quiz/idade/exercicios/alimentacao etc.)
-         *    Se você usa user_profiles, ok — mas NÃO use isso para premium.
-         *    (Se não existir, não quebra.)
-         */
-        let richProfile = null;
-        try {
-          const { data: up, error: upErr } = await supabase
-            .from("user_profiles")
-            .select("*")
-            .eq("id", userId)
-            .maybeSingle();
-          if (!upErr && up) richProfile = up;
-        } catch {
-          richProfile = null;
-        }
-
-        // fallback: se não existir user_profiles, usa o mínimo
-        if (!richProfile) {
-          richProfile = { id: userId, xp_total: 0, rank: "Iniciante", dias_consecutivos: 0, metas_concluidas: 0 };
-        }
-
-        if (!mounted) return;
-
-        setAccess({ role, plano_ativo, premium_until, is_premium });
-        setProfile(richProfile);
-
-        /**
-         * C) Colesterol (não quebra se tabela não existir)
+         * B) Colesterol (não quebra se tabela não existir)
          */
         try {
           const { data: recs } = await supabase
@@ -125,17 +117,18 @@ export default function Dashboard() {
             .select("*")
             .order("data_exame", { ascending: false })
             .limit(10);
-          setColesterolRecords(Array.isArray(recs) ? recs : []);
+          if (mounted) setColesterolRecords(Array.isArray(recs) ? recs : []);
         } catch {
-          setColesterolRecords([]);
+          if (mounted) setColesterolRecords([]);
         }
 
         /**
-         * D) Water logs via API (se ok, ótimo; se falhar, não quebra)
+         * C) Water logs via API (se ok, ótimo; se falhar, não quebra)
          */
         try {
           const token = session?.access_token;
           const res = await fetch("/api/water-log", { headers: { Authorization: `Bearer ${token}` } });
+          if (!mounted) return;
           if (!res.ok) {
             setHistoricoAgua([]);
           } else {
@@ -143,7 +136,7 @@ export default function Dashboard() {
             setHistoricoAgua(Array.isArray(data) ? data : []);
           }
         } catch {
-          setHistoricoAgua([]);
+          if (mounted) setHistoricoAgua([]);
         }
       } finally {
         if (mounted) setIsLoading(false);
@@ -188,8 +181,7 @@ export default function Dashboard() {
     );
   }
 
-  // Hidratação: meta deveria vir do profiles.meta_agua_litros, mas como seu dashboard ainda não busca,
-  // deixo um fallback coerente: se tiver profile.meta_agua_litros no user_profiles, usa. senão 2000ml.
+  // Hidratação: agora tenta vir do profiles.meta_agua_litros; fallback 2.0L
   const hoje = new Date().toISOString().split("T")[0];
   const consumoHoje = (historicoAgua || [])
     .filter((item) => item?.data === hoje)
@@ -280,19 +272,23 @@ export default function Dashboard() {
               {profile?.objetivo || "—"}
             </span>
           </div>
+
           <div className="grid grid-cols-2 gap-3 text-sm">
             <div className="bg-gray-50 rounded-lg p-3">
               <div className="text-gray-500 text-xs">Idade</div>
               <div className="font-medium">{profile?.idade ? `${profile.idade} anos` : "—"}</div>
             </div>
+
             <div className="bg-gray-50 rounded-lg p-3">
               <div className="text-gray-500 text-xs">Alimentação</div>
-              <div className="font-medium">{profile?.alimentacao || "—"}</div>
+              <div className="font-medium">{profile?.alimentacao_objetivo || "—"}</div>
             </div>
+
             <div className="bg-gray-50 rounded-lg p-3">
               <div className="text-gray-500 text-xs">Exercícios</div>
-              <div className="font-medium">{profile?.exercicios || "—"}</div>
+              <div className="font-medium">{profile?.exercicios_objetivo || "—"}</div>
             </div>
+
             <div className="bg-gray-50 rounded-lg p-3">
               <div className="text-gray-500 text-xs">Dias seguidos</div>
               <div className="font-medium">{profile?.dias_consecutivos || 0} dias 🔥</div>
