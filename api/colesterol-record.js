@@ -35,16 +35,17 @@ export default async function handler(req, res) {
 
     const body = typeof req.body === "string" ? JSON.parse(req.body) : (req.body || {});
     const payload = {
-      user_id: userId, // ✅ amarra ao usuário
-      data_exame: body.data_exame,
-      ldl: body.ldl ?? null,
-      hdl: body.hdl ?? null,
-      total: body.total ?? null,
-      triglicerides: body.triglicerides ?? null,
-      created_at: new Date().toISOString(),
-    };
+  user_id: userId,
+  record_date: body.record_date || body.data_exame, // aceita os 2 por compat
+  total: body.total ?? null,
+  ldl: body.ldl ?? null,
+  hdl: body.hdl ?? null,
+  triglicerides: body.triglicerides ?? null,
+  notes: body.notes ?? null,
+  created_at: new Date().toISOString(),
+};
 
-    if (!payload.data_exame) return res.status(400).json({ error: "Missing data_exame" });
+if (!payload.record_date) return res.status(400).json({ error: "Missing record_date" });
 
     const { data, error } = await supabase.from("colesterol_records").insert([payload]).select("*").single();
     if (error) return res.status(400).json({ error: error.message, details: error });
