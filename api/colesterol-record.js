@@ -47,7 +47,7 @@ export default async function handler(req, res) {
 
 if (!payload.record_date) return res.status(400).json({ error: "Missing record_date" });
 
-    const { data, error } = await supabase.from("colesterol_records").insert([payload]).select("*").single();
+    const { data, error } = await supabase.from("cholesterol_records").insert([payload]).select("*").single();
     if (error) return res.status(400).json({ error: error.message, details: error });
 
     return res.status(200).json({ success: true, data });
