@@ -112,15 +112,18 @@ export default function Dashboard() {
          * B) Colesterol (não quebra se tabela não existir)
          */
         try {
-          const { data: recs } = await supabase
-            .from("colesterol_records")
-            .select("*")
-            .order("data_exame", { ascending: false })
-            .limit(10);
-          if (mounted) setColesterolRecords(Array.isArray(recs) ? recs : []);
-        } catch {
-          if (mounted) setColesterolRecords([]);
-        }
+  const { data: recs, error: recErr } = await supabase
+    .from("colesterol_records")
+    .select("*")
+    .eq("user_id", userId)
+    .order("data_exame", { ascending: false })
+    .limit(10);
+
+  if (!recErr && mounted) setColesterolRecords(Array.isArray(recs) ? recs : []);
+  if (recErr && mounted) setColesterolRecords([]);
+} catch {
+  if (mounted) setColesterolRecords([]);
+}
 
         /**
          * C) Water logs via API (se ok, ótimo; se falhar, não quebra)
