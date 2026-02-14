@@ -113,7 +113,7 @@ export default function Dashboard() {
          */
         try {
   const { data: recs, error: recErr } = await supabase
-    .from("colesterol_records")
+    .from("cholesterol_records")
     .select("*")
     .eq("user_id", userId)
     .order("data_exame", { ascending: false })
