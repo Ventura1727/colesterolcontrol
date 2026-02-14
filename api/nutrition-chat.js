@@ -1,32 +1,4 @@
-import { createClient } from "@supabase/supabase-js";
-
-function getAuthToken(req) {
-  const h = req.headers?.authorization || req.headers?.Authorization || "";
-  if (!h) return null;
-  const [type, token] = h.split(" ");
-  if (type?.toLowerCase() !== "bearer") return null;
-  return token || null;
-}
-
-function safeJsonParse(body) {
-  if (!body) return {};
-  if (typeof body === "object") return body;
-  try {
-    return JSON.parse(body);
-  } catch {
-    return {};
-  }
-}
-
-function clampMessages(messages) {
-  const arr = Array.isArray(messages) ? messages : [];
-  // mantém somente user/assistant, e corta tamanho
-  return arr
-    .filter((m) => m && (m.role === "user" || m.role === "assistant") && typeof m.content === "string")
-    .slice(-20)
-    .map((m) => ({ role: m.role, content: m.content.slice(0, 4000) }));
-}
-
+// api/nutrition-chat.js
 export default async function handler(req, res) {
   try {
     if (req.method !== "POST") {
@@ -35,61 +7,31 @@ export default async function handler(req, res) {
 
     const apiKey = process.env.OPENAI_API_KEY;
     if (!apiKey) {
-      return res.status(500).json({ error: "Missing OPENAI_API_KEY on server" });
+      // não quebra o app com 500 “misterioso”
+      return res.status(200).json({
+        assistant:
+          "O servidor do chat está sem configuração de IA (OPENAI_API_KEY). Fale com o administrador e tente novamente.",
+      });
     }
 
-    const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
-    const supabaseAnon = process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY;
-    if (!supabaseUrl || !supabaseAnon) {
-      return res.status(500).json({ error: "Missing SUPABASE_URL / SUPABASE_ANON_KEY on server" });
-    }
-
-    const token = getAuthToken(req);
-    if (!token) {
-      return res.status(401).json({ error: "Missing Bearer token" });
-    }
-
-    // ✅ Supabase client “no contexto do usuário”
-    const supabase = createClient(supabaseUrl, supabaseAnon, {
-      global: { headers: { Authorization: `Bearer ${token}` } },
-      auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
-    });
-
-    const { data: userData, error: userErr } = await supabase.auth.getUser();
-    if (userErr || !userData?.user) {
-      return res.status(401).json({ error: "Invalid session. Please login again." });
-    }
-
-    const body = safeJsonParse(req.body);
-    const messages = clampMessages(body.messages);
+    const body =
+      typeof req.body === "string" ? JSON.parse(req.body) : req.body || {};
+    const messages = Array.isArray(body.messages) ? body.messages : [];
 
     if (!messages.length) {
       return res.status(400).json({ error: "Missing messages[]" });
     }
 
-    // ✅ system prompt “médico-safe” + sem prometer internet
-    const system = `
-Você é o Nutricionista IA do app HeartBalance.
-Objetivo: ajudar o usuário a melhorar alimentação e hábitos para reduzir colesterol e risco cardiovascular.
-
-REGRAS:
-- Seja prático, direto e didático.
-- Não invente exames/diagnósticos. Se faltarem dados, faça 2-4 perguntas objetivas.
-- Sempre inclua um plano de ação simples (ex.: 3 mudanças + exemplos).
-- Se valores indicarem risco alto (ex.: LDL >= 190, Total >= 240, TG >= 500), recomende procurar um médico.
-- Não substitui orientação médica. Evite linguagem alarmista.
-
-FORMATO:
-- Responda em português (Brasil).
-- Use listas curtas quando fizer sentido.
-`.trim();
-
-    // ✅ Chamada OpenAI (compatível e estável)
-    const payload = {
-      model: "gpt-4o-mini",
-      temperature: 0.6,
-      messages: [{ role: "system", content: system }, ...messages],
-    };
+    // normaliza mensagens para o formato da OpenAI
+    const safeMessages = messages.map((m) => ({
+      role: m?.role === "assistant" ? "assistant" : "user",
+      content:
+        typeof m?.content === "string"
+          ? m.content
+          : m?.content?.[0]?.text
+          ? String(m.content[0].text)
+          : String(m?.content ?? ""),
+    }));
 
     const r = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
@@ -97,27 +39,55 @@ FORMATO:
         Authorization: `Bearer ${apiKey}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify(payload),
+      body: JSON.stringify({
+        model: "gpt-4o-mini",
+        messages: safeMessages.slice(-20),
+        temperature: 0.7,
+      }),
     });
 
-    const j = await r.json().catch(() => ({}));
+    const data = await r.json().catch(() => ({}));
 
+    // Se OpenAI falhou, trate de forma amigável
     if (!r.ok) {
-      const detail = j?.error?.message || JSON.stringify(j || {});
-      return res.status(500).json({ error: `OpenAI error: ${detail}` });
+      const openaiMsg =
+        data?.error?.message || data?.message || JSON.stringify(data);
+      const openaiCode = data?.error?.code || data?.error?.type || "";
+
+      console.error("OpenAI error:", data);
+
+      // quota/billing -> não retornar 500 pro app
+      const quotaLike =
+        String(openaiMsg).toLowerCase().includes("exceeded your current quota") ||
+        String(openaiCode).toLowerCase().includes("insufficient_quota") ||
+        String(openaiCode).toLowerCase().includes("billing");
+
+      if (quotaLike) {
+        return res.status(200).json({
+          assistant:
+            "No momento o chat está indisponível por limite de uso da IA (quota/billing). " +
+            "Tente novamente mais tarde ou avise o administrador para ajustar o plano da OpenAI.",
+        });
+      }
+
+      // outros erros -> resposta amigável
+      return res.status(200).json({
+        assistant:
+          "Tive um problema ao consultar a IA agora. Tente novamente em instantes. " +
+          "(Se persistir, o administrador deve verificar os logs do servidor.)",
+      });
     }
 
-    const assistant =
-      j?.choices?.[0]?.message?.content?.trim?.() ||
-      "";
+    const reply = data?.choices?.[0]?.message?.content ?? "";
 
-    if (!assistant) {
-      return res.status(500).json({ error: "Empty assistant response from OpenAI" });
-    }
-
-    return res.status(200).json({ assistant });
-  } catch (err) {
-    console.error("nutrition-chat error:", err);
-    return res.status(500).json({ error: err?.message || "Server error" });
+    // ✅ IMPORTANTE: frontend espera "assistant"
+    return res.status(200).json({ assistant: reply });
+  } catch (e) {
+    console.error("nutrition-chat fatal:", e);
+    return res.status(200).json({
+      assistant:
+        "Falha no servidor do chat. Tente novamente em instantes. " +
+        "(Se persistir, verifique os logs do Vercel.)",
+    });
   }
 }
