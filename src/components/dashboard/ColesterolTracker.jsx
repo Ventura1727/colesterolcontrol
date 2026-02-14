@@ -36,7 +36,7 @@ export default function ColesterolTracker({ records, onRecordAdded }) {
     hdl: "",
     total: "",
     triglicerides: "",
-    data_exame: new Date().toISOString().split("T")[0],
+    data_exame: new Date().toISOString().split("T")[0], // UI continua "data_exame", mas no DB vira record_date
   });
 
   const latestRecord = records?.[0] || null;
@@ -79,18 +79,18 @@ export default function ColesterolTracker({ records, onRecordAdded }) {
     setErrorMsg("");
 
     const payload = {
-  record_date: form.data_exame,
-  ldl: toNum(form.ldl),
-  hdl: toNum(form.hdl),
-  total: toNum(form.total),
-  triglicerides: toNum(form.triglicerides),
-};
+      record_date: form.data_exame, // ✅ DB usa record_date
+      ldl: toNum(form.ldl),
+      hdl: toNum(form.hdl),
+      total: toNum(form.total),
+      triglicerides: toNum(form.triglicerides),
+    };
 
     // validação mínima: data + pelo menos 1 valor numérico
     const hasAny =
       payload.ldl != null || payload.hdl != null || payload.total != null || payload.triglicerides != null;
 
-    if (!payload.data_exame) {
+    if (!payload.record_date) {
       setErrorMsg("Informe a data do exame.");
       return;
     }
@@ -101,7 +101,6 @@ export default function ColesterolTracker({ records, onRecordAdded }) {
 
     setIsLoading(true);
     try {
-      // ✅ pega token do usuário (mesmo padrão do water-log)
       const { data: sessionData, error: sessionErr } = await supabase.auth.getSession();
       if (sessionErr) throw sessionErr;
 
@@ -166,7 +165,10 @@ export default function ColesterolTracker({ records, onRecordAdded }) {
         {latestRecord ? (
           <>
             <div className="text-xs text-gray-500 mb-2">
-              Último exame: <span className="font-medium text-gray-800">{latestRecord?.data_exame || "—"}</span>
+              Último exame:{" "}
+              <span className="font-medium text-gray-800">
+                {latestRecord?.record_date || "—"}
+              </span>
             </div>
 
             {highRisk && (
@@ -187,7 +189,11 @@ export default function ColesterolTracker({ records, onRecordAdded }) {
                 <div className="font-bold text-gray-900 flex items-center gap-2">
                   {fmt(latestRecord.ldl)}
                   {deltaLDL != null && (
-                    <span className={`text-xs flex items-center gap-1 ${deltaLDL <= 0 ? "text-emerald-600" : "text-red-600"}`}>
+                    <span
+                      className={`text-xs flex items-center gap-1 ${
+                        deltaLDL <= 0 ? "text-emerald-600" : "text-red-600"
+                      }`}
+                    >
                       {deltaLDL <= 0 ? <TrendingDown className="w-3 h-3" /> : <TrendingUp className="w-3 h-3" />}
                       {deltaLDL > 0 ? `+${fmt(deltaLDL)}` : fmt(deltaLDL)}
                     </span>
@@ -205,7 +211,11 @@ export default function ColesterolTracker({ records, onRecordAdded }) {
                 <div className="font-bold text-gray-900 flex items-center gap-2">
                   {fmt(latestRecord.total)}
                   {deltaTotal != null && (
-                    <span className={`text-xs flex items-center gap-1 ${deltaTotal <= 0 ? "text-emerald-600" : "text-red-600"}`}>
+                    <span
+                      className={`text-xs flex items-center gap-1 ${
+                        deltaTotal <= 0 ? "text-emerald-600" : "text-red-600"
+                      }`}
+                    >
                       {deltaTotal <= 0 ? <TrendingDown className="w-3 h-3" /> : <TrendingUp className="w-3 h-3" />}
                       {deltaTotal > 0 ? `+${fmt(deltaTotal)}` : fmt(deltaTotal)}
                     </span>
@@ -218,7 +228,11 @@ export default function ColesterolTracker({ records, onRecordAdded }) {
                 <div className="font-bold text-gray-900 flex items-center gap-2">
                   {fmt(latestRecord.triglicerides)}
                   {deltaTG != null && (
-                    <span className={`text-xs flex items-center gap-1 ${deltaTG <= 0 ? "text-emerald-600" : "text-red-600"}`}>
+                    <span
+                      className={`text-xs flex items-center gap-1 ${
+                        deltaTG <= 0 ? "text-emerald-600" : "text-red-600"
+                      }`}
+                    >
                       {deltaTG <= 0 ? <TrendingDown className="w-3 h-3" /> : <TrendingUp className="w-3 h-3" />}
                       {deltaTG > 0 ? `+${fmt(deltaTG)}` : fmt(deltaTG)}
                     </span>
@@ -306,18 +320,11 @@ export default function ColesterolTracker({ records, onRecordAdded }) {
             </div>
 
             {errorMsg && (
-              <div className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-xl p-3">
-                {errorMsg}
-              </div>
+              <div className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-xl p-3">{errorMsg}</div>
             )}
 
             <div className="flex gap-2 pt-2">
-              <Button
-                onClick={() => setIsOpen(false)}
-                variant="ghost"
-                className="flex-1"
-                disabled={isLoading}
-              >
+              <Button onClick={() => setIsOpen(false)} variant="ghost" className="flex-1" disabled={isLoading}>
                 Cancelar
               </Button>
               <Button
