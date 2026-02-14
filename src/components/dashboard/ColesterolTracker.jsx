@@ -79,12 +79,12 @@ export default function ColesterolTracker({ records, onRecordAdded }) {
     setErrorMsg("");
 
     const payload = {
-      data_exame: form.data_exame,
-      ldl: toNum(form.ldl),
-      hdl: toNum(form.hdl),
-      total: toNum(form.total),
-      triglicerides: toNum(form.triglicerides),
-    };
+  record_date: form.data_exame,
+  ldl: toNum(form.ldl),
+  hdl: toNum(form.hdl),
+  total: toNum(form.total),
+  triglicerides: toNum(form.triglicerides),
+};
 
     // validação mínima: data + pelo menos 1 valor numérico
     const hasAny =
