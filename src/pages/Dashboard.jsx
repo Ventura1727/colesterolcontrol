@@ -116,7 +116,7 @@ export default function Dashboard() {
     .from("cholesterol_records")
     .select("*")
     .eq("user_id", userId)
-    .order("data_exame", { ascending: false })
+    .order("record_date", { ascending: false })
     .limit(10);
 
   if (!recErr && mounted) setColesterolRecords(Array.isArray(recs) ? recs : []);
