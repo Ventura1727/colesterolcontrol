@@ -27,10 +27,8 @@ function isHighRisk({ ldl, total, triglicerides }) {
 }
 
 function parseISODateOnly(d) {
-  // aceita "YYYY-MM-DD" e também outros formatos simples; retorna Date (00:00 local)
   if (!d) return null;
   const s = String(d).trim();
-  // se vier com tempo, pega só a data
   const datePart = s.includes("T") ? s.split("T")[0] : s;
   const parts = datePart.split("-");
   if (parts.length !== 3) return null;
@@ -40,7 +38,6 @@ function parseISODateOnly(d) {
 }
 
 function daysBetween(startDate, endDate) {
-  // diferença em dias inteiros (start -> end), ambos com hora 00:00
   const ms = endDate.getTime() - startDate.getTime();
   return Math.floor(ms / (1000 * 60 * 60 * 24));
 }
@@ -85,6 +82,7 @@ export default function ColesterolTracker({ records, onRecordAdded }) {
   };
 
   const deltaLDL = getChange(latestRecord?.ldl, previousRecord?.ldl);
+  const deltaHDL = getChange(latestRecord?.hdl, previousRecord?.hdl);
   const deltaTotal = getChange(latestRecord?.total, previousRecord?.total);
   const deltaTG = getChange(latestRecord?.triglicerides, previousRecord?.triglicerides);
 
@@ -94,9 +92,7 @@ export default function ColesterolTracker({ records, onRecordAdded }) {
     triglicerides: latestRecord?.triglicerides,
   });
 
-  /**
-   * ✅ Contador de 90 dias a partir da data do último exame (record_date)
-   */
+  // ✅ Contador 90 dias a partir do record_date do último exame
   const cycle = useMemo(() => {
     if (!latestRecord?.record_date) return null;
 
@@ -110,15 +106,37 @@ export default function ColesterolTracker({ records, onRecordAdded }) {
     const daysPassed = Math.max(0, daysPassedRaw);
     const totalDays = 90;
 
-    // Dia 1 no próprio dia do exame (se daysPassed = 0)
     const dayNumber = Math.min(totalDays, daysPassed + 1);
-
     const progress = Math.min(100, (daysPassed / totalDays) * 100);
     const remaining = Math.max(0, totalDays - daysPassed);
+    const due = daysPassed >= totalDays;
 
-    const due = daysPassed >= totalDays; // bateu/ultrapassou 90
     return { startISO: latestRecord.record_date, dayNumber, daysPassed, totalDays, remaining, progress, due };
   }, [latestRecord?.record_date]);
+
+  // ✅ helper de seta intuitiva
+  // invert=false: menor é melhor (LDL/Total/TG)
+  // invert=true: maior é melhor (HDL)
+  const renderDelta = (delta, invert = false) => {
+    if (delta == null) return null;
+
+    const improved = invert ? delta >= 0 : delta <= 0; // HDL invertido
+    const cls = improved ? "text-emerald-600" : "text-red-600";
+
+    // seta: se improved -> seta verde "boa"; senão seta vermelha "ruim"
+    // para LDL/Total/TG: delta negativo é bom => TrendingDown
+    // para HDL: delta positivo é bom => TrendingUp
+    const Icon = improved ? (invert ? TrendingUp : TrendingDown) : (invert ? TrendingDown : TrendingUp);
+
+    const label = delta > 0 ? `+${fmt(delta)}` : fmt(delta);
+
+    return (
+      <span className={`text-xs flex items-center gap-1 ${cls}`}>
+        <Icon className="w-3 h-3" />
+        {label}
+      </span>
+    );
+  };
 
   const handleSubmit = async () => {
     setErrorMsg("");
@@ -165,8 +183,11 @@ export default function ColesterolTracker({ records, onRecordAdded }) {
         throw new Error(`Falha ao salvar exame (HTTP ${res.status}). ${txt}`);
       }
 
+      // ✅ Fecha, notifica e RECARREGA (Item A)
       setIsOpen(false);
       onRecordAdded?.();
+
+      // Limpa form
       setForm({
         ldl: "",
         hdl: "",
@@ -174,6 +195,9 @@ export default function ColesterolTracker({ records, onRecordAdded }) {
         triglicerides: "",
         data_exame: new Date().toISOString().split("T")[0],
       });
+
+      // força refletir o registro novo como "último"
+      setTimeout(() => window.location.reload(), 300);
     } catch (err) {
       console.error("Erro ao salvar exame:", err);
       setErrorMsg(err?.message || "Erro ao salvar exame.");
@@ -269,30 +293,23 @@ export default function ColesterolTracker({ records, onRecordAdded }) {
                 <div className="text-gray-500 text-xs mb-1">LDL</div>
                 <div className="font-bold text-gray-900 flex items-center gap-2">
                   {fmt(latestRecord.ldl)}
-                  {deltaLDL != null && (
-                    <span className={`text-xs flex items-center gap-1 ${deltaLDL <= 0 ? "text-emerald-600" : "text-red-600"}`}>
-                      {deltaLDL <= 0 ? <TrendingDown className="w-3 h-3" /> : <TrendingUp className="w-3 h-3" />}
-                      {deltaLDL > 0 ? `+${fmt(deltaLDL)}` : fmt(deltaLDL)}
-                    </span>
-                  )}
+                  {renderDelta(deltaLDL, false)}
                 </div>
               </div>
 
               <div className="bg-white rounded-xl p-3 border border-gray-100">
                 <div className="text-gray-500 text-xs mb-1">HDL</div>
-                <div className="font-bold text-gray-900">{fmt(latestRecord.hdl)}</div>
+                <div className="font-bold text-gray-900 flex items-center gap-2">
+                  {fmt(latestRecord.hdl)}
+                  {renderDelta(deltaHDL, true)}
+                </div>
               </div>
 
               <div className="bg-white rounded-xl p-3 border border-gray-100">
                 <div className="text-gray-500 text-xs mb-1">Total</div>
                 <div className="font-bold text-gray-900 flex items-center gap-2">
                   {fmt(latestRecord.total)}
-                  {deltaTotal != null && (
-                    <span className={`text-xs flex items-center gap-1 ${deltaTotal <= 0 ? "text-emerald-600" : "text-red-600"}`}>
-                      {deltaTotal <= 0 ? <TrendingDown className="w-3 h-3" /> : <TrendingUp className="w-3 h-3" />}
-                      {deltaTotal > 0 ? `+${fmt(deltaTotal)}` : fmt(deltaTotal)}
-                    </span>
-                  )}
+                  {renderDelta(deltaTotal, false)}
                 </div>
               </div>
 
@@ -300,12 +317,7 @@ export default function ColesterolTracker({ records, onRecordAdded }) {
                 <div className="text-gray-500 text-xs mb-1">Triglicerídeos</div>
                 <div className="font-bold text-gray-900 flex items-center gap-2">
                   {fmt(latestRecord.triglicerides)}
-                  {deltaTG != null && (
-                    <span className={`text-xs flex items-center gap-1 ${deltaTG <= 0 ? "text-emerald-600" : "text-red-600"}`}>
-                      {deltaTG <= 0 ? <TrendingDown className="w-3 h-3" /> : <TrendingUp className="w-3 h-3" />}
-                      {deltaTG > 0 ? `+${fmt(deltaTG)}` : fmt(deltaTG)}
-                    </span>
-                  )}
+                  {renderDelta(deltaTG, false)}
                 </div>
               </div>
             </div>
