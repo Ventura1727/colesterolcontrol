@@ -118,7 +118,7 @@ async function persistQuizToProfiles(quizData) {
       exercicios_objetivo: quizData.exercicios ?? null,
       // se sua tabela usa peso_kg/altura (como vimos no print)
       peso_kg: pesoKg,
-      altura: altura,
+      altura_cm: altura,
       updated_at: new Date().toISOString()
     };
 
