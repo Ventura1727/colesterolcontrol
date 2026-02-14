@@ -3,6 +3,7 @@ import { motion } from 'framer-motion';
 import { Heart, Check, TrendingDown, Crown, Zap, Shield, Star, Sparkles } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { createPageUrl } from '@/utils';
+import { supabase } from '@/lib/supabaseClient';
 
 const getDiagnostico = (quizData) => {
   const pontosFracos = [];
@@ -34,7 +35,7 @@ const plans = [
     id: 'mensal',
     name: 'Plano Mensal',
     duration: '1 mês',
-    price: 24.90,
+    price: 24.9,
     totalSavings: 0,
     recommended: false,
     color: 'from-gray-500 to-gray-600'
@@ -43,8 +44,8 @@ const plans = [
     id: 'trimestral',
     name: 'Plano Trimestral',
     duration: '3 meses',
-    price: 59.90,
-    totalSavings: 24.70,
+    price: 59.9,
+    totalSavings: 24.7,
     recommended: true,
     color: 'from-red-500 to-rose-600'
   },
@@ -52,8 +53,8 @@ const plans = [
     id: 'anual',
     name: 'Plano Anual',
     duration: '12 meses',
-    price: 199.90,
-    totalSavings: 128.80,
+    price: 199.9,
+    totalSavings: 128.8,
     recommended: false,
     color: 'from-amber-500 to-orange-600'
   }
@@ -74,10 +75,68 @@ function isQuizValid(data) {
   return true;
 }
 
+// tenta extrair peso/altura se existirem no quiz, suportando chaves diferentes
+function getOptionalNumber(obj, keys) {
+  for (const k of keys) {
+    const v = obj?.[k];
+    if (v === 0 || v === '0') return 0;
+    if (v == null || v === '') continue;
+    const n = Number(v);
+    if (!Number.isNaN(n) && Number.isFinite(n)) return n;
+  }
+  return null;
+}
+
+async function persistQuizToProfiles(quizData) {
+  try {
+    const { data: sessionData, error: sessionErr } = await supabase.auth.getSession();
+    if (sessionErr) {
+      console.warn('persistQuizToProfiles: getSession error', sessionErr);
+      return;
+    }
+
+    const session = sessionData?.session;
+    const user = session?.user;
+
+    // Se não tiver login, não travamos o fluxo de compra.
+    // Apenas não conseguimos salvar no profiles (porque falta auth.uid()).
+    if (!user) {
+      console.warn('persistQuizToProfiles: user not logged-in; skipping save to profiles');
+      return;
+    }
+
+    const idade = getOptionalNumber(quizData, ['idade', 'age']);
+    const pesoKg = getOptionalNumber(quizData, ['peso_kg', 'pesoKg', 'peso', 'weight']);
+    const altura = getOptionalNumber(quizData, ['altura', 'height']);
+
+    // mapeamento direto do quiz atual
+    const payload = {
+      id: user.id,
+      idade: idade,
+      objetivo: quizData.objetivo ?? null,
+      alimentacao_objetivo: quizData.alimentacao ?? null,
+      exercicios_objetivo: quizData.exercicios ?? null,
+      // se sua tabela usa peso_kg/altura (como vimos no print)
+      peso_kg: pesoKg,
+      altura: altura,
+      updated_at: new Date().toISOString()
+    };
+
+    const { error } = await supabase.from('profiles').upsert(payload, { onConflict: 'id' });
+
+    if (error) {
+      console.error('Falha ao salvar quiz no profiles:', error);
+    }
+  } catch (e) {
+    console.error('persistQuizToProfiles unexpected error:', e);
+  }
+}
+
 export default function Vendas() {
   const [quizData, setQuizData] = useState(null);
   const [diagnostico, setDiagnostico] = useState(null);
   const [selectedPlan, setSelectedPlan] = useState('trimestral');
+  const [isContinuing, setIsContinuing] = useState(false);
 
   useEffect(() => {
     const saved = localStorage.getItem('heartbalance_quiz');
@@ -106,18 +165,30 @@ export default function Vendas() {
 
   const currentPlan = useMemo(() => plans.find((p) => p.id === selectedPlan), [selectedPlan]);
 
-  const handleContinue = () => {
-    // Salva o plano selecionado (id + metadados úteis pro Checkout)
-    const planPayload = {
-      id: currentPlan?.id || selectedPlan,
-      name: currentPlan?.name || '',
-      duration: currentPlan?.duration || '',
-      price: typeof currentPlan?.price === 'number' ? currentPlan.price : null,
-      selectedAt: new Date().toISOString()
-    };
+  const handleContinue = async () => {
+    if (isContinuing) return;
+    setIsContinuing(true);
 
-    localStorage.setItem('heartbalance_selected_plan', JSON.stringify(planPayload));
-    window.location.href = createPageUrl('Checkout');
+    try {
+      // 1) persistir quiz no Supabase (profiles) para refletir na Premium/Dashboard
+      if (quizData) {
+        await persistQuizToProfiles(quizData);
+      }
+
+      // 2) Salva o plano selecionado (id + metadados úteis pro Checkout)
+      const planPayload = {
+        id: currentPlan?.id || selectedPlan,
+        name: currentPlan?.name || '',
+        duration: currentPlan?.duration || '',
+        price: typeof currentPlan?.price === 'number' ? currentPlan.price : null,
+        selectedAt: new Date().toISOString()
+      };
+
+      localStorage.setItem('heartbalance_selected_plan', JSON.stringify(planPayload));
+      window.location.href = createPageUrl('Checkout');
+    } finally {
+      setIsContinuing(false);
+    }
   };
 
   if (!quizData || !diagnostico || !currentPlan) {
@@ -136,11 +207,7 @@ export default function Vendas() {
     <div className="min-h-screen bg-gradient-to-br from-red-50 via-white to-rose-50">
       <div className="max-w-2xl mx-auto px-4 py-8">
         {/* Header */}
-        <motion.div
-          initial={{ opacity: 0, y: -20 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="text-center mb-8"
-        >
+        <motion.div initial={{ opacity: 0, y: -20 }} animate={{ opacity: 1, y: 0 }} className="text-center mb-8">
           <div className="w-16 h-16 bg-gradient-to-br from-red-500 to-rose-600 rounded-2xl mx-auto mb-4 flex items-center justify-center">
             <Heart className="w-8 h-8 text-white" fill="white" />
           </div>
@@ -353,13 +420,16 @@ export default function Vendas() {
               <p className="text-2xl font-bold text-red-600">R$ {currentPlan.price.toFixed(2)}</p>
             </div>
           </div>
+
           <Button
             onClick={handleContinue}
-            className="w-full bg-gradient-to-r from-red-500 to-rose-600 hover:from-red-600 hover:to-rose-700 text-white py-6 rounded-xl text-lg font-semibold shadow-lg"
+            disabled={isContinuing}
+            className="w-full bg-gradient-to-r from-red-500 to-rose-600 hover:from-red-600 hover:to-rose-700 text-white py-6 rounded-xl text-lg font-semibold shadow-lg disabled:opacity-70 disabled:cursor-not-allowed"
           >
-            Continuar para Pagamento
+            {isContinuing ? 'Salvando…' : 'Continuar para Pagamento'}
             <Zap className="w-5 h-5 ml-2" />
           </Button>
+
           <p className="text-xs text-center text-gray-500 mt-3">🔒 Pagamento 100% seguro</p>
         </motion.div>
       </div>
