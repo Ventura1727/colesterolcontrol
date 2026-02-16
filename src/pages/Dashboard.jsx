@@ -31,7 +31,12 @@ const features = [
 
 export default function Dashboard() {
   const [profile, setProfile] = useState(null);
-  const [access, setAccess] = useState({ role: null, plano_ativo: false, premium_until: null, is_premium: null });
+  const [access, setAccess] = useState({
+    role: null,
+    plano_ativo: false,
+    premium_until: null,
+    is_premium: null,
+  });
   const [colesterolRecords, setColesterolRecords] = useState([]);
   const [historicoAgua, setHistoricoAgua] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -54,7 +59,7 @@ export default function Dashboard() {
 
         const userId = session.user.id;
 
-        // A) Premium: fonte única em profiles
+        // A) Premium + Perfil base em profiles
         let role = null;
         let plano_ativo = false;
         let premium_until = null;
@@ -62,21 +67,29 @@ export default function Dashboard() {
 
         const { data: prof, error: profErr } = await supabase
           .from("profiles")
-          .select("role, plano_ativo, premium_until, is_premium, idade, alimentacao_objetivo, exercicios_objetivo, xp_total, rank, dias_consecutivos, metas_concluidas")
+          .select(
+            "role, plano_ativo, premium_until, is_premium, idade, alimentacao_objetivo, exercicios_objetivo, xp_total, rank, dias_consecutivos, metas_concluidas, meta_agua_litros"
+          )
           .eq("id", userId)
           .maybeSingle();
 
-        if (!profErr && prof) {
-          role = prof?.role ?? null;
-          plano_ativo = Boolean(prof?.plano_ativo);
-          premium_until = prof?.premium_until ?? null;
-          is_premium = prof?.is_premium ?? null;
-        } else if (!profErr && !prof) {
+        let profData = prof;
+
+        if (!profErr && profData) {
+          role = profData?.role ?? null;
+          plano_ativo = Boolean(profData?.plano_ativo);
+          premium_until = profData?.premium_until ?? null;
+          is_premium = profData?.is_premium ?? null;
+        } else if (!profErr && !profData) {
           const { data: created } = await supabase
             .from("profiles")
             .upsert({ id: userId }, { onConflict: "id" })
-            .select("role, plano_ativo, premium_until, is_premium")
+            .select(
+              "role, plano_ativo, premium_until, is_premium, idade, alimentacao_objetivo, exercicios_objetivo, xp_total, rank, dias_consecutivos, metas_concluidas, meta_agua_litros"
+            )
             .single();
+
+          profData = created;
 
           role = created?.role ?? null;
           plano_ativo = Boolean(created?.plano_ativo);
@@ -87,39 +100,31 @@ export default function Dashboard() {
           plano_ativo = false;
         }
 
-      // B) Perfil “rico” em user_profiles (quiz/xp/rank/etc)
-let richProfile = null;
+        // B) Dados extras (se existirem) em user_profiles
+        let richProfile = null;
 
-try {
-  const { data: up, error: upErr } = await supabase
-    .from("user_profiles")
-    .select("*")
-    // tenta pelos 2 padrões de coluna (id OU user_id)
-    .or(`id.eq.${userId},user_id.eq.${userId}`)
-    .maybeSingle();
+        try {
+          const { data: up, error: upErr } = await supabase
+            .from("user_profiles")
+            .select("*")
+            .eq("id", userId)
+            .maybeSingle();
 
-  if (!upErr && up) richProfile = up;
-} catch {
-  richProfile = null;
-}
+          if (!upErr && up) richProfile = up;
+        } catch {
+          richProfile = null;
+        }
 
-if (!richProfile) {
-  // fallback padrão (mas mantendo campos do quiz se estiverem em profiles)
-  richProfile = {
-    id: userId,
-    user_id: userId,
-    xp_total: 0,
-    rank: "Iniciante",
-    dias_consecutivos: 0,
-    metas_concluidas: 0,
-    // tenta puxar do profiles se o quiz salvou lá
-    objetivo: prof?.objetivo ?? null,
-    idade: prof?.idade ?? null,
-    alimentacao: prof?.alimentacao ?? null,
-    exercicios: prof?.exercicios ?? null,
-    meta_agua_litros: prof?.meta_agua_litros ?? 2.0,
-  };
-}
+        // Monta um profile final: prioriza profiles, mas mantém extras de user_profiles
+        const finalProfile = {
+          ...(richProfile || {}),
+          ...(profData || {}),
+        };
+
+        if (!mounted) return;
+
+        setAccess({ role, plano_ativo, premium_until, is_premium });
+        setProfile(finalProfile);
 
         // C) Colesterol (tabela correta: cholesterol_records)
         try {
@@ -139,7 +144,9 @@ if (!richProfile) {
         // D) Water logs via API
         try {
           const token = session?.access_token;
-          const res = await fetch("/api/water-log", { headers: { Authorization: `Bearer ${token}` } });
+          const res = await fetch("/api/water-log", {
+            headers: { Authorization: `Bearer ${token}` },
+          });
           if (!res.ok) {
             setHistoricoAgua([]);
           } else {
@@ -155,11 +162,15 @@ if (!richProfile) {
     }
 
     load();
-    return () => { mounted = false; };
+    return () => {
+      mounted = false;
+    };
   }, []);
 
   const isPremium = useMemo(() => {
-    const premiumUntilOk = access?.premium_until ? new Date(access.premium_until) > new Date() : false;
+    const premiumUntilOk = access?.premium_until
+      ? new Date(access.premium_until) > new Date()
+      : false;
 
     return (
       access?.role === "admin" ||
@@ -241,7 +252,6 @@ if (!richProfile) {
           <ColesterolTracker
             records={colesterolRecords}
             onRecordAdded={() => {
-              // ✅ Garantia extra (além do reload dentro do tracker)
               setTimeout(() => window.location.reload(), 200);
             }}
           />
@@ -257,7 +267,10 @@ if (!richProfile) {
             Hidratação de Hoje
           </h2>
           <div className="w-full bg-gray-200 rounded-full h-4 mb-2">
-            <div className="bg-blue-500 h-4 rounded-full" style={{ width: `${progresso}%` }} />
+            <div
+              className="bg-blue-500 h-4 rounded-full"
+              style={{ width: `${progresso}%` }}
+            />
           </div>
           <p className="text-sm text-gray-700">
             {consumoHoje}ml / {metaDiaria}ml
@@ -275,25 +288,37 @@ if (!richProfile) {
               Seu Perfil
             </h2>
             <span className="text-xs text-red-600 bg-red-50 px-2 py-1 rounded-full">
-              {profile?.objetivo || "—"}
+              {profile?.alimentacao_objetivo || "—"}
             </span>
           </div>
+
           <div className="grid grid-cols-2 gap-3 text-sm">
             <div className="bg-gray-50 rounded-lg p-3">
               <div className="text-gray-500 text-xs">Idade</div>
-              <div className="font-medium">{profile?.idade ? `${profile.idade} anos` : "—"}</div>
+              <div className="font-medium">
+                {profile?.idade ? `${profile.idade} anos` : "—"}
+              </div>
             </div>
+
             <div className="bg-gray-50 rounded-lg p-3">
               <div className="text-gray-500 text-xs">Alimentação</div>
-              <div className="font-medium">{profile?.alimentacao || "—"}</div>
+              <div className="font-medium">
+                {profile?.alimentacao_objetivo || "—"}
+              </div>
             </div>
+
             <div className="bg-gray-50 rounded-lg p-3">
               <div className="text-gray-500 text-xs">Exercícios</div>
-              <div className="font-medium">{profile?.exercicios || "—"}</div>
+              <div className="font-medium">
+                {profile?.exercicios_objetivo || "—"}
+              </div>
             </div>
+
             <div className="bg-gray-50 rounded-lg p-3">
               <div className="text-gray-500 text-xs">Dias seguidos</div>
-              <div className="font-medium">{profile?.dias_consecutivos || 0} dias 🔥</div>
+              <div className="font-medium">
+                {profile?.dias_consecutivos || 0} dias 🔥
+              </div>
             </div>
           </div>
         </motion.div>
@@ -331,7 +356,9 @@ if (!richProfile) {
                 />
               </div>
 
-              <div className="font-medium text-gray-900 text-sm mb-1">{feature.title}</div>
+              <div className="font-medium text-gray-900 text-sm mb-1">
+                {feature.title}
+              </div>
               <div className="text-xs text-gray-500">{feature.desc}</div>
             </motion.button>
           ))}
@@ -361,7 +388,9 @@ if (!richProfile) {
               <div className="w-16 h-16 bg-amber-100 rounded-full mx-auto mb-4 flex items-center justify-center">
                 <Crown className="w-8 h-8 text-amber-600" />
               </div>
-              <h3 className="text-xl font-bold text-gray-900 mb-2">Funcionalidade Premium</h3>
+              <h3 className="text-xl font-bold text-gray-900 mb-2">
+                Funcionalidade Premium
+              </h3>
               <p className="text-gray-600 mb-6">
                 Desbloqueie treinos gamificados, receitas exclusivas e acompanhamento de colesterol!
               </p>
