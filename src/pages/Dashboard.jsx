@@ -87,27 +87,39 @@ export default function Dashboard() {
           plano_ativo = false;
         }
 
-        // B) Perfil “rico” em user_profiles (quiz/xp/rank/etc)
-        let richProfile = null;
-        try {
-          const { data: up, error: upErr } = await supabase
-            .from("user_profiles")
-            .select("*")
-            .eq("id", userId)
-            .maybeSingle();
-          if (!upErr && up) richProfile = up;
-        } catch {
-          richProfile = null;
-        }
+      // B) Perfil “rico” em user_profiles (quiz/xp/rank/etc)
+let richProfile = null;
 
-        if (!richProfile) {
-          richProfile = { id: userId, xp_total: 0, rank: "Iniciante", dias_consecutivos: 0, metas_concluidas: 0 };
-        }
+try {
+  const { data: up, error: upErr } = await supabase
+    .from("user_profiles")
+    .select("*")
+    // tenta pelos 2 padrões de coluna (id OU user_id)
+    .or(`id.eq.${userId},user_id.eq.${userId}`)
+    .maybeSingle();
 
-        if (!mounted) return;
+  if (!upErr && up) richProfile = up;
+} catch {
+  richProfile = null;
+}
 
-        setAccess({ role, plano_ativo, premium_until, is_premium });
-        setProfile(richProfile);
+if (!richProfile) {
+  // fallback padrão (mas mantendo campos do quiz se estiverem em profiles)
+  richProfile = {
+    id: userId,
+    user_id: userId,
+    xp_total: 0,
+    rank: "Iniciante",
+    dias_consecutivos: 0,
+    metas_concluidas: 0,
+    // tenta puxar do profiles se o quiz salvou lá
+    objetivo: prof?.objetivo ?? null,
+    idade: prof?.idade ?? null,
+    alimentacao: prof?.alimentacao ?? null,
+    exercicios: prof?.exercicios ?? null,
+    meta_agua_litros: prof?.meta_agua_litros ?? 2.0,
+  };
+}
 
         // C) Colesterol (tabela correta: cholesterol_records)
         try {
