@@ -37,6 +37,7 @@ export default function Dashboard() {
     premium_until: null,
     is_premium: null,
   });
+
   const [colesterolRecords, setColesterolRecords] = useState([]);
   const [historicoAgua, setHistoricoAgua] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -59,7 +60,7 @@ export default function Dashboard() {
 
         const userId = session.user.id;
 
-        // A) Premium + Perfil base em profiles
+        // A) Premium + Perfil base em profiles (onde estão os dados do quiz)
         let role = null;
         let plano_ativo = false;
         let premium_until = null;
@@ -100,9 +101,8 @@ export default function Dashboard() {
           plano_ativo = false;
         }
 
-        // B) Dados extras (se existirem) em user_profiles
+        // B) Dados extras (se existirem) em user_profiles (ex.: plano_tipo, datas, etc)
         let richProfile = null;
-
         try {
           const { data: up, error: upErr } = await supabase
             .from("user_profiles")
@@ -115,7 +115,7 @@ export default function Dashboard() {
           richProfile = null;
         }
 
-        // Monta um profile final: prioriza profiles, mas mantém extras de user_profiles
+        // Profile final (profiles tem prioridade para quiz/saúde)
         const finalProfile = {
           ...(richProfile || {}),
           ...(profData || {}),
@@ -126,7 +126,7 @@ export default function Dashboard() {
         setAccess({ role, plano_ativo, premium_until, is_premium });
         setProfile(finalProfile);
 
-        // C) Colesterol (tabela correta: cholesterol_records)
+        // C) Colesterol
         try {
           const { data: recs } = await supabase
             .from("cholesterol_records")
@@ -141,23 +141,20 @@ export default function Dashboard() {
           setColesterolRecords([]);
         }
 
-       // D) Water logs via API
-try {
-  const token = session?.access_token;
-  const res = await fetch("/api/water-log", {
-    headers: { Authorization: `Bearer ${token}` },
-  });
+        // D) Water logs via API  ✅ (a API retorna { data: [...] })
+        try {
+          const token = session?.access_token;
+          const res = await fetch("/api/water-log", {
+            headers: { Authorization: `Bearer ${token}` },
+          });
 
-  if (!res.ok) {
-    setHistoricoAgua([]);
-  } else {
-    const json = await res.json().catch(() => ({}));
-    const items = Array.isArray(json) ? json : (json?.data || []);
-    setHistoricoAgua(Array.isArray(items) ? items : []);
-  }
-} catch {
-  setHistoricoAgua([]);
-}
+          if (!res.ok) {
+            setHistoricoAgua([]);
+          } else {
+            const json = await res.json().catch(() => ({}));
+            const items = Array.isArray(json) ? json : (json?.data || []);
+            setHistoricoAgua(Array.isArray(items) ? items : []);
+          }
         } catch {
           setHistoricoAgua([]);
         }
@@ -252,7 +249,6 @@ try {
           />
         )}
 
-        {/* ✅ Colesterol Tracker */}
         {isPremium && (
           <ColesterolTracker
             records={colesterolRecords}
@@ -272,10 +268,7 @@ try {
             Hidratação de Hoje
           </h2>
           <div className="w-full bg-gray-200 rounded-full h-4 mb-2">
-            <div
-              className="bg-blue-500 h-4 rounded-full"
-              style={{ width: `${progresso}%` }}
-            />
+            <div className="bg-blue-500 h-4 rounded-full" style={{ width: `${progresso}%` }} />
           </div>
           <p className="text-sm text-gray-700">
             {consumoHoje}ml / {metaDiaria}ml
@@ -300,30 +293,19 @@ try {
           <div className="grid grid-cols-2 gap-3 text-sm">
             <div className="bg-gray-50 rounded-lg p-3">
               <div className="text-gray-500 text-xs">Idade</div>
-              <div className="font-medium">
-                {profile?.idade ? `${profile.idade} anos` : "—"}
-              </div>
+              <div className="font-medium">{profile?.idade ? `${profile.idade} anos` : "—"}</div>
             </div>
-
             <div className="bg-gray-50 rounded-lg p-3">
               <div className="text-gray-500 text-xs">Alimentação</div>
-              <div className="font-medium">
-                {profile?.alimentacao_objetivo || "—"}
-              </div>
+              <div className="font-medium">{profile?.alimentacao_objetivo || "—"}</div>
             </div>
-
             <div className="bg-gray-50 rounded-lg p-3">
               <div className="text-gray-500 text-xs">Exercícios</div>
-              <div className="font-medium">
-                {profile?.exercicios_objetivo || "—"}
-              </div>
+              <div className="font-medium">{profile?.exercicios_objetivo || "—"}</div>
             </div>
-
             <div className="bg-gray-50 rounded-lg p-3">
               <div className="text-gray-500 text-xs">Dias seguidos</div>
-              <div className="font-medium">
-                {profile?.dias_consecutivos || 0} dias 🔥
-              </div>
+              <div className="font-medium">{profile?.dias_consecutivos || 0} dias 🔥</div>
             </div>
           </div>
         </motion.div>
@@ -361,9 +343,7 @@ try {
                 />
               </div>
 
-              <div className="font-medium text-gray-900 text-sm mb-1">
-                {feature.title}
-              </div>
+              <div className="font-medium text-gray-900 text-sm mb-1">{feature.title}</div>
               <div className="text-xs text-gray-500">{feature.desc}</div>
             </motion.button>
           ))}
@@ -393,9 +373,7 @@ try {
               <div className="w-16 h-16 bg-amber-100 rounded-full mx-auto mb-4 flex items-center justify-center">
                 <Crown className="w-8 h-8 text-amber-600" />
               </div>
-              <h3 className="text-xl font-bold text-gray-900 mb-2">
-                Funcionalidade Premium
-              </h3>
+              <h3 className="text-xl font-bold text-gray-900 mb-2">Funcionalidade Premium</h3>
               <p className="text-gray-600 mb-6">
                 Desbloqueie treinos gamificados, receitas exclusivas e acompanhamento de colesterol!
               </p>
