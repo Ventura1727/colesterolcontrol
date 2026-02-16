@@ -62,7 +62,7 @@ export default function Dashboard() {
 
         const { data: prof, error: profErr } = await supabase
           .from("profiles")
-          .select("role, plano_ativo, premium_until, is_premium")
+          .select("role, plano_ativo, premium_until, is_premium, idade, alimentacao_objetivo, exercicios_objetivo, xp_total, rank, dias_consecutivos, metas_concluidas")
           .eq("id", userId)
           .maybeSingle();
 
