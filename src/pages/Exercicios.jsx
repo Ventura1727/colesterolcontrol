@@ -20,8 +20,8 @@ import { supabase } from "@/lib/supabaseClient";
 import { createPageUrl } from "@/utils";
 
 /**
- * Objetivos suportados (sem rota /quiz).
- * O “quiz” vira simplesmente o campo `objetivo` no profiles (ou user_profiles).
+ * Objetivos suportados.
+ * Vamos salvar no Supabase em: profiles.exercicios_objetivo
  */
 const OBJETIVOS = [
   { id: "melhorar_habitos", label: "Melhorar hábitos", hint: "Consistência + leve/moderado" },
@@ -35,13 +35,17 @@ function normalizeObjetivo(raw) {
   const s = (raw || "").toString().trim().toLowerCase();
   if (!s) return null;
 
+  // Se já for um id válido
+  if (OBJETIVOS.some((o) => o.id === s)) return s;
+
+  // Se for label/texto
   if (s.includes("perder") || s.includes("emag")) return "perder_peso";
   if (s.includes("hipertrof") || s.includes("massa")) return "hipertrofia";
   if (s.includes("condicion") || s.includes("fôlego") || s.includes("cardio")) return "condicionamento";
   if (s.includes("mobil") || s.includes("along")) return "mobilidade";
   if (s.includes("hábito") || s.includes("habito") || s.includes("rotina")) return "melhorar_habitos";
 
-  // fallback: tenta match por label
+  // fallback: tenta match por label exato
   const found = OBJETIVOS.find((o) => o.label.toLowerCase() === s);
   return found?.id ?? "melhorar_habitos";
 }
@@ -274,8 +278,7 @@ export default function Exercicios() {
   const [loading, setLoading] = useState(true);
 
   const [userEmail, setUserEmail] = useState("");
-  const [profileRow, setProfileRow] = useState(null); // public.profiles (tem objetivo? pode ter)
-  const [userProfileRow, setUserProfileRow] = useState(null); // user_profiles (quiz/objetivo etc)
+  const [profileRow, setProfileRow] = useState(null); // public.profiles
 
   const [showGoalModal, setShowGoalModal] = useState(false);
   const [goalDraft, setGoalDraft] = useState("melhorar_habitos");
@@ -285,10 +288,10 @@ export default function Exercicios() {
 
   // Personalização simples (UI-only)
   const [custom, setCustom] = useState({
-    nivel: "iniciante", // iniciante | intermediario | avancado
+    nivel: "iniciante",
     diasSemana: 3,
     tempoMin: 30,
-    local: "casa", // casa | academia
+    local: "casa",
     limitacoes: "",
   });
 
@@ -306,37 +309,23 @@ export default function Exercicios() {
 
         setUserEmail(session.user.email || "");
 
-        // 1) profiles (fonte do guard/premium) — pode conter objetivo também
+        // Lê do lugar correto: profiles.exercicios_objetivo
         let prof = null;
         try {
           const { data, error } = await supabase
             .from("profiles")
-            .select("id, objetivo")
+            .select("id, exercicios_objetivo")
             .eq("id", session.user.id)
             .maybeSingle();
+
           if (!error && data) prof = data;
         } catch {
           prof = null;
         }
 
-        // 2) user_profiles (dados ricos)
-        let up = null;
-        try {
-          const { data, error } = await supabase
-            .from("user_profiles")
-            .select("id, objetivo")
-            .eq("id", session.user.id)
-            .maybeSingle();
-          if (!error && data) up = data;
-        } catch {
-          up = null;
-        }
-
         setProfileRow(prof);
-        setUserProfileRow(up);
 
-        // define draft inicial
-        const existingRaw = up?.objetivo ?? prof?.objetivo ?? "";
+        const existingRaw = prof?.exercicios_objetivo ?? "";
         const normalized = normalizeObjetivo(existingRaw) || "melhorar_habitos";
         setGoalDraft(normalized);
       } finally {
@@ -346,38 +335,35 @@ export default function Exercicios() {
   }, []);
 
   const objetivoId = useMemo(() => {
-    const raw = userProfileRow?.objetivo ?? profileRow?.objetivo ?? "";
+    const raw = profileRow?.exercicios_objetivo ?? "";
     return normalizeObjetivo(raw);
-  }, [userProfileRow, profileRow]);
+  }, [profileRow]);
 
   const objetivoAtualLabel = objetivoLabel(objetivoId);
   const plan = useMemo(() => buildPlan(objetivoId || "melhorar_habitos"), [objetivoId]);
 
   async function saveObjetivo(newObjId) {
-    const newLabel = objetivoLabel(newObjId);
-
     const { data: sessionData } = await supabase.auth.getSession();
     const session = sessionData?.session;
     if (!session?.user) throw new Error("Sessão expirada. Faça login novamente.");
 
     const userId = session.user.id;
 
-    // salva em user_profiles (preferencial) e também em profiles (para consistência com outras telas)
-    try {
-      await supabase.from("user_profiles").upsert({ id: userId, objetivo: newLabel }, { onConflict: "id" });
-    } catch {
-      // ignore
+    // Você pode salvar como ID (mais limpo) OU label.
+    // Vou salvar como ID para evitar ambiguidade e garantir que sempre funcione:
+    const valueToSave = newObjId;
+
+    const { error } = await supabase
+      .from("profiles")
+      .upsert({ id: userId, exercicios_objetivo: valueToSave }, { onConflict: "id" });
+
+    if (error) {
+      // Não escondemos o erro: isso ajuda a debugar se houver RLS/policy
+      throw new Error(error.message);
     }
 
-    try {
-      await supabase.from("profiles").upsert({ id: userId, objetivo: newLabel }, { onConflict: "id" });
-    } catch {
-      // ignore
-    }
-
-    // atualiza estado local
-    setUserProfileRow((p) => ({ ...(p || { id: userId }), objetivo: newLabel }));
-    setProfileRow((p) => ({ ...(p || { id: userId }), objetivo: newLabel }));
+    // Atualiza estado local -> os treinos mudam na hora
+    setProfileRow((p) => ({ ...(p || { id: userId }), exercicios_objetivo: valueToSave }));
   }
 
   function openCustomize(cardKey) {
@@ -385,7 +371,6 @@ export default function Exercicios() {
     setShowCustomize(true);
   }
 
-  // Ajusta “texto” do plano baseado na personalização (UI-only)
   const customizationSummary = useMemo(() => {
     const dias = Math.min(Math.max(toNumberOrNull(custom.diasSemana) || 3, 1), 7);
     const tempo = Math.min(Math.max(toNumberOrNull(custom.tempoMin) || 30, 10), 120);
@@ -425,11 +410,7 @@ export default function Exercicios() {
             </div>
           </div>
 
-          <Button
-            onClick={() => setShowGoalModal(true)}
-            variant="outline"
-            className="rounded-xl"
-          >
+          <Button onClick={() => setShowGoalModal(true)} variant="outline" className="rounded-xl">
             <RefreshCcw className="w-4 h-4 mr-2" />
             Redefinir objetivo
           </Button>
@@ -445,11 +426,7 @@ export default function Exercicios() {
               </div>
               <div className="text-2xl font-bold text-gray-900 mt-1">{objetivoAtualLabel}</div>
               <div className="text-sm text-gray-600 mt-1">
-                {objetivoId ? (
-                  OBJETIVOS.find((o) => o.id === objetivoId)?.hint
-                ) : (
-                  "Não definido — recomendamos escolher um objetivo para personalizar melhor."
-                )}
+                {objetivoId ? OBJETIVOS.find((o) => o.id === objetivoId)?.hint : "Não definido — recomendamos escolher um objetivo."}
               </div>
 
               <div className="mt-3 flex items-start gap-2 text-xs text-gray-500">
@@ -498,11 +475,7 @@ export default function Exercicios() {
                   ))}
                 </ul>
 
-                <Button
-                  onClick={() => openCustomize(c.key)}
-                  variant="outline"
-                  className="mt-4 w-full"
-                >
+                <Button onClick={() => openCustomize(c.key)} variant="outline" className="mt-4 w-full">
                   Personalizar treino <ChevronRight className="w-4 h-4 ml-1" />
                 </Button>
               </div>
@@ -547,9 +520,7 @@ export default function Exercicios() {
                 <div className="p-6 border-b border-gray-100 flex items-center justify-between">
                   <div>
                     <div className="text-lg font-bold text-gray-900">Redefinir objetivo</div>
-                    <div className="text-sm text-gray-500">
-                      Isso muda as sugestões de treino automaticamente.
-                    </div>
+                    <div className="text-sm text-gray-500">Isso muda as sugestões de treino automaticamente.</div>
                   </div>
                   <button
                     className="w-10 h-10 rounded-xl border border-gray-200 flex items-center justify-center"
@@ -565,9 +536,7 @@ export default function Exercicios() {
                       key={o.id}
                       onClick={() => setGoalDraft(o.id)}
                       className={`w-full text-left rounded-2xl p-4 border transition ${
-                        goalDraft === o.id
-                          ? "border-indigo-300 bg-indigo-50"
-                          : "border-gray-200 bg-white hover:bg-gray-50"
+                        goalDraft === o.id ? "border-indigo-300 bg-indigo-50" : "border-gray-200 bg-white hover:bg-gray-50"
                       }`}
                     >
                       <div className="font-semibold text-gray-900">{o.label}</div>
@@ -576,11 +545,7 @@ export default function Exercicios() {
                   ))}
 
                   <div className="flex gap-3 pt-2">
-                    <Button
-                      variant="outline"
-                      className="w-full rounded-xl"
-                      onClick={() => setShowGoalModal(false)}
-                    >
+                    <Button variant="outline" className="w-full rounded-xl" onClick={() => setShowGoalModal(false)}>
                       Cancelar
                     </Button>
                     <Button
@@ -592,171 +557,6 @@ export default function Exercicios() {
                     >
                       Salvar objetivo
                     </Button>
-                  </div>
-                </div>
-              </motion.div>
-            </motion.div>
-          )}
-        </AnimatePresence>
-
-        {/* Modal: Personalizar treino (UI-only, sem alert) */}
-        <AnimatePresence>
-          {showCustomize && (
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4"
-              onClick={() => setShowCustomize(false)}
-            >
-              <motion.div
-                initial={{ scale: 0.95, opacity: 0 }}
-                animate={{ scale: 1, opacity: 1 }}
-                exit={{ scale: 0.95, opacity: 0 }}
-                onClick={(e) => e.stopPropagation()}
-                className="bg-white rounded-3xl w-full max-w-2xl overflow-hidden"
-              >
-                <div className="p-6 border-b border-gray-100 flex items-center justify-between">
-                  <div>
-                    <div className="text-lg font-bold text-gray-900">Personalizar treino</div>
-                    <div className="text-sm text-gray-500">
-                      Ajuste preferências. (Ainda sem salvar logs — apenas UI.)
-                    </div>
-                  </div>
-                  <button
-                    className="w-10 h-10 rounded-xl border border-gray-200 flex items-center justify-center"
-                    onClick={() => setShowCustomize(false)}
-                  >
-                    <X className="w-5 h-5 text-gray-500" />
-                  </button>
-                </div>
-
-                <div className="p-6 grid md:grid-cols-2 gap-4">
-                  <div className="bg-slate-50 border border-slate-100 rounded-2xl p-4">
-                    <div className="font-semibold text-gray-900 mb-3">Preferências</div>
-
-                    <div className="space-y-3">
-                      <div>
-                        <label className="text-sm text-gray-600">Nível</label>
-                        <div className="grid grid-cols-3 gap-2 mt-2">
-                          {["iniciante", "intermediario", "avancado"].map((n) => (
-                            <button
-                              key={n}
-                              onClick={() => setCustom((p) => ({ ...p, nivel: n }))}
-                              className={`py-2 rounded-xl border text-sm ${
-                                custom.nivel === n
-                                  ? "border-indigo-300 bg-indigo-50 text-indigo-900"
-                                  : "border-gray-200 bg-white text-gray-700"
-                              }`}
-                            >
-                              {n === "iniciante" ? "Iniciante" : n === "intermediario" ? "Intermediário" : "Avançado"}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-
-                      <div className="grid grid-cols-2 gap-3">
-                        <div>
-                          <label className="text-sm text-gray-600">Dias/semana</label>
-                          <Input
-                            value={custom.diasSemana}
-                            onChange={(e) => setCustom((p) => ({ ...p, diasSemana: e.target.value }))}
-                            inputMode="numeric"
-                            className="mt-2"
-                            placeholder="Ex: 3"
-                          />
-                        </div>
-                        <div>
-                          <label className="text-sm text-gray-600">Tempo (min)</label>
-                          <Input
-                            value={custom.tempoMin}
-                            onChange={(e) => setCustom((p) => ({ ...p, tempoMin: e.target.value }))}
-                            inputMode="numeric"
-                            className="mt-2"
-                            placeholder="Ex: 30"
-                          />
-                        </div>
-                      </div>
-
-                      <div>
-                        <label className="text-sm text-gray-600">Local</label>
-                        <div className="grid grid-cols-2 gap-2 mt-2">
-                          {[
-                            { id: "casa", label: "Casa" },
-                            { id: "academia", label: "Academia" },
-                          ].map((opt) => (
-                            <button
-                              key={opt.id}
-                              onClick={() => setCustom((p) => ({ ...p, local: opt.id }))}
-                              className={`py-2 rounded-xl border text-sm ${
-                                custom.local === opt.id
-                                  ? "border-indigo-300 bg-indigo-50 text-indigo-900"
-                                  : "border-gray-200 bg-white text-gray-700"
-                              }`}
-                            >
-                              {opt.label}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-
-                      <div>
-                        <label className="text-sm text-gray-600">Limitações / observações</label>
-                        <Input
-                          value={custom.limitacoes}
-                          onChange={(e) => setCustom((p) => ({ ...p, limitacoes: e.target.value }))}
-                          className="mt-2"
-                          placeholder="Ex: dor no joelho / sem impacto"
-                        />
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="bg-white border border-gray-100 rounded-2xl p-4 shadow-sm">
-                    <div className="font-semibold text-gray-900 mb-2">Resumo (UI)</div>
-                    <div className="text-sm text-gray-600 mb-4">
-                      Card selecionado: <span className="font-semibold">{customizePlanKey || "—"}</span>
-                    </div>
-
-                    <div className="space-y-2 text-sm">
-                      <div className="flex justify-between">
-                        <span className="text-gray-500">Objetivo</span>
-                        <span className="font-semibold text-gray-900">{objetivoAtualLabel}</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="text-gray-500">Frequência</span>
-                        <span className="font-semibold text-gray-900">{customizationSummary.dias}x/sem</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="text-gray-500">Tempo</span>
-                        <span className="font-semibold text-gray-900">{customizationSummary.tempo} min</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="text-gray-500">Nível</span>
-                        <span className="font-semibold text-gray-900">{customizationSummary.nivel}</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="text-gray-500">Local</span>
-                        <span className="font-semibold text-gray-900">{customizationSummary.local}</span>
-                      </div>
-                    </div>
-
-                    <div className="mt-4 bg-indigo-50 border border-indigo-100 rounded-xl p-4 text-sm text-indigo-900">
-                      Próximo passo (quando você quiser): salvar preferências e logs de treino no Supabase
-                      para calcular streak/XP por semana.
-                    </div>
-
-                    <div className="flex gap-3 mt-4">
-                      <Button variant="outline" className="w-full rounded-xl" onClick={() => setShowCustomize(false)}>
-                        Fechar
-                      </Button>
-                      <Button
-                        className="w-full rounded-xl bg-gradient-to-r from-indigo-600 to-blue-600 hover:from-indigo-700 hover:to-blue-700"
-                        onClick={() => setShowCustomize(false)}
-                      >
-                        Aplicar (UI)
-                      </Button>
-                    </div>
                   </div>
                 </div>
               </motion.div>
