@@ -141,18 +141,23 @@ export default function Dashboard() {
           setColesterolRecords([]);
         }
 
-        // D) Water logs via API
-        try {
-          const token = session?.access_token;
-          const res = await fetch("/api/water-log", {
-            headers: { Authorization: `Bearer ${token}` },
-          });
-          if (!res.ok) {
-            setHistoricoAgua([]);
-          } else {
-            const data = await res.json().catch(() => []);
-            setHistoricoAgua(Array.isArray(data) ? data : []);
-          }
+       // D) Water logs via API
+try {
+  const token = session?.access_token;
+  const res = await fetch("/api/water-log", {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+
+  if (!res.ok) {
+    setHistoricoAgua([]);
+  } else {
+    const json = await res.json().catch(() => ({}));
+    const items = Array.isArray(json) ? json : (json?.data || []);
+    setHistoricoAgua(Array.isArray(items) ? items : []);
+  }
+} catch {
+  setHistoricoAgua([]);
+}
         } catch {
           setHistoricoAgua([]);
         }
