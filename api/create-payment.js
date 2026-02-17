@@ -35,6 +35,21 @@ export default async function handler(req, res) {
 
     const appUrl = process.env.APP_URL || "https://heartbalance.com.br";
 
+    // ---------- PAYER NORMALIZADO (nome + cpf) ----------
+    const cpfDigits = customer?.cpf ? String(customer.cpf).replace(/\D/g, "").slice(0, 11) : null;
+
+    const fullName = String(customer?.nome || "").trim();
+    const firstName = fullName ? fullName.split(" ")[0] : undefined;
+    const lastName =
+      fullName && fullName.split(" ").length > 1 ? fullName.split(" ").slice(1).join(" ") : undefined;
+
+    const payer = {
+      email: userEmail,
+      first_name: firstName,
+      last_name: lastName,
+      identification: cpfDigits ? { type: "CPF", number: cpfDigits } : undefined,
+    };
+
     const preference = {
       items: [
         {
@@ -46,17 +61,7 @@ export default async function handler(req, res) {
         },
       ],
 
-      const cpfDigits = customer?.cpf ? String(customer.cpf).replace(/\D/g, "") : null;
-const fullName = (customer?.nome || "").trim();
-const firstName = fullName ? fullName.split(" ")[0] : undefined;
-const lastName = fullName && fullName.split(" ").length > 1 ? fullName.split(" ").slice(1).join(" ") : undefined;
-
-payer: {
-  email: userEmail,
-  first_name: firstName,
-  last_name: lastName,
-  identification: cpfDigits ? { type: "CPF", number: cpfDigits } : undefined,
-},
+      payer,
 
       external_reference: String(userId),
 
@@ -67,9 +72,15 @@ payer: {
         duration_days: chosenPlan.durationDays,
         customer_email: userEmail || customer?.email || null,
         customer_name: customer?.nome || null,
-        customer_cpf: customer?.cpf ? String(customer.cpf) : null,
+        customer_cpf: cpfDigits || null,
         payment_method: paymentMethod || null,
       },
+
+      // ✅ ajuda a evitar status “pendente” e inconsistência
+      binary_mode: true,
+
+      // ✅ aparece na fatura do cartão (se aplicável)
+      statement_descriptor: "HEARTBALANCE",
 
       notification_url: `${appUrl}/api/mp-webhook`,
 
@@ -112,8 +123,18 @@ payer: {
       });
     }
 
+    // ✅ fallback: se estiver em ambiente de teste, pode vir sandbox_init_point
+    const redirectUrl = data?.init_point || data?.sandbox_init_point;
+
+    if (!redirectUrl) {
+      return res.status(502).json({
+        error: "MercadoPago did not return init_point",
+        details: data,
+      });
+    }
+
     return res.status(200).json({
-      init_point: data?.init_point,
+      init_point: redirectUrl,
       id: data?.id,
     });
   } catch (err) {
