@@ -1,9 +1,10 @@
 // api/mp-webhook.js
-
-import crypto from "crypto";
 import { createClient } from "@supabase/supabase-js";
 
-const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY);
+const supabase = createClient(
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_SERVICE_ROLE_KEY
+);
 
 const PLANS = {
   mensal: { id: "mensal", durationDays: 30 },
@@ -17,69 +18,57 @@ function addDaysIso(days) {
   return end.toISOString();
 }
 
-// Best-effort: valida assinatura se headers/secret existirem (não bloqueia se faltar)
-function verifyMercadoPagoSignature(req) {
-  const secret = process.env.MP_WEBHOOK_SECRET;
-  if (!secret) return { ok: true, reason: "no_secret" };
-
-  const xSignature = req.headers["x-signature"];
-  const xRequestId = req.headers["x-request-id"];
-  if (!xSignature || !xRequestId) return { ok: true, reason: "missing_headers" };
-
-  const parts = String(xSignature).split(",");
-  const tsPart = parts.find((p) => p.trim().startsWith("ts="));
-  const v1Part = parts.find((p) => p.trim().startsWith("v1="));
-  const ts = tsPart ? tsPart.split("=")[1] : null;
-  const v1 = v1Part ? v1Part.split("=")[1] : null;
-
-  if (!ts || !v1) return { ok: true, reason: "unexpected_format" };
-
-  const base = `${ts}.${xRequestId}`;
-  const computed = crypto.createHmac("sha256", secret).update(base).digest("hex");
-
-  try {
-    const ok = crypto.timingSafeEqual(Buffer.from(computed), Buffer.from(v1));
-    return { ok, reason: ok ? "valid" : "invalid" };
-  } catch {
-    return { ok: true, reason: "compare_failed" };
-  }
-}
-
 async function fetchJson(url, token) {
   const resp = await fetch(url, {
     headers: { Authorization: `Bearer ${token}` },
   });
-  const text = await resp.text();
+
+  const raw = await resp.text();
   let json = null;
   try {
-    json = text ? JSON.parse(text) : null;
+    json = raw ? JSON.parse(raw) : null;
   } catch {
     json = null;
   }
-  return { ok: resp.ok, status: resp.status, json, raw: text };
+
+  return { ok: resp.ok, status: resp.status, json, raw };
 }
 
 export default async function handler(req, res) {
-  // GET para testar no browser
-  if (req.method === "GET") return res.status(200).json({ ok: true, route: "mp-webhook", status: "alive" });
-  if (req.method !== "POST") return res.status(200).json({ ok: true });
+  // Healthcheck no browser
+  if (req.method === "GET") {
+    return res.status(200).json({ ok: true, route: "mp-webhook", status: "alive" });
+  }
+
+  // Mercado Pago manda POST
+  if (req.method !== "POST") {
+    return res.status(200).json({ ok: true });
+  }
 
   try {
     const mpToken = process.env.MERCADOPAGO_ACCESS_TOKEN;
     if (!mpToken) {
-      console.error("Missing MERCADOPAGO_ACCESS_TOKEN");
+      console.error("mp-webhook: Missing MERCADOPAGO_ACCESS_TOKEN");
       return res.status(200).json({ ok: true, reason: "missing_mp_token" });
     }
 
-    // assinatura (best-effort)
-    const sig = verifyMercadoPagoSignature(req);
-    if (!sig.ok) console.warn("MP webhook signature invalid:", sig.reason);
+    // MP pode mandar em query (?topic=...&id=...) ou no body
+    const topic =
+      req.query?.topic ||
+      req.body?.type ||
+      req.body?.topic ||
+      null;
 
-    // MP pode mandar: topic=payment OU topic=merchant_order
-    const topic = req.query?.topic || req.body?.type || req.body?.topic || null;
     const idFromQuery = req.query?.id;
     const idFromBody = req.body?.data?.id || req.body?.id;
     const resourceId = idFromQuery || idFromBody;
+
+    console.log("mp-webhook: incoming", {
+      topic,
+      resourceId,
+      query: req.query,
+      bodyType: req.body?.type,
+    });
 
     if (!topic || !resourceId) {
       return res.status(200).json({ ok: true, reason: "missing_topic_or_id" });
@@ -87,19 +76,37 @@ export default async function handler(req, res) {
 
     let payment = null;
 
+    // 1) Se vier payment direto
     if (topic === "payment") {
-      const p = await fetchJson(`https://api.mercadopago.com/v1/payments/${resourceId}`, mpToken);
+      const p = await fetchJson(
+        `https://api.mercadopago.com/v1/payments/${resourceId}`,
+        mpToken
+      );
+
       if (!p.ok) {
-        console.error("MP payment fetch error:", { status: p.status, body: p.json ?? p.raw });
-        return res.status(200).json({ ok: true });
+        console.error("mp-webhook: payment fetch error", {
+          status: p.status,
+          body: p.json ?? p.raw,
+        });
+        return res.status(200).json({ ok: true, reason: "payment_fetch_failed" });
       }
+
       payment = p.json;
-    } else if (topic === "merchant_order") {
-      // 1) busca merchant_order
-      const o = await fetchJson(`https://api.mercadopago.com/merchant_orders/${resourceId}`, mpToken);
+    }
+
+    // 2) Se vier merchant_order, buscamos a order e depois o payment
+    if (topic === "merchant_order") {
+      const o = await fetchJson(
+        `https://api.mercadopago.com/merchant_orders/${resourceId}`,
+        mpToken
+      );
+
       if (!o.ok) {
-        console.error("MP merchant_order fetch error:", { status: o.status, body: o.json ?? o.raw });
-        return res.status(200).json({ ok: true });
+        console.error("mp-webhook: merchant_order fetch error", {
+          status: o.status,
+          body: o.json ?? o.raw,
+        });
+        return res.status(200).json({ ok: true, reason: "order_fetch_failed" });
       }
 
       const order = o.json;
@@ -107,60 +114,83 @@ export default async function handler(req, res) {
 
       if (!firstPaymentId) {
         // Pode chegar antes de existir payment
+        console.log("mp-webhook: merchant_order with no payment yet", {
+          merchant_order_id: resourceId,
+        });
         return res.status(200).json({ ok: true, reason: "no_payment_yet" });
       }
 
-      // 2) busca payment real
-      const p = await fetchJson(`https://api.mercadopago.com/v1/payments/${firstPaymentId}`, mpToken);
+      const p = await fetchJson(
+        `https://api.mercadopago.com/v1/payments/${firstPaymentId}`,
+        mpToken
+      );
+
       if (!p.ok) {
-        console.error("MP payment fetch error:", { status: p.status, body: p.json ?? p.raw });
-        return res.status(200).json({ ok: true });
+        console.error("mp-webhook: payment fetch (from order) error", {
+          status: p.status,
+          body: p.json ?? p.raw,
+        });
+        return res.status(200).json({ ok: true, reason: "payment_fetch_failed" });
       }
+
       payment = p.json;
-    } else {
-      // outros tópicos não nos interessam
-      return res.status(200).json({ ok: true, reason: `ignored_topic_${topic}` });
     }
 
-    if (!payment) return res.status(200).json({ ok: true, reason: "no_payment" });
+    if (!payment) {
+      return res.status(200).json({ ok: true, reason: "no_payment_object" });
+    }
 
     const status = payment?.status;
     const statusDetail = payment?.status_detail;
 
-    const userId = payment?.metadata?.user_id || payment?.external_reference || null;
-    const planIdRaw = payment?.metadata?.plan_id || null;
+    const userId =
+      payment?.metadata?.user_id ||
+      payment?.external_reference ||
+      null;
 
-    // auditoria (best-effort)
+    const planIdRaw = payment?.metadata?.plan_id || null;
+    const durationDaysMeta = payment?.metadata?.duration_days || null;
+
+    console.log("mp-webhook: payment loaded", {
+      payment_id: payment?.id,
+      status,
+      statusDetail,
+      userId,
+      planIdRaw,
+      durationDaysMeta,
+    });
+
+    // Auditoria (não quebra se falhar)
     try {
       await supabase.from("payment_events").insert({
         user_id: userId,
         payment_id: String(payment?.id || resourceId),
-        preference_id: payment?.order?.id || payment?.preference_id || null,
         status: status || null,
         status_detail: statusDetail || null,
         plan_id: planIdRaw,
         raw: payment,
       });
     } catch (e) {
-      console.warn("payment_events insert failed (non-blocking)");
+      console.warn("mp-webhook: payment_events insert failed (non-blocking)");
     }
 
-    // só aprova
+    // Só ativa no approved
     if (status !== "approved") {
       return res.status(200).json({ ok: true, status });
     }
 
     if (!userId) {
-      console.error("No userId (external_reference/metadata) in payment");
-      return res.status(200).json({ ok: true });
+      console.error("mp-webhook: approved payment but missing userId");
+      return res.status(200).json({ ok: true, reason: "missing_userId" });
     }
 
     const planKey = planIdRaw ? String(planIdRaw).toLowerCase() : "mensal";
     const plan = PLANS[planKey] || PLANS.mensal;
 
-    const premiumUntil = addDaysIso(payment?.metadata?.duration_days || plan.durationDays);
+    const durationDays = Number(durationDaysMeta || plan.durationDays);
+    const premiumUntil = addDaysIso(durationDays);
 
-    // ✅ Fonte da verdade
+    // 1) subscriptions (fonte limpa)
     await supabase.from("subscriptions").upsert(
       {
         user_id: userId,
@@ -172,13 +202,17 @@ export default async function handler(req, res) {
       { onConflict: "user_id" }
     );
 
-    // compatibilidade
+    // 2) profiles (seu Dashboard usa)
     try {
-      await supabase.from("profiles").update({ is_premium: true, premium_until: premiumUntil }).eq("id", userId);
+      await supabase
+        .from("profiles")
+        .update({ is_premium: true, premium_until: premiumUntil, plano_ativo: true, plano_tipo: plan.id })
+        .eq("id", userId);
     } catch {
       // ignore
     }
 
+    // 3) user_profiles (compatibilidade)
     try {
       await supabase.from("user_profiles").upsert(
         {
@@ -194,10 +228,11 @@ export default async function handler(req, res) {
       // ignore
     }
 
-    console.log("Premium activated for user:", userId, "plan:", plan.id);
+    console.log("mp-webhook: ✅ Premium activated", { userId, plan: plan.id, premiumUntil });
+
     return res.status(200).json({ ok: true, activated: true, plan: plan.id });
   } catch (err) {
-    console.error("Webhook crash", err);
+    console.error("mp-webhook: crash", err);
     return res.status(200).json({ ok: true, reason: "exception" });
   }
 }
