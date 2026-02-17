@@ -1,156 +1,126 @@
-// api/mp-webhook.js
-
-import crypto from "crypto";
+import fetch from "node-fetch";
 import { createClient } from "@supabase/supabase-js";
 
-const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY);
-
-const PLANS = {
-  mensal: { id: "mensal", durationDays: 30 },
-  trimestral: { id: "trimestral", durationDays: 90 },
-  anual: { id: "anual", durationDays: 365 },
-};
-
-function addDaysIso(days) {
-  const now = new Date();
-  const end = new Date(now.getTime() + Number(days) * 24 * 60 * 60 * 1000);
-  return end.toISOString();
-}
-
-// Best-effort: valida assinatura se headers/secret existirem.
-// Se falhar, apenas loga (não bloqueia) para evitar travar por variação do MP.
-function verifyMercadoPagoSignature(req) {
-  const secret = process.env.MP_WEBHOOK_SECRET;
-  if (!secret) return { ok: true, reason: "no_secret" };
-
-  const xSignature = req.headers["x-signature"];
-  const xRequestId = req.headers["x-request-id"];
-  if (!xSignature || !xRequestId) return { ok: true, reason: "missing_headers" };
-
-  const parts = String(xSignature).split(",");
-  const tsPart = parts.find((p) => p.trim().startsWith("ts="));
-  const v1Part = parts.find((p) => p.trim().startsWith("v1="));
-  const ts = tsPart ? tsPart.split("=")[1] : null;
-  const v1 = v1Part ? v1Part.split("=")[1] : null;
-
-  if (!ts || !v1) return { ok: true, reason: "unexpected_format" };
-
-  const base = `${ts}.${xRequestId}`;
-  const computed = crypto.createHmac("sha256", secret).update(base).digest("hex");
-
-  try {
-    const ok = crypto.timingSafeEqual(Buffer.from(computed), Buffer.from(v1));
-    return { ok, reason: ok ? "valid" : "invalid" };
-  } catch {
-    return { ok: true, reason: "compare_failed" };
-  }
-}
+const supabase = createClient(
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_SERVICE_ROLE_KEY
+);
 
 export default async function handler(req, res) {
-  // ✅ Teste no navegador (GET): não crasha e retorna status
-  if (req.method === "GET") {
-    return res.status(200).json({ ok: true, route: "mp-webhook", status: "alive" });
+  if (req.method !== "POST") {
+    return res.status(200).json({ ok: true });
   }
 
-  // MP manda POST
-  if (req.method !== "POST") return res.status(200).json({ ok: true });
-
   try {
-    // assinatura (best-effort)
-    const sig = verifyMercadoPagoSignature(req);
-    if (!sig.ok) {
-      console.warn("MP webhook signature invalid:", sig.reason);
-      // Se quiser bloquear: return res.status(401).json({ ok:false })
+    const topic = req.query.topic || req.body?.type;
+    const resourceId = req.query.id || req.body?.data?.id;
+
+    if (!topic || !resourceId) {
+      return res.status(200).json({ ok: true });
     }
 
-    const paymentId = req.body?.data?.id || req.query?.id || req.body?.id;
-    if (!paymentId) return res.status(200).json({ ok: true, reason: "no_payment_id" });
+    const token = process.env.MERCADOPAGO_ACCESS_TOKEN;
 
-    const mpToken = process.env.MERCADOPAGO_ACCESS_TOKEN;
-    if (!mpToken) {
-      console.error("Missing MERCADOPAGO_ACCESS_TOKEN");
-      return res.status(200).json({ ok: true, reason: "missing_mp_token" });
+    let payment = null;
+
+    // 🔥 Caso 1: pagamento direto
+    if (topic === "payment") {
+      const mpRes = await fetch(
+        `https://api.mercadopago.com/v1/payments/${resourceId}`,
+        {
+          headers: { Authorization: `Bearer ${token}` },
+        }
+      );
+
+      if (!mpRes.ok) {
+        const err = await mpRes.text();
+        console.error("MP payment fetch error:", err);
+        return res.status(200).json({ ok: true });
+      }
+
+      payment = await mpRes.json();
     }
 
-    // ✅ Node 18+ tem fetch nativo na Vercel
-    const mpRes = await fetch(`https://api.mercadopago.com/v1/payments/${paymentId}`, {
-      headers: { Authorization: `Bearer ${mpToken}` },
-    });
+    // 🔥 Caso 2: merchant_order
+    if (topic === "merchant_order") {
+      const orderRes = await fetch(
+        `https://api.mercadopago.com/merchant_orders/${resourceId}`,
+        {
+          headers: { Authorization: `Bearer ${token}` },
+        }
+      );
 
-    const payment = await mpRes.json().catch(() => null);
+      if (!orderRes.ok) {
+        const err = await orderRes.text();
+        console.error("MP order fetch error:", err);
+        return res.status(200).json({ ok: true });
+      }
 
-    if (!mpRes.ok || !payment) {
-      console.error("MP fetch error", payment);
-      return res.status(200).json({ ok: true, reason: "mp_fetch_failed" });
+      const order = await orderRes.json();
+
+      if (!order.payments || !order.payments.length) {
+        return res.status(200).json({ ok: true });
+      }
+
+      const paymentId = order.payments[0].id;
+
+      const paymentRes = await fetch(
+        `https://api.mercadopago.com/v1/payments/${paymentId}`,
+        {
+          headers: { Authorization: `Bearer ${token}` },
+        }
+      );
+
+      if (!paymentRes.ok) {
+        const err = await paymentRes.text();
+        console.error("MP payment fetch error:", err);
+        return res.status(200).json({ ok: true });
+      }
+
+      payment = await paymentRes.json();
     }
 
-    const status = payment?.status;
-    const statusDetail = payment?.status_detail;
-
-    const userId = payment?.external_reference || payment?.metadata?.user_id || null;
-    const planIdRaw = payment?.metadata?.plan_id || null;
-
-    // log de auditoria (não quebra se falhar)
-    try {
-      await supabase.from("payment_events").insert({
-        user_id: userId,
-        payment_id: String(paymentId),
-        preference_id: payment?.preference_id || payment?.order?.id || null,
-        status: status || null,
-        status_detail: statusDetail || null,
-        plan_id: planIdRaw,
-        raw: payment,
-      });
-    } catch (e) {
-      console.warn("payment_events insert failed (non-blocking)");
+    if (!payment) {
+      return res.status(200).json({ ok: true });
     }
 
-    // só aprova
-    if (status !== "approved") {
-      return res.status(200).json({ ok: true, status });
+    if (payment.status !== "approved") {
+      return res.status(200).json({ ok: true });
     }
+
+    const userId =
+      payment.metadata?.user_id ||
+      payment.external_reference;
 
     if (!userId) {
-      console.error("No userId in payment.external_reference/metadata");
-      return res.status(200).json({ ok: true, reason: "no_user_id" });
+      console.error("No userId in payment");
+      return res.status(200).json({ ok: true });
     }
 
-    const planKey = planIdRaw ? String(planIdRaw).toLowerCase() : "mensal";
-    const plan = PLANS[planKey] || PLANS.mensal;
+    const durationDays = payment.metadata?.duration_days || 30;
 
-    const premiumUntil = addDaysIso(plan.durationDays);
-
-    // ✅ FONTE DA VERDADE
-    await supabase.from("subscriptions").upsert(
-      {
-        user_id: userId,
-        is_premium: true,
-        plan_id: plan.id,
-        premium_until: premiumUntil,
-        updated_at: new Date().toISOString(),
-      },
-      { onConflict: "user_id" }
+    const today = new Date();
+    const endDate = new Date(
+      today.getTime() + durationDays * 24 * 60 * 60 * 1000
     );
 
-    // ✅ Compatibilidade (não obrigatório, mas mantém seu legado funcionando)
-    try {
-      await supabase.from("user_profiles").upsert(
-        {
-          id: userId,
-          plano_ativo: true,
-          plano_tipo: plan.id,
-          data_inicio_pl: new Date().toISOString().slice(0, 10),
-          premium_until: premiumUntil,
-        },
-        { onConflict: "id" }
-      );
-    } catch {
-      // ignore
-    }
+    const premiumUntil = endDate.toISOString();
 
-    return res.status(200).json({ ok: true, activated: true, plan: plan.id });
+    await supabase
+      .from("profiles")
+      .update({
+        plano_ativo: true,
+        plano_tipo: payment.metadata?.plan_id || "mensal",
+        premium_until: premiumUntil,
+        is_premium: true,
+      })
+      .eq("id", userId);
+
+    console.log("Premium activated for user:", userId);
+
+    return res.status(200).json({ ok: true });
   } catch (err) {
-    console.error("Webhook crash", err);
-    return res.status(200).json({ ok: true, reason: "exception" });
+    console.error("Webhook crash:", err);
+    return res.status(200).json({ ok: true });
   }
 }
