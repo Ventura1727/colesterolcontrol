@@ -46,8 +46,6 @@ const getDiagnostico = (quizData) => {
   return { pontosFracos, pontosFocos };
 };
 
-// Sugestão: mantenha seus preços atuais, mas a "ancoragem" usa um preço "de" (fake MSRP) calculado
-// com base no mensal (mensal * meses) para ficar realista e convincente.
 const plans = [
   {
     id: 'mensal',
@@ -90,6 +88,7 @@ function isQuizValid(data) {
   return true;
 }
 
+// tenta extrair peso/altura se existirem no quiz, suportando chaves diferentes
 function getOptionalNumber(obj, keys) {
   for (const k of keys) {
     const v = obj?.[k];
@@ -112,7 +111,7 @@ async function persistQuizToProfiles(quizData) {
     const session = sessionData?.session;
     const user = session?.user;
 
-    // Se não tiver login, não travamos compra.
+    // Se não tiver login, não travamos o fluxo de compra.
     if (!user) {
       console.warn('persistQuizToProfiles: user not logged-in; skipping save to profiles');
       return;
@@ -145,7 +144,7 @@ async function persistQuizToProfiles(quizData) {
 
 function formatBRL(value) {
   try {
-    return value.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+    return Number(value).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
   } catch {
     return `R$ ${Number(value || 0).toFixed(2)}`;
   }
@@ -193,17 +192,14 @@ export default function Vendas() {
     const months = currentPlan?.months ?? 3;
     const price = currentPlan?.price ?? 59.9;
 
-    // Preço "de" calculado de forma realista (mensal * meses), com ajuste leve pro anual
+    // "Preço de" calculado com base no mensal (realista)
     let original = mensal * months;
-    if (currentPlan?.id === 'anual') {
-      original = mensal * months; // anual: manter (mensal*12) já dá um "de" alto
-    }
 
     // Evita mostrar "de" menor que "por"
     original = Math.max(original, price * 1.2);
 
-    const savings = clamp(original - price, 0, 99999);
-    const perDay = price / (months * 30); // aproximação simples e convincente
+    const savings = clamp(original - price, 0, 999999);
+    const perDay = price / (months * 30); // aproximação simples
 
     return { original, price, savings, perDay, months };
   }, [currentPlan]);
@@ -244,12 +240,12 @@ export default function Vendas() {
     setIsContinuing(true);
 
     try {
-      // 1) persistir quiz no Supabase (profiles)
+      // 1) persistir quiz no Supabase (profiles) para refletir na Premium/Dashboard
       if (quizData) {
         await persistQuizToProfiles(quizData);
       }
 
-      // 2) Salvar plano selecionado pro Checkout
+      // 2) Salva o plano selecionado (id + metadados úteis pro Checkout)
       const planPayload = {
         id: currentPlan?.id || selectedPlan,
         name: currentPlan?.name || '',
@@ -311,17 +307,14 @@ export default function Vendas() {
               <div className="text-gray-500 text-xs mb-1">Idade</div>
               <div className="font-medium">{quizData.idade} anos</div>
             </div>
-
             <div className="bg-gray-50 rounded-lg p-3">
               <div className="text-gray-500 text-xs mb-1">Alimentação</div>
               <div className="font-medium">{quizData.alimentacao}</div>
             </div>
-
             <div className="bg-gray-50 rounded-lg p-3">
               <div className="text-gray-500 text-xs mb-1">Exercícios</div>
               <div className="font-medium">{quizData.exercicios}</div>
             </div>
-
             <div className="bg-gray-50 rounded-lg p-3">
               <div className="text-gray-500 text-xs mb-1">Objetivo</div>
               <div className="font-medium text-xs">{quizData.objetivo}</div>
@@ -364,7 +357,6 @@ export default function Vendas() {
             <Sparkles className="w-6 h-6" />
             <h3 className="font-semibold text-lg">O HeartBalance Vai Te Ajudar Com:</h3>
           </div>
-
           <ul className="space-y-3">
             {diagnostico.pontosFocos.map((foco, idx) => (
               <li key={idx} className="flex items-start gap-2">
@@ -383,7 +375,7 @@ export default function Vendas() {
           </ul>
         </motion.div>
 
-        {/* NOVA: Seção de Convencimento */}
+        {/* Convencimento */}
         <motion.div
           initial={{ opacity: 0, y: 16 }}
           animate={{ opacity: 1, y: 0 }}
@@ -408,7 +400,7 @@ export default function Vendas() {
           </div>
         </motion.div>
 
-        {/* NOVA: Preview do Dashboard (bloqueado) */}
+        {/* Preview do Dashboard (Opção A - mock em HTML) */}
         <motion.div
           initial={{ opacity: 0, y: 16 }}
           animate={{ opacity: 1, y: 0 }}
@@ -427,21 +419,64 @@ export default function Vendas() {
               </div>
             </div>
 
-            <div className="relative">
-              {/* Troque por um print real do seu dashboard */}
-              <img
-                src="/images/dashboard-preview.png"
-                alt="Preview do Dashboard Heartbalance"
-                className="w-full h-[240px] object-cover"
-                onError={(e) => {
-                  // fallback visual se não existir imagem
-                  e.currentTarget.style.display = 'none';
-                }}
-              />
+            <div className="relative p-6 bg-gradient-to-br from-gray-50 to-white">
+              <div className="grid grid-cols-12 gap-4">
+                <div className="col-span-6 rounded-xl border border-gray-200 bg-white p-4">
+                  <div className="text-xs text-gray-500 mb-2">Meta semanal</div>
+                  <div className="h-6 w-24 bg-gray-200 rounded-lg" />
+                  <div className="mt-3 h-2 w-full bg-gray-200 rounded-full overflow-hidden">
+                    <div className="h-full w-2/3 bg-gray-300" />
+                  </div>
+                  <div className="mt-2 text-[11px] text-gray-500">Progresso • Premium</div>
+                </div>
 
-              {/* overlay + blur */}
-              <div className="absolute inset-0 bg-gradient-to-b from-black/20 via-black/30 to-black/50 backdrop-blur-[2px]" />
+                <div className="col-span-6 rounded-xl border border-gray-200 bg-white p-4">
+                  <div className="text-xs text-gray-500 mb-2">Colesterol (estimativa)</div>
+                  <div className="h-6 w-32 bg-gray-200 rounded-lg" />
+                  <div className="mt-3 grid grid-cols-3 gap-2">
+                    <div className="h-8 bg-gray-200 rounded-lg" />
+                    <div className="h-8 bg-gray-200 rounded-lg" />
+                    <div className="h-8 bg-gray-200 rounded-lg" />
+                  </div>
+                  <div className="mt-2 text-[11px] text-gray-500">Relatório • Premium</div>
+                </div>
 
+                <div className="col-span-12 rounded-xl border border-gray-200 bg-white p-4">
+                  <div className="flex items-center justify-between mb-3">
+                    <div>
+                      <div className="text-xs text-gray-500">Evolução</div>
+                      <div className="text-sm font-semibold text-gray-900">Semanal</div>
+                    </div>
+                    <div className="text-[11px] text-gray-500">Premium</div>
+                  </div>
+                  <div className="h-24 rounded-xl bg-gray-100 border border-gray-200 flex items-end gap-2 p-3">
+                    <div className="w-6 h-10 bg-gray-200 rounded-md" />
+                    <div className="w-6 h-16 bg-gray-200 rounded-md" />
+                    <div className="w-6 h-12 bg-gray-200 rounded-md" />
+                    <div className="w-6 h-20 bg-gray-200 rounded-md" />
+                    <div className="w-6 h-14 bg-gray-200 rounded-md" />
+                    <div className="w-6 h-18 bg-gray-200 rounded-md" />
+                  </div>
+                </div>
+
+                <div className="col-span-12 rounded-xl border border-gray-200 bg-white p-4">
+                  <div className="flex items-center gap-2 mb-3">
+                    <div className="w-8 h-8 rounded-xl bg-gray-100 border border-gray-200 flex items-center justify-center">
+                      <Brain className="w-4 h-4 text-gray-700" />
+                    </div>
+                    <div>
+                      <div className="text-sm font-semibold text-gray-900">Nutricionista IA</div>
+                      <div className="text-xs text-gray-500">Pergunte e receba orientação imediata</div>
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    <div className="h-10 bg-gray-100 border border-gray-200 rounded-xl" />
+                    <div className="h-10 bg-gray-100 border border-gray-200 rounded-xl" />
+                  </div>
+                </div>
+              </div>
+
+              <div className="absolute inset-0 bg-black/40 backdrop-blur-[2px]" />
               <div className="absolute inset-0 flex items-center justify-center p-6 text-center">
                 <div className="max-w-md bg-white/90 border border-white/60 rounded-2xl p-5 shadow-xl">
                   <div className="w-12 h-12 rounded-2xl bg-red-50 mx-auto mb-3 flex items-center justify-center border border-red-100">
@@ -461,7 +496,7 @@ export default function Vendas() {
           </div>
         </motion.div>
 
-        {/* NOVA: Benefícios Premium (cards “bloqueados”) */}
+        {/* Benefícios Premium */}
         <motion.div
           initial={{ opacity: 0, y: 16 }}
           animate={{ opacity: 1, y: 0 }}
@@ -476,7 +511,6 @@ export default function Vendas() {
               const Icon = f.icon;
               return (
                 <div key={idx} className="relative overflow-hidden rounded-xl border border-gray-200 bg-gray-50">
-                  {/* lock badge */}
                   <div className="absolute top-3 right-3 text-[11px] font-semibold text-red-600 bg-white/90 border border-red-100 rounded-full px-2 py-1 flex items-center gap-1">
                     <Lock className="w-3 h-3" />
                     Premium
@@ -493,7 +527,6 @@ export default function Vendas() {
                       </div>
                     </div>
 
-                    {/* leve "travado" */}
                     <div className="mt-3 h-2 rounded-full bg-gray-200 overflow-hidden">
                       <div className="h-full w-2/3 bg-gray-300" />
                     </div>
@@ -518,11 +551,9 @@ export default function Vendas() {
           <div className="space-y-3">
             {plans.map((plan) => {
               const isSelected = selectedPlan === plan.id;
-
-              // preço "de" por plano calculado com base no mensal
               const mensal = plans.find((p) => p.id === 'mensal')?.price ?? 24.9;
               const original = Math.max(mensal * plan.months, plan.price * 1.2);
-              const savings = clamp(original - plan.price, 0, 99999);
+              const savings = clamp(original - plan.price, 0, 999999);
 
               return (
                 <button
@@ -590,7 +621,6 @@ export default function Vendas() {
             <Shield className="w-5 h-5 text-green-600" />
             Segurança e Benefícios
           </h3>
-
           <div className="space-y-3 text-sm text-gray-700">
             <div className="flex items-start gap-2">
               <Check className="w-4 h-4 text-green-600 mt-0.5 flex-shrink-0" />
