@@ -1,10 +1,16 @@
 // api/create-payment.js
 
 const PLANS = {
-  mensal: { id: "mensal", name: "Mensal", price: 24.9 },
-  // opcional:
-  // anual: { id: "anual", name: "Anual", price: 199.9 },
+  mensal: { id: "mensal", name: "Mensal", price: 24.9, durationDays: 30 },
+  trimestral: { id: "trimestral", name: "Trimestral", price: 59.9, durationDays: 90 },
+  anual: { id: "anual", name: "Anual", price: 199.9, durationDays: 365 },
 };
+
+function pickPlanFromBody(body) {
+  const planId = body?.planId || body?.plan?.id || body?.plan?.slug || body?.plan?.name;
+  const key = planId ? String(planId).toLowerCase() : null;
+  return key ? PLANS[key] : null;
+}
 
 export default async function handler(req, res) {
   if (req.method !== "POST") {
@@ -13,51 +19,77 @@ export default async function handler(req, res) {
 
   try {
     const body = req.body ?? {};
-    const { userEmail, userId } = body;
-
-    // aceita planId OU plan
-    const planId = body.planId || body.plan?.id || body.plan?.slug || body.plan?.name;
-    const planKey = planId ? String(planId).toLowerCase() : null;
-    const planFromMap = planKey ? PLANS[planKey] : null;
-
-    const planName = planFromMap?.name || body.plan?.name || (planId ? String(planId) : "");
-    const planPrice = Number(planFromMap?.price ?? body.plan?.price);
+    const { userEmail, userId, paymentMethod, customer } = body;
 
     if (!userEmail || !userId) {
       return res.status(400).json({ error: "Missing userEmail or userId" });
     }
 
-    if (!planName) {
-      return res.status(400).json({ error: "Missing plan (use planId or plan.name)" });
+    const chosenPlan = pickPlanFromBody(body);
+    if (!chosenPlan) {
+      return res.status(400).json({
+        error: "Invalid plan. Use planId or plan.id as: mensal | trimestral | anual",
+      });
     }
 
-    if (!Number.isFinite(planPrice) || planPrice <= 0) {
-      return res.status(400).json({ error: "Invalid plan price (use valid planId or plan.price)" });
-    }
+    // 🔒 Segurança: nunca confie no price vindo do front.
+    const planName = chosenPlan.name;
+    const planPrice = Number(chosenPlan.price);
 
     const token = process.env.MERCADOPAGO_ACCESS_TOKEN;
     if (!token) {
       return res.status(500).json({ error: "Missing MERCADOPAGO_ACCESS_TOKEN env var" });
     }
 
+    // Base URL (melhor prática: colocar APP_URL no Vercel)
+    const appUrl = process.env.APP_URL || "https://heartbalance.com.br";
+
+    // Rotas de retorno (ajuste para suas rotas reais)
+    // Recomendo voltar para /checkout com query status, porque seu Checkout.jsx lê status
+    const successUrl = `${appUrl}/checkout?status=approved`;
+    const pendingUrl = `${appUrl}/checkout?status=pending`;
+    const failureUrl = `${appUrl}/checkout?status=failure`;
+
     const preference = {
       items: [
         {
-          title: `Plano ${planName} - HeartBalance`,
+          id: chosenPlan.id,
+          title: `Heartbalance Premium - ${planName}`,
           quantity: 1,
           unit_price: planPrice,
           currency_id: "BRL",
         },
       ],
-      payer: { email: userEmail },
-      external_reference: String(userId),
-      notification_url: "https://heartbalance.com.br/api/mp-webhook",
-      back_urls: {
-        success: "https://heartbalance.com.br/finalizarcompra",
-        failure: "https://heartbalance.com.br/checkout",
-        pending: "https://heartbalance.com.br/checkout",
+
+      payer: {
+        email: userEmail,
       },
+
+      // 🔗 Amarra o pagamento ao usuário
+      external_reference: String(userId),
+
+      // ✅ Ajuda MUITO o webhook a decidir plano/duração sem depender do front
+      metadata: {
+        user_id: String(userId),
+        plan_id: chosenPlan.id,
+        duration_days: chosenPlan.durationDays,
+        customer_email: userEmail || customer?.email || null,
+        customer_name: customer?.nome || null,
+        customer_cpf: customer?.cpf ? String(customer.cpf) : null,
+        payment_method: paymentMethod || null,
+      },
+
+      notification_url: `${appUrl}/api/mp-webhook`,
+
+      back_urls: {
+        success: successUrl,
+        pending: pendingUrl,
+        failure: failureUrl,
+      },
+
       auto_return: "approved",
+
+      // Opcional: excluir boleto/ticket
       payment_methods: {
         excluded_payment_types: [{ id: "ticket" }],
       },
