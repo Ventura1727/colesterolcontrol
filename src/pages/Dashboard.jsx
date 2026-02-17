@@ -29,10 +29,24 @@ const features = [
   { id: "educacao", title: "Conteúdo", desc: "Artigos sobre saúde", icon: BookOpen, premium: false, page: "Conteudo" },
 ];
 
+function isPremiumByUntil(premiumUntil) {
+  if (!premiumUntil) return false;
+  const d = new Date(premiumUntil);
+  return Number.isFinite(d.getTime()) && d > new Date();
+}
+
 export default function Dashboard() {
   const [profile, setProfile] = useState(null);
+
+  // access agora separa: role + subscriptions (verdade) + fallback legado
   const [access, setAccess] = useState({
     role: null,
+    // fonte da verdade (nova)
+    sub_is_premium: false,
+    sub_premium_until: null,
+    sub_plan_id: null,
+
+    // fallback legado (enquanto migra)
     plano_ativo: false,
     premium_until: null,
     is_premium: null,
@@ -54,13 +68,35 @@ export default function Dashboard() {
         const session = sessionData?.session;
 
         if (!session?.user) {
+          // Mantém padrão simples: manda pro login
           window.location.href = `/login?next=${encodeURIComponent("/dashboard")}`;
           return;
         }
 
         const userId = session.user.id;
 
-        // A) Premium + Perfil base em profiles (onde estão os dados do quiz)
+        // 1) Busca subscription (FONTE DA VERDADE) - subscriptions
+        let sub_is_premium = false;
+        let sub_premium_until = null;
+        let sub_plan_id = null;
+
+        try {
+          const { data: sub, error: subErr } = await supabase
+            .from("subscriptions")
+            .select("is_premium,premium_until,plan_id")
+            .eq("user_id", userId)
+            .maybeSingle();
+
+          if (!subErr && sub) {
+            sub_is_premium = Boolean(sub.is_premium);
+            sub_premium_until = sub.premium_until ?? null;
+            sub_plan_id = sub.plan_id ?? null;
+          }
+        } catch {
+          // se tabela não existir ainda ou RLS/erro, seguimos com fallback
+        }
+
+        // 2) Perfil base em profiles (quiz/saúde/xp/rank)
         let role = null;
         let plano_ativo = false;
         let premium_until = null;
@@ -82,6 +118,7 @@ export default function Dashboard() {
           premium_until = profData?.premium_until ?? null;
           is_premium = profData?.is_premium ?? null;
         } else if (!profErr && !profData) {
+          // garante linha no profiles (não quebra app)
           const { data: created } = await supabase
             .from("profiles")
             .upsert({ id: userId }, { onConflict: "id" })
@@ -101,7 +138,7 @@ export default function Dashboard() {
           plano_ativo = false;
         }
 
-        // B) Dados extras (se existirem) em user_profiles (ex.: plano_tipo, datas, etc)
+        // 3) user_profiles (extra/legado)
         let richProfile = null;
         try {
           const { data: up, error: upErr } = await supabase
@@ -123,10 +160,20 @@ export default function Dashboard() {
 
         if (!mounted) return;
 
-        setAccess({ role, plano_ativo, premium_until, is_premium });
+        setAccess({
+          role,
+          sub_is_premium,
+          sub_premium_until,
+          sub_plan_id,
+
+          plano_ativo,
+          premium_until,
+          is_premium,
+        });
+
         setProfile(finalProfile);
 
-        // C) Colesterol
+        // 4) Colesterol
         try {
           const { data: recs } = await supabase
             .from("cholesterol_records")
@@ -141,7 +188,7 @@ export default function Dashboard() {
           setColesterolRecords([]);
         }
 
-        // D) Water logs via API  ✅ (a API retorna { data: [...] })
+        // 5) Water logs via API  ✅ (a API retorna { data: [...] } ou array)
         try {
           const token = session?.access_token;
           const res = await fetch("/api/water-log", {
@@ -169,16 +216,18 @@ export default function Dashboard() {
     };
   }, []);
 
+  // ✅ Premium: subscriptions é a verdade; fallback para legado
   const isPremium = useMemo(() => {
-    const premiumUntilOk = access?.premium_until
-      ? new Date(access.premium_until) > new Date()
-      : false;
+    const subUntilOk = isPremiumByUntil(access?.sub_premium_until);
+    const legacyUntilOk = isPremiumByUntil(access?.premium_until);
 
     return (
       access?.role === "admin" ||
+      access?.sub_is_premium === true ||
+      subUntilOk ||
       access?.plano_ativo === true ||
       access?.is_premium === true ||
-      premiumUntilOk
+      legacyUntilOk
     );
   }, [access]);
 
@@ -348,6 +397,33 @@ export default function Dashboard() {
             </motion.button>
           ))}
         </div>
+
+        {!isPremium && (
+          <motion.div
+            initial={{ opacity: 0, y: 16 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.2 }}
+            className="mt-6 bg-white border border-red-200 rounded-2xl p-5"
+          >
+            <div className="flex items-start gap-3">
+              <div className="w-10 h-10 rounded-xl bg-red-50 flex items-center justify-center border border-red-100">
+                <Crown className="w-5 h-5 text-red-600" />
+              </div>
+              <div className="flex-1">
+                <h3 className="font-semibold text-gray-900">Desbloqueie o Premium</h3>
+                <p className="text-sm text-gray-600">
+                  Acesse Nutricionista IA, treinos com XP, receitas anti-colesterol e relatórios de evolução.
+                </p>
+                <Button
+                  onClick={() => (window.location.href = createPageUrl("Vendas"))}
+                  className="mt-3 w-full bg-gradient-to-r from-red-500 to-rose-600 hover:from-red-600 hover:to-rose-700 text-white py-5 rounded-xl"
+                >
+                  Ver Plano Premium
+                </Button>
+              </div>
+            </div>
+          </motion.div>
+        )}
 
         <motion.div
           initial={{ opacity: 0, y: 20 }}
