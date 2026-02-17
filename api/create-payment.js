@@ -13,9 +13,7 @@ function pickPlanFromBody(body) {
 }
 
 export default async function handler(req, res) {
-  if (req.method !== "POST") {
-    return res.status(405).json({ error: "Method not allowed" });
-  }
+  if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
 
   try {
     const body = req.body ?? {};
@@ -28,47 +26,31 @@ export default async function handler(req, res) {
     const chosenPlan = pickPlanFromBody(body);
     if (!chosenPlan) {
       return res.status(400).json({
-        error: "Invalid plan. Use planId or plan.id as: mensal | trimestral | anual",
+        error: "Invalid plan. Use planId/plan.id: mensal | trimestral | anual",
       });
     }
 
-    // 🔒 Segurança: nunca confie no price vindo do front.
-    const planName = chosenPlan.name;
-    const planPrice = Number(chosenPlan.price);
-
     const token = process.env.MERCADOPAGO_ACCESS_TOKEN;
-    if (!token) {
-      return res.status(500).json({ error: "Missing MERCADOPAGO_ACCESS_TOKEN env var" });
-    }
+    if (!token) return res.status(500).json({ error: "Missing MERCADOPAGO_ACCESS_TOKEN env var" });
 
-    // Base URL (melhor prática: colocar APP_URL no Vercel)
     const appUrl = process.env.APP_URL || "https://heartbalance.com.br";
-
-    // Rotas de retorno (ajuste para suas rotas reais)
-    // Recomendo voltar para /checkout com query status, porque seu Checkout.jsx lê status
-    const successUrl = `${appUrl}/checkout?status=approved`;
-    const pendingUrl = `${appUrl}/checkout?status=pending`;
-    const failureUrl = `${appUrl}/checkout?status=failure`;
 
     const preference = {
       items: [
         {
           id: chosenPlan.id,
-          title: `Heartbalance Premium - ${planName}`,
+          title: `Heartbalance Premium - ${chosenPlan.name}`,
           quantity: 1,
-          unit_price: planPrice,
+          unit_price: Number(chosenPlan.price), // 🔒 nunca vem do front
           currency_id: "BRL",
         },
       ],
 
-      payer: {
-        email: userEmail,
-      },
+      payer: { email: userEmail },
 
-      // 🔗 Amarra o pagamento ao usuário
       external_reference: String(userId),
 
-      // ✅ Ajuda MUITO o webhook a decidir plano/duração sem depender do front
+      // ✅ importante pro webhook ativar o plano certo
       metadata: {
         user_id: String(userId),
         plan_id: chosenPlan.id,
@@ -82,14 +64,13 @@ export default async function handler(req, res) {
       notification_url: `${appUrl}/api/mp-webhook`,
 
       back_urls: {
-        success: successUrl,
-        pending: pendingUrl,
-        failure: failureUrl,
+        success: `${appUrl}/checkout?status=approved`,
+        pending: `${appUrl}/checkout?status=pending`,
+        failure: `${appUrl}/checkout?status=failure`,
       },
 
       auto_return: "approved",
 
-      // Opcional: excluir boleto/ticket
       payment_methods: {
         excluded_payment_types: [{ id: "ticket" }],
       },
@@ -127,9 +108,6 @@ export default async function handler(req, res) {
     });
   } catch (err) {
     console.error("Create payment error:", err);
-    return res.status(500).json({
-      error: "Internal error",
-      message: err?.message ?? String(err),
-    });
+    return res.status(500).json({ error: "Internal error", message: err?.message ?? String(err) });
   }
 }
