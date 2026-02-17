@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { ArrowLeft, CreditCard, QrCode, ShieldCheck, LogOut } from "lucide-react";
+import { ArrowLeft, CreditCard, QrCode, ShieldCheck, LogOut, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { createPageUrl } from "@/utils";
@@ -8,9 +8,9 @@ import { supabase } from "@/lib/supabaseClient";
 import AuthGate from "@/components/AuthGate";
 
 const PLANS = {
-  mensal: { id: "mensal", name: "Mensal", price: 24.9, duration: 30 },
-  trimestral: { id: "trimestral", name: "Trimestral", price: 59.9, duration: 90 },
-  anual: { id: "anual", name: "Anual", price: 199.9, duration: 365 },
+  mensal: { id: "mensal", name: "Mensal", price: 24.9, durationDays: 30 },
+  trimestral: { id: "trimestral", name: "Trimestral", price: 59.9, durationDays: 90 },
+  anual: { id: "anual", name: "Anual", price: 199.9, durationDays: 365 },
 };
 
 function goToDashboard() {
@@ -41,20 +41,27 @@ function loadSelectedPlan() {
   return null;
 }
 
+async function wait(ms) {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
 export default function Checkout() {
-  const [step, setStep] = useState(1); // 1=método, 2=dados(+login/cadastro), 3=confirmar/pagar
+  const [step, setStep] = useState(1); // 1=método, 2=dados(+login/cadastro), 3=confirmar/pagar, 4=aguardando
   const [selectedPlan, setSelectedPlan] = useState(null);
   const [paymentMethod, setPaymentMethod] = useState(null);
   const [isProcessing, setIsProcessing] = useState(false);
 
   const [user, setUser] = useState(null);
-  const [forceAuth, setForceAuth] = useState(false); // permite “trocar conta” mesmo logado
+  const [forceAuth, setForceAuth] = useState(false);
 
   const [personalData, setPersonalData] = useState({
     nome: "",
     email: "",
     cpf: "",
   });
+
+  const [waitingMsg, setWaitingMsg] = useState("");
+  const [polling, setPolling] = useState(false);
 
   useEffect(() => {
     let mounted = true;
@@ -74,9 +81,7 @@ export default function Checkout() {
     const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => {
       const u = session?.user || null;
       setUser(u);
-      if (u?.email) {
-        setPersonalData((p) => ({ ...p, email: u.email || p.email }));
-      }
+      if (u?.email) setPersonalData((p) => ({ ...p, email: u.email || p.email }));
     });
 
     return () => {
@@ -97,8 +102,25 @@ export default function Checkout() {
   const stepTitle = useMemo(() => {
     if (step === 1) return "Forma de Pagamento";
     if (step === 2) return "Dados e Acesso";
-    return "Confirmar e Pagar";
+    if (step === 3) return "Confirmar e Pagar";
+    return "Confirmando Pagamento";
   }, [step]);
+
+  // Se voltar do Mercado Pago com status (back_urls), tenta confirmar premium automaticamente
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const backStatus = params.get("status"); // approved | pending | failure (depende do back_urls)
+    if (backStatus) {
+      setStep(4);
+      if (backStatus === "approved") {
+        setWaitingMsg("Pagamento aprovado! Confirmando liberação do Premium…");
+      } else if (backStatus === "pending") {
+        setWaitingMsg("Pagamento pendente. Assim que confirmar, liberamos automaticamente.");
+      } else {
+        setWaitingMsg("Pagamento não aprovado. Você pode tentar novamente.");
+      }
+    }
+  }, []);
 
   const handleContinueFromStep2 = () => {
     if (!paymentMethod) {
@@ -128,73 +150,17 @@ export default function Checkout() {
     setStep(3);
   };
 
-  async function isUserAdmin(userId) {
-    const { data, error } = await supabase.from("profiles").select("role").eq("id", userId).single();
-    if (error) return false;
-    return data?.role === "admin";
-  }
-
-  async function markPlanActiveForUser(userId, planId) {
-    const today = new Date();
-    const startDate = today.toISOString().slice(0, 10);
-
-    const durationDays = selectedPlan?.duration ?? 30;
-    const end = new Date(today.getTime() + durationDays * 24 * 60 * 60 * 1000);
-    const endDate = end.toISOString().slice(0, 10);
-
-    // premium_until como timestamptz (fim do dia)
-    const premiumUntil = new Date(endDate + "T23:59:59.000Z").toISOString();
-
-    // ✅ Fonte de verdade: public.user_profiles
-    // Usa UPSERT para funcionar mesmo se não existir linha ainda
-    const { error: upsertErr } = await supabase
-      .from("user_profiles")
-      .upsert(
-        {
-          id: userId,
-          plano_ativo: true,
-          plano_tipo: planId,
-          plano_inicio: startDate,
-          plano_fim: endDate,
-          premium_until: premiumUntil,
-        },
-        { onConflict: "id" }
-      );
-
-    if (upsertErr) {
-      // Fallback mínimo (não quebra fluxo)
-      await supabase.from("user_profiles").upsert({ id: userId, plano_ativo: true }, { onConflict: "id" });
-    }
-
-    // (Opcional) compatibilidade: marca também is_premium na tabela profiles, se existir coluna
-    try {
-      await supabase.from("profiles").update({ is_premium: true }).eq("id", userId);
-    } catch {
-      // ignore
-    }
-  }
-
   const handlePay = async () => {
     if (!user || !paymentMethod || !selectedPlan) return;
 
     setIsProcessing(true);
 
     try {
-      const admin = await isUserAdmin(user.id);
-
-      // Admin “free pass”
-      if (admin) {
-        await markPlanActiveForUser(user.id, selectedPlan.id);
-        goToDashboard();
-        return;
-      }
-
-      // Usuário normal -> MP
       const resp = await fetch("/api/create-payment", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          plan: selectedPlan,
+          plan: selectedPlan, // {id,name,price,durationDays}
           userEmail: personalData.email || user.email,
           userId: user.id,
           paymentMethod,
@@ -209,17 +175,62 @@ export default function Checkout() {
       const data = await resp.json().catch(() => ({}));
 
       if (!resp.ok || !data?.init_point) {
-        alert("Erro ao iniciar pagamento (Mercado Pago).");
+        alert(data?.message || "Erro ao iniciar pagamento (Mercado Pago).");
         setIsProcessing(false);
         return;
       }
 
+      // redireciona para MP
       window.location.href = data.init_point;
     } catch (e) {
       alert("Erro inesperado ao processar pagamento.");
       setIsProcessing(false);
     }
   };
+
+  // Polling: quando estamos no step 4, checa subscriptions para liberar
+  useEffect(() => {
+    if (step !== 4) return;
+    if (!user?.id) return;
+    if (polling) return;
+
+    let stop = false;
+
+    async function pollPremium() {
+      setPolling(true);
+
+      // tenta por ~2 minutos (24 tentativas * 5s)
+      for (let i = 0; i < 24; i++) {
+        if (stop) break;
+
+        const { data, error } = await supabase
+          .from("subscriptions")
+          .select("is_premium,premium_until,plan_id")
+          .eq("user_id", user.id)
+          .maybeSingle();
+
+        if (!error && data?.is_premium) {
+          // premium_until pode ser null em testes, mas ideal ter
+          goToDashboard();
+          return;
+        }
+
+        await wait(5000);
+      }
+
+      setWaitingMsg(
+        "Ainda não recebemos a confirmação final do Mercado Pago. Pode levar alguns minutos. " +
+          "Você pode fechar esta tela e entrar depois — seu acesso será liberado automaticamente."
+      );
+      setPolling(false);
+    }
+
+    pollPremium();
+
+    return () => {
+      stop = true;
+    };
+  }, [step, user?.id, polling]);
 
   const handleLogout = async () => {
     try {
@@ -241,11 +252,8 @@ export default function Checkout() {
           <ArrowLeft
             className="cursor-pointer"
             onClick={() => {
-              if (step <= 1) {
-                window.location.href = createPageUrl("Vendas");
-              } else {
-                setStep(step - 1);
-              }
+              if (step <= 1) window.location.href = createPageUrl("Vendas");
+              else setStep(step - 1);
             }}
           />
           <div className="flex-1">
@@ -269,7 +277,7 @@ export default function Checkout() {
 
         <div className="flex mb-6 gap-2">
           {[1, 2, 3].map((s) => (
-            <div key={s} className={`h-2 flex-1 rounded-full ${s <= step ? "bg-red-500" : "bg-gray-200"}`} />
+            <div key={s} className={`h-2 flex-1 rounded-full ${s <= Math.min(step, 3) ? "bg-red-500" : "bg-gray-200"}`} />
           ))}
         </div>
 
@@ -285,6 +293,7 @@ export default function Checkout() {
               >
                 <QrCode className="mr-2" /> PIX
               </Button>
+
               <Button
                 className="w-full"
                 onClick={() => {
@@ -334,7 +343,6 @@ export default function Checkout() {
                 />
               </div>
 
-              {/* Permite testar AuthGate mesmo estando logado (trocar conta) */}
               {user && !forceAuth ? (
                 <div className="bg-green-50 border border-green-200 rounded-xl p-3 text-sm text-green-800 space-y-2">
                   <div>
@@ -384,18 +392,10 @@ export default function Checkout() {
               className="space-y-4"
             >
               <div className="bg-gray-50 p-4 rounded-xl space-y-1">
-                <p>
-                  <b>Plano:</b> {selectedPlan.name}
-                </p>
-                <p>
-                  <b>Valor:</b> R$ {selectedPlan.price.toFixed(2)}
-                </p>
-                <p>
-                  <b>Método:</b> {paymentMethod === "pix" ? "PIX" : "Cartão"}
-                </p>
-                <p>
-                  <b>Email:</b> {personalData.email}
-                </p>
+                <p><b>Plano:</b> {selectedPlan.name}</p>
+                <p><b>Valor:</b> R$ {selectedPlan.price.toFixed(2)}</p>
+                <p><b>Método:</b> {paymentMethod === "pix" ? "PIX" : "Cartão"}</p>
+                <p><b>Email:</b> {personalData.email}</p>
               </div>
 
               <Button className="w-full" onClick={handlePay} disabled={isProcessing}>
@@ -403,8 +403,42 @@ export default function Checkout() {
               </Button>
 
               <p className="text-xs text-gray-500 text-center">
-                * Se você for admin, este botão libera acesso e vai direto para o Dashboard (modo vendedor).
+                Ao confirmar o pagamento, o acesso Premium é liberado automaticamente.
               </p>
+            </motion.div>
+          )}
+
+          {step === 4 && (
+            <motion.div
+              key="step4"
+              initial={{ opacity: 0, x: 50 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0 }}
+              className="space-y-4"
+            >
+              <div className="bg-gray-50 p-4 rounded-xl">
+                <div className="flex items-center gap-2">
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  <p className="text-sm text-gray-700">
+                    {waitingMsg || "Aguardando confirmação do pagamento…"}
+                  </p>
+                </div>
+                <p className="text-xs text-gray-500 mt-2">
+                  Se você pagou via PIX, pode levar alguns instantes para confirmar.
+                </p>
+              </div>
+
+              <Button className="w-full" onClick={() => (window.location.href = createPageUrl("Dashboard"))}>
+                Ir para o Dashboard
+              </Button>
+
+              <Button
+                variant="outline"
+                className="w-full"
+                onClick={() => (window.location.href = createPageUrl("Vendas"))}
+              >
+                Voltar
+              </Button>
             </motion.div>
           )}
         </AnimatePresence>
