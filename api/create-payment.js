@@ -46,11 +46,16 @@ export default async function handler(req, res) {
         },
       ],
 
-      payer: {
+      const cpfDigits = customer?.cpf ? String(customer.cpf).replace(/\D/g, "") : null;
+const fullName = (customer?.nome || "").trim();
+const firstName = fullName ? fullName.split(" ")[0] : undefined;
+const lastName = fullName && fullName.split(" ").length > 1 ? fullName.split(" ").slice(1).join(" ") : undefined;
+
+payer: {
   email: userEmail,
-  identification: customer?.cpf
-    ? { type: "CPF", number: String(customer.cpf).replace(/\D/g, "") }
-    : undefined,
+  first_name: firstName,
+  last_name: lastName,
+  identification: cpfDigits ? { type: "CPF", number: cpfDigits } : undefined,
 },
 
       external_reference: String(userId),
