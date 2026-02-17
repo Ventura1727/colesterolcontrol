@@ -46,7 +46,12 @@ export default async function handler(req, res) {
         },
       ],
 
-      payer: { email: userEmail },
+      payer: {
+  email: userEmail,
+  identification: customer?.cpf
+    ? { type: "CPF", number: String(customer.cpf).replace(/\D/g, "") }
+    : undefined,
+},
 
       external_reference: String(userId),
 
