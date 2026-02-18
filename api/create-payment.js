@@ -33,7 +33,9 @@ export default async function handler(req, res) {
     const token = process.env.MERCADOPAGO_ACCESS_TOKEN;
     if (!token) return res.status(500).json({ error: "Missing MERCADOPAGO_ACCESS_TOKEN env var" });
 
-    const appUrl = process.env.APP_URL || "https://heartbalance.com.br";
+    // evita APP_URL com "/" no fim (duplo //)
+    const appUrlRaw = process.env.APP_URL || "https://heartbalance.com.br";
+    const appUrl = String(appUrlRaw).replace(/\/$/, "");
 
     // ---------- PAYER NORMALIZADO (nome + cpf) ----------
     const cpfDigits = customer?.cpf ? String(customer.cpf).replace(/\D/g, "").slice(0, 11) : null;
@@ -82,8 +84,10 @@ export default async function handler(req, res) {
       // ✅ aparece na fatura do cartão (se aplicável)
       statement_descriptor: "HEARTBALANCE",
 
+      // ✅ webhook em produção
       notification_url: `${appUrl}/api/mp-webhook`,
 
+      // ✅ retorno para o app
       back_urls: {
         success: `${appUrl}/checkout?status=approved`,
         pending: `${appUrl}/checkout?status=pending`,
@@ -123,7 +127,6 @@ export default async function handler(req, res) {
       });
     }
 
-    // ✅ fallback: se estiver em ambiente de teste, pode vir sandbox_init_point
     const redirectUrl = data?.init_point || data?.sandbox_init_point;
 
     if (!redirectUrl) {
@@ -135,7 +138,7 @@ export default async function handler(req, res) {
 
     return res.status(200).json({
       init_point: redirectUrl,
-      id: data?.id,
+      id: data?.id, // preference_id
     });
   } catch (err) {
     console.error("Create payment error:", err);
