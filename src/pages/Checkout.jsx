@@ -46,7 +46,7 @@ async function wait(ms) {
 }
 
 export default function Checkout() {
-  const [step, setStep] = useState(1); // 1=método, 2=dados(+login/cadastro), 3=confirmar/pagar, 4=aguardando
+  const [step, setStep] = useState(1);
   const [selectedPlan, setSelectedPlan] = useState(null);
   const [paymentMethod, setPaymentMethod] = useState(null);
   const [isProcessing, setIsProcessing] = useState(false);
@@ -62,6 +62,7 @@ export default function Checkout() {
 
   const [waitingMsg, setWaitingMsg] = useState("");
   const [polling, setPolling] = useState(false);
+  const [isCheckingNow, setIsCheckingNow] = useState(false);
 
   useEffect(() => {
     let mounted = true;
@@ -106,10 +107,10 @@ export default function Checkout() {
     return "Confirmando Pagamento";
   }, [step]);
 
-  // Se voltar do Mercado Pago com status (back_urls), tenta confirmar premium automaticamente
+  // Se voltar do Mercado Pago com status, vai para step 4 e mostra msg
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    const backStatus = params.get("status"); // approved | pending | failure (depende do back_urls)
+    const backStatus = params.get("status");
     if (backStatus) {
       setStep(4);
       if (backStatus === "approved") {
@@ -160,7 +161,7 @@ export default function Checkout() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          plan: selectedPlan, // {id,name,price,durationDays}
+          plan: selectedPlan,
           userEmail: personalData.email || user.email,
           userId: user.id,
           paymentMethod,
@@ -175,12 +176,16 @@ export default function Checkout() {
       const data = await resp.json().catch(() => ({}));
 
       if (!resp.ok || !data?.init_point) {
-        alert(data?.message || "Erro ao iniciar pagamento (Mercado Pago).");
+        alert(data?.message || data?.error || "Erro ao iniciar pagamento (Mercado Pago).");
         setIsProcessing(false);
         return;
       }
 
-      // redireciona para MP
+      // salva o preference_id pra checar depois no botão “Já paguei”
+      if (data?.id) {
+        localStorage.setItem("hb_preference_id", String(data.id));
+      }
+
       window.location.href = data.init_point;
     } catch (e) {
       alert("Erro inesperado ao processar pagamento.");
@@ -188,7 +193,44 @@ export default function Checkout() {
     }
   };
 
-  // Polling: quando estamos no step 4, checa subscriptions para liberar
+  // Botão “Já paguei” (consulta MP pelo preference_id) e deixa o polling pegar a ativação
+  const handleIAlreadyPaid = async () => {
+    if (!user?.id) return;
+
+    const preferenceId = localStorage.getItem("hb_preference_id");
+    if (!preferenceId) {
+      alert("Não encontrei a referência do pagamento. Inicie o pagamento novamente.");
+      return;
+    }
+
+    setIsCheckingNow(true);
+    setWaitingMsg("Verificando seu pagamento no Mercado Pago…");
+
+    try {
+      const resp = await fetch("/api/check-payment", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ preferenceId, userId: user.id }),
+      });
+
+      const data = await resp.json().catch(() => ({}));
+
+      if (data?.approved) {
+        // salva para você usar depois (qualidade MP) se quiser
+        if (data?.payment_id) localStorage.setItem("hb_last_payment_id", String(data.payment_id));
+        setWaitingMsg("Pagamento aprovado! Liberando Premium…");
+        // o webhook deve atualizar subscriptions; o polling (abaixo) finaliza
+      } else {
+        setWaitingMsg("Ainda não consta como aprovado. Aguarde alguns segundos e tente novamente.");
+      }
+    } catch (e) {
+      setWaitingMsg("Não foi possível verificar agora. Tente novamente em instantes.");
+    } finally {
+      setIsCheckingNow(false);
+    }
+  };
+
+  // Polling: quando step 4, checa subscriptions para liberar
   useEffect(() => {
     if (step !== 4) return;
     if (!user?.id) return;
@@ -199,7 +241,6 @@ export default function Checkout() {
     async function pollPremium() {
       setPolling(true);
 
-      // tenta por ~2 minutos (24 tentativas * 5s)
       for (let i = 0; i < 24; i++) {
         if (stop) break;
 
@@ -210,7 +251,6 @@ export default function Checkout() {
           .maybeSingle();
 
         if (!error && data?.is_premium) {
-          // premium_until pode ser null em testes, mas ideal ter
           goToDashboard();
           return;
         }
@@ -220,7 +260,7 @@ export default function Checkout() {
 
       setWaitingMsg(
         "Ainda não recebemos a confirmação final do Mercado Pago. Pode levar alguns minutos. " +
-          "Você pode fechar esta tela e entrar depois — seu acesso será liberado automaticamente."
+          "Se você já pagou, clique em “Já paguei” para verificar."
       );
       setPolling(false);
     }
@@ -424,9 +464,13 @@ export default function Checkout() {
                   </p>
                 </div>
                 <p className="text-xs text-gray-500 mt-2">
-                  Se você pagou via PIX, pode levar alguns instantes para confirmar.
+                  Se você pagou via PIX, volte para o app e clique em “Já paguei” para verificar.
                 </p>
               </div>
+
+              <Button className="w-full" onClick={handleIAlreadyPaid} disabled={isCheckingNow}>
+                {isCheckingNow ? "Verificando..." : "Já paguei, verificar agora"}
+              </Button>
 
               <Button className="w-full" onClick={() => (window.location.href = createPageUrl("Dashboard"))}>
                 Ir para o Dashboard
