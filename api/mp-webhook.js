@@ -34,6 +34,21 @@ async function fetchJson(url, token) {
   return { ok: resp.ok, status: resp.status, json, raw };
 }
 
+function pickBestPaymentIdFromOrder(order) {
+  const payments = order?.payments || [];
+  if (!payments.length) return null;
+
+  // Preferir approved
+  const approved = payments.find((p) => p?.status === "approved");
+  if (approved?.id) return String(approved.id);
+
+  // Se não tiver approved, pega o mais recente (último do array)
+  const last = payments[payments.length - 1];
+  if (last?.id) return String(last.id);
+
+  return null;
+}
+
 export default async function handler(req, res) {
   // Healthcheck no browser
   if (req.method === "GET") {
@@ -71,6 +86,7 @@ export default async function handler(req, res) {
     });
 
     if (!topic || !resourceId) {
+      // Mantém idempotente
       return res.status(200).json({ ok: true, reason: "missing_topic_or_id" });
     }
 
@@ -94,7 +110,7 @@ export default async function handler(req, res) {
       payment = p.json;
     }
 
-    // 2) Se vier merchant_order, buscamos a order e depois o payment
+    // 2) Se vier merchant_order, buscamos a order e depois escolhemos o payment certo
     if (topic === "merchant_order") {
       const o = await fetchJson(
         `https://api.mercadopago.com/merchant_orders/${resourceId}`,
@@ -110,9 +126,10 @@ export default async function handler(req, res) {
       }
 
       const order = o.json;
-      const firstPaymentId = order?.payments?.[0]?.id;
 
-      if (!firstPaymentId) {
+      const targetPaymentId = pickBestPaymentIdFromOrder(order);
+
+      if (!targetPaymentId) {
         // Pode chegar antes de existir payment
         console.log("mp-webhook: merchant_order with no payment yet", {
           merchant_order_id: resourceId,
@@ -121,7 +138,7 @@ export default async function handler(req, res) {
       }
 
       const p = await fetchJson(
-        `https://api.mercadopago.com/v1/payments/${firstPaymentId}`,
+        `https://api.mercadopago.com/v1/payments/${targetPaymentId}`,
         mpToken
       );
 
