@@ -12,6 +12,20 @@ function pickPlanFromBody(body) {
   return key ? PLANS[key] : null;
 }
 
+function normalizeCpf(value) {
+  return String(value || "").replace(/\D/g, "").slice(0, 11);
+}
+
+function splitName(fullName) {
+  const parts = String(fullName || "")
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+  const firstName = parts[0] || "";
+  const lastName = parts.slice(1).join(" ") || "";
+  return { firstName, lastName };
+}
+
 export default async function handler(req, res) {
   if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
 
@@ -37,13 +51,17 @@ export default async function handler(req, res) {
     const appUrlRaw = process.env.APP_URL || "https://heartbalance.com.br";
     const appUrl = String(appUrlRaw).replace(/\/$/, "");
 
-    // ---------- PAYER NORMALIZADO (nome + cpf) ----------
-    const cpfDigits = customer?.cpf ? String(customer.cpf).replace(/\D/g, "").slice(0, 11) : null;
+    const cpfDigits = normalizeCpf(customer?.cpf);
 
     const fullName = String(customer?.nome || "").trim();
-    const firstName = fullName ? fullName.split(" ")[0] : undefined;
+    const fromCustomerSplit = splitName(fullName);
+
+    // prioriza o que veio do front (customer.first_name/last_name),
+    // mas garante fallback pelo nome completo
+    const firstName =
+      String(customer?.first_name || "").trim() || fromCustomerSplit.firstName || "Cliente";
     const lastName =
-      fullName && fullName.split(" ").length > 1 ? fullName.split(" ").slice(1).join(" ") : undefined;
+      String(customer?.last_name || "").trim() || fromCustomerSplit.lastName || "HeartBalance";
 
     const payer = {
       email: userEmail,
@@ -52,11 +70,20 @@ export default async function handler(req, res) {
       identification: cpfDigits ? { type: "CPF", number: cpfDigits } : undefined,
     };
 
+    const itemTitle = `HeartBalance Premium - ${chosenPlan.name}`;
+    const itemDescription =
+      `Assinatura ${chosenPlan.name.toLowerCase()} do HeartBalance: recursos premium, acompanhamento e orientações para controle de colesterol.`;
+
     const preference = {
       items: [
         {
-          id: chosenPlan.id,
-          title: `Heartbalance Premium - ${chosenPlan.name}`,
+          id: `heartbalance-${chosenPlan.id}`,
+          title: itemTitle,
+
+          // ✅ melhora score
+          description: itemDescription,
+          category_id: "services",
+
           quantity: 1,
           unit_price: Number(chosenPlan.price), // 🔒 nunca vem do front
           currency_id: "BRL",
@@ -74,6 +101,8 @@ export default async function handler(req, res) {
         duration_days: chosenPlan.durationDays,
         customer_email: userEmail || customer?.email || null,
         customer_name: customer?.nome || null,
+        customer_first_name: firstName || null,
+        customer_last_name: lastName || null,
         customer_cpf: cpfDigits || null,
         payment_method: paymentMethod || null,
       },
