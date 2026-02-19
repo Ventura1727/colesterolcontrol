@@ -212,11 +212,21 @@ export default function Alimentacao() {
   const [localDoneSet, setLocalDoneSet] = useState(() => readLocalDoneSet(todayISODate()));
 
   useEffect(() => {
-    loadData();
+    let mounted = true;
+
+    async function run() {
+      await loadData(mounted);
+    }
+
+    run();
+
+    return () => {
+      mounted = false;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const loadData = async () => {
+  const loadData = async (mountedFlag = true) => {
     setIsLoading(true);
 
     const { data: userData } = await supabase.auth.getUser();
@@ -227,11 +237,7 @@ export default function Alimentacao() {
       return;
     }
 
-    /**
-     * PERFIL: Fonte única = public.profiles
-     * - maybeSingle evita 406 quando não há linha
-     * - upsert mínimo evita app quebrar caso user não tenha profile ainda
-     */
+    // PERFIL: public.profiles
     let prof = null;
 
     try {
@@ -263,21 +269,36 @@ export default function Alimentacao() {
       }
     }
 
-    setProfile(prof);
+    if (mountedFlag) setProfile(prof);
 
-    // Logs (se tabelas não existirem, retorna [])
-    const meals = await safeSelect("meal_logs", (q) => q.order("created_at", { ascending: false }).limit(60));
-    const acts = await safeSelect("activity_logs", (q) => q.order("created_at", { ascending: false }).limit(60));
-    const colesterol = await safeSelect("colesterol_records", (q) => q.order("data_exame", { ascending: false }).limit(5));
+    // ✅ IMPORTANTE: filtrar por user_id (privacidade)
+    const meals = await safeSelect("meal_logs", (q) =>
+      q.eq("user_id", user.id).order("created_at", { ascending: false }).limit(60)
+    );
 
-    setMealLogs(meals);
-    setActivities(acts);
-    setColesterolRecords(colesterol);
+    const acts = await safeSelect("activity_logs", (q) =>
+      q.eq("user_id", user.id).order("created_at", { ascending: false }).limit(60)
+    );
 
-    // Atualiza também o localStorage set do dia (fallback)
-    setLocalDoneSet(readLocalDoneSet(day));
+    // ✅ compatível: tenta "cholesterol_records" (mais provável), se vazio tenta "colesterol_records"
+    let colesterol = await safeSelect("cholesterol_records", (q) =>
+      q.eq("user_id", user.id).order("record_date", { ascending: false }).limit(5)
+    );
 
-    setIsLoading(false);
+    if (!colesterol || colesterol.length === 0) {
+      colesterol = await safeSelect("colesterol_records", (q) =>
+        q.eq("user_id", user.id).order("data_exame", { ascending: false }).limit(5)
+      );
+    }
+
+    if (mountedFlag) {
+      setMealLogs(meals);
+      setActivities(acts);
+      setColesterolRecords(colesterol);
+
+      setLocalDoneSet(readLocalDoneSet(day));
+      setIsLoading(false);
+    }
   };
 
   const isUnlocked = (receita) => {
@@ -335,14 +356,14 @@ export default function Alimentacao() {
 
     setCompleting(true);
 
-    // atualização otimista do “done” (para UX imediata)
+    // atualização otimista
     const nextLocal = new Set(localDoneSet);
     nextLocal.add(receita.id);
     setLocalDoneSet(nextLocal);
     writeLocalDoneSet(day, nextLocal);
 
     try {
-      // 1) Meal log (fonte de verdade do "concluído hoje")
+      // 1) Meal log
       try {
         await supabase.from("meal_logs").insert({
           user_id: profile.id,
@@ -350,13 +371,13 @@ export default function Alimentacao() {
           calories: receita.calories,
           is_healthy: true,
           ai_feedback: `Receita saudável: ${receita.benefit}`,
-          date: new Date().toISOString().slice(0, 10),
+          date: day,
         });
       } catch {
-        // se falhar, mantém no localStorage (fallback)
+        // fallback fica no localStorage
       }
 
-      // 2) Activity log (histórico)
+      // 2) Activity log
       try {
         await supabase.from("activity_logs").insert({
           user_id: profile.id,
@@ -369,7 +390,7 @@ export default function Alimentacao() {
         // ignore
       }
 
-      // 3) Atualiza XP/rank em profiles
+      // 3) Atualiza XP/rank
       const currentXp = Number(profile?.xp_total || 0);
       const currentMetas = Number(profile?.metas_concluidas || 0);
 
@@ -378,17 +399,14 @@ export default function Alimentacao() {
       const newRank = computeRankFromXp(newXp);
 
       try {
-        await supabase
-          .from("profiles")
-          .update({ xp_total: newXp, metas_concluidas: newMetas, rank: newRank })
-          .eq("id", profile.id);
+        await supabase.from("profiles").update({ xp_total: newXp, metas_concluidas: newMetas, rank: newRank }).eq("id", profile.id);
       } catch {
         // ignore
       }
 
       setProfile({ ...profile, xp_total: newXp, metas_concluidas: newMetas, rank: newRank });
 
-      await loadData();
+      await loadData(true);
       setSelectedReceita(null);
     } finally {
       setCompleting(false);
@@ -397,10 +415,11 @@ export default function Alimentacao() {
 
   const handlePhotoSelect = (e) => {
     const file = e.target.files?.[0];
-    e.target.value = ""; // permite selecionar a mesma foto novamente
+    e.target.value = "";
     if (!file) return;
 
     setPhotoFile(file);
+
     const reader = new FileReader();
     reader.onloadend = () => setPhotoPreview(reader.result);
     reader.readAsDataURL(file);
@@ -409,13 +428,11 @@ export default function Alimentacao() {
   };
 
   const analyzeFood = async () => {
-    // Aqui era base44.integrations.UploadFile + InvokeLLM
-    // Vamos manter simples por enquanto para não travar o app.
     setAnalyzing(true);
     try {
       alert(
         "Análise por IA está em manutenção nesta versão.\n\n" +
-          "Próximo passo: implementar upload no Supabase Storage + endpoint /api/analyze-meal para o OpenAI.\n" +
+          "Próximo passo: upload no Supabase Storage + endpoint /api/analyze-meal.\n" +
           "Se você quiser, eu te passo isso prontinho."
       );
     } finally {
@@ -488,8 +505,7 @@ export default function Alimentacao() {
             type="file"
             ref={cameraInputRef}
             onChange={handlePhotoSelect}
-            // alguns navegadores respeitam melhor esse accept
-            accept="image/*;capture=camera"
+            accept="image/*"
             capture="environment"
             className="hidden"
           />
@@ -592,7 +608,9 @@ export default function Alimentacao() {
                     {unlocked ? (
                       <ChevronRight className="w-5 h-5 text-gray-400" />
                     ) : (
-                      <div className="text-xs text-gray-400 bg-gray-100 px-2 py-1 rounded-lg">{receita.rank_required}</div>
+                      <div className="text-xs text-gray-400 bg-gray-100 px-2 py-1 rounded-lg">
+                        {receita.rank_required}
+                      </div>
                     )}
                   </div>
                 </button>
