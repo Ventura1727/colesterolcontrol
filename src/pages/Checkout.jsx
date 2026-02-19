@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { ArrowLeft, CreditCard, QrCode, ShieldCheck, LogOut, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -74,6 +74,9 @@ export default function Checkout() {
   const [polling, setPolling] = useState(false);
   const [isCheckingNow, setIsCheckingNow] = useState(false);
 
+  // evita disparar auto-check várias vezes
+  const autoCheckStartedRef = useRef(false);
+
   useEffect(() => {
     let mounted = true;
 
@@ -123,10 +126,11 @@ export default function Checkout() {
     const backStatus = params.get("status");
     if (backStatus) {
       setStep(4);
+
       if (backStatus === "approved") {
-        setWaitingMsg("Pagamento aprovado! Confirmando liberação do Premium…");
+        setWaitingMsg("Pagamento aprovado! Liberando o Premium…");
       } else if (backStatus === "pending") {
-        setWaitingMsg("Pagamento pendente. Assim que confirmar, liberamos automaticamente.");
+        setWaitingMsg("Pagamento pendente. Abra o app do seu banco e finalize o PIX. Vou verificar automaticamente…");
       } else {
         setWaitingMsg("Pagamento não aprovado. Você pode tentar novamente.");
       }
@@ -214,6 +218,90 @@ export default function Checkout() {
     }
   };
 
+  async function checkPaymentOnce() {
+    if (!user?.id) return { approved: false, payment_id: null };
+    const preferenceId = localStorage.getItem("hb_preference_id");
+    if (!preferenceId) return { approved: false, payment_id: null, missingPreference: true };
+
+    const resp = await fetch("/api/check-payment", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ preferenceId, userId: user.id }),
+    });
+
+    const data = await resp.json().catch(() => ({}));
+    return {
+      approved: Boolean(data?.approved),
+      payment_id: data?.payment_id ? String(data.payment_id) : null,
+      ok: Boolean(data?.ok),
+    };
+  }
+
+  // ✅ Auto-check no Step 4: tenta 3 vezes (5s) antes de pedir clique do usuário
+  useEffect(() => {
+    if (step !== 4) return;
+    if (!user?.id) return;
+    if (autoCheckStartedRef.current) return;
+
+    autoCheckStartedRef.current = true;
+
+    let cancelled = false;
+
+    async function runAutoCheck() {
+      // Se caiu no step 4, normalmente é PIX pendente/retorno do MP.
+      setIsCheckingNow(true);
+
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        if (cancelled) return;
+
+        setWaitingMsg(
+          attempt === 1
+            ? "Verificando seu pagamento no Mercado Pago…"
+            : `Ainda verificando… (tentativa ${attempt}/3)`
+        );
+
+        try {
+          const result = await checkPaymentOnce();
+
+          if (result?.missingPreference) {
+            setWaitingMsg(
+              "Não encontrei a referência do pagamento neste dispositivo. " +
+                "Se você gerou o PIX aqui antes, tente iniciar o pagamento novamente."
+            );
+            break;
+          }
+
+          if (result?.approved) {
+            if (result?.payment_id) localStorage.setItem("hb_last_payment_id", String(result.payment_id));
+            setWaitingMsg("Pagamento aprovado! Liberando Premium…");
+            // o webhook deve atualizar subscriptions; o polling finaliza
+            break;
+          }
+        } catch {
+          // ignore e tenta de novo
+        }
+
+        if (attempt < 3) await wait(5000);
+      }
+
+      if (!cancelled) {
+        setIsCheckingNow(false);
+
+        // mensagem final amigável caso não aprovado ainda
+        setWaitingMsg(
+          "Ainda não consta como aprovado. Às vezes o PIX pode levar alguns instantes. " +
+            "Se você já pagou, clique em “Já paguei” para verificar novamente."
+        );
+      }
+    }
+
+    runAutoCheck();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [step, user?.id]);
+
   // Botão “Já paguei” (consulta MP pelo preference_id) e deixa o polling pegar a ativação
   const handleIAlreadyPaid = async () => {
     if (!user?.id) return;
@@ -228,17 +316,10 @@ export default function Checkout() {
     setWaitingMsg("Verificando seu pagamento no Mercado Pago…");
 
     try {
-      const resp = await fetch("/api/check-payment", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ preferenceId, userId: user.id }),
-      });
+      const result = await checkPaymentOnce();
 
-      const data = await resp.json().catch(() => ({}));
-
-      if (data?.approved) {
-        // salva para você usar depois (qualidade MP) se quiser
-        if (data?.payment_id) localStorage.setItem("hb_last_payment_id", String(data.payment_id));
+      if (result?.approved) {
+        if (result?.payment_id) localStorage.setItem("hb_last_payment_id", String(result.payment_id));
         setWaitingMsg("Pagamento aprovado! Liberando Premium…");
         // o webhook deve atualizar subscriptions; o polling (abaixo) finaliza
       } else {
@@ -338,10 +419,7 @@ export default function Checkout() {
 
         <div className="flex mb-6 gap-2">
           {[1, 2, 3].map((s) => (
-            <div
-              key={s}
-              className={`h-2 flex-1 rounded-full ${s <= Math.min(step, 3) ? "bg-red-500" : "bg-gray-200"}`}
-            />
+            <div key={s} className={`h-2 flex-1 rounded-full ${s <= Math.min(step, 3) ? "bg-red-500" : "bg-gray-200"}`} />
           ))}
         </div>
 
@@ -456,18 +534,10 @@ export default function Checkout() {
               className="space-y-4"
             >
               <div className="bg-gray-50 p-4 rounded-xl space-y-1">
-                <p>
-                  <b>Plano:</b> {selectedPlan.name}
-                </p>
-                <p>
-                  <b>Valor:</b> R$ {selectedPlan.price.toFixed(2)}
-                </p>
-                <p>
-                  <b>Método:</b> {paymentMethod === "pix" ? "PIX" : "Cartão"}
-                </p>
-                <p>
-                  <b>Email:</b> {personalData.email}
-                </p>
+                <p><b>Plano:</b> {selectedPlan.name}</p>
+                <p><b>Valor:</b> R$ {selectedPlan.price.toFixed(2)}</p>
+                <p><b>Método:</b> {paymentMethod === "pix" ? "PIX" : "Cartão"}</p>
+                <p><b>Email:</b> {personalData.email}</p>
               </div>
 
               <Button className="w-full" onClick={handlePay} disabled={isProcessing}>
@@ -490,11 +560,13 @@ export default function Checkout() {
             >
               <div className="bg-gray-50 p-4 rounded-xl">
                 <div className="flex items-center gap-2">
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                  <p className="text-sm text-gray-700">{waitingMsg || "Aguardando confirmação do pagamento…"}</p>
+                  <Loader2 className={`w-4 h-4 ${isCheckingNow ? "animate-spin" : ""}`} />
+                  <p className="text-sm text-gray-700">
+                    {waitingMsg || "Aguardando confirmação do pagamento…"}
+                  </p>
                 </div>
                 <p className="text-xs text-gray-500 mt-2">
-                  Se você pagou via PIX, volte para o app e clique em “Já paguei” para verificar.
+                  Se você pagou via PIX, volte para o app. Nós verificamos automaticamente — e você também pode forçar a verificação abaixo.
                 </p>
               </div>
 
@@ -506,7 +578,11 @@ export default function Checkout() {
                 Ir para o Dashboard
               </Button>
 
-              <Button variant="outline" className="w-full" onClick={() => (window.location.href = createPageUrl("Vendas"))}>
+              <Button
+                variant="outline"
+                className="w-full"
+                onClick={() => (window.location.href = createPageUrl("Vendas"))}
+              >
                 Voltar
               </Button>
             </motion.div>
