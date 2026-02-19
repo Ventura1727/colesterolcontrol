@@ -221,6 +221,11 @@ function openImagePicker({ source, onFile }) {
 
 export default function Alimentacao() {
   const isMountedRef = useRef(true);
+  const [foodQuery, setFoodQuery] = useState("");
+  const [foodResults, setFoodResults] = useState([]);
+  const [foodSearching, setFoodSearching] = useState(false);
+  const [foodSelected, setFoodSelected] = useState(null);
+  const [portionGrams, setPortionGrams] = useState("100"); // padrão 100g
 
   const [profile, setProfile] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
