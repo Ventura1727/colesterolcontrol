@@ -946,9 +946,16 @@ const customMealXpPreview = useMemo(() => {
                     </button>
 
                     <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-3 text-sm text-yellow-800 flex items-center justify-between">
-                      <span>XP ao registrar</span>
-                      <span className="font-bold">+{customMealXpPreview} XP</span>
-                    </div>
+  <span>XP ao registrar</span>
+  <span className="font-bold">+{customMealXpPreview} XP</span>
+</div>
+
+{/* 🔴 Aviso quando NÃO for saudável */}
+{!customHealthy && (
+  <div className="bg-red-50 border border-red-200 rounded-xl p-3 text-sm text-red-800 mt-3">
+    Refeições não saudáveis não geram XP. Vamos registrar apenas as calorias.
+  </div>
+)}
 
                     <Button
                       onClick={registerCustomMeal}
