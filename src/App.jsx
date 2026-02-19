@@ -5,7 +5,14 @@ import { queryClientInstance } from "@/lib/query-client";
 import VisualEditAgent from "@/lib/VisualEditAgent";
 import NavigationTracker from "@/lib/NavigationTracker";
 import { pagesConfig } from "./pages.config";
-import { BrowserRouter as Router, Route, Routes, Navigate, useLocation } from "react-router-dom";
+import {
+  BrowserRouter as Router,
+  Route,
+  Routes,
+  Navigate,
+  useLocation,
+  useNavigate,
+} from "react-router-dom";
 import PageNotFound from "./lib/PageNotFound";
 import { AuthProvider, useAuth } from "@/lib/AuthContext";
 import UserNotRegisteredError from "@/components/UserNotRegisteredError";
@@ -13,6 +20,7 @@ import GerarPix from "@/components/GerarPix";
 import AuthGate from "@/components/AuthGate";
 import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
+import { Button } from "@/components/ui/button";
 
 // ✅ Ajustado para o local onde você criou o arquivo no print: src/components/Auth/Callback.jsx
 import AuthCallback from "@/components/Auth/Callback";
@@ -25,6 +33,65 @@ const MainPage = mainPageKey ? Pages[mainPageKey] : <></>;
 
 const LayoutWrapper = ({ children, currentPageName }) =>
   Layout ? <Layout currentPageName={currentPageName}>{children}</Layout> : <>{children}</>;
+
+/**
+ * ✅ NOVO: Tela de entrada do app
+ * - Se já estiver logado -> vai direto pro Dashboard
+ * - Se não -> escolhe entre Login ou Quiz (Onboarding)
+ */
+const EntryRoute = () => {
+  const { isLoadingAuth, isAuthenticated, authError } = useAuth();
+  const navigate = useNavigate();
+
+  if (isLoadingAuth) {
+    return (
+      <div className="fixed inset-0 flex items-center justify-center">
+        <div className="w-8 h-8 border-4 border-slate-200 border-t-slate-800 rounded-full animate-spin" />
+      </div>
+    );
+  }
+
+  if (authError?.type === "user_not_registered") {
+    return <UserNotRegisteredError />;
+  }
+
+  // ✅ Se já está logado, vai direto pro Dashboard
+  if (isAuthenticated) {
+    return <Navigate to="/dashboard" replace />;
+  }
+
+  return (
+    <div className="min-h-[70vh] flex items-center justify-center px-4">
+      <div className="w-full max-w-lg bg-white rounded-3xl shadow-xl p-6 space-y-4">
+        <div className="space-y-1">
+          <h1 className="text-2xl font-bold text-slate-900">Bem-vindo ao HeartBalance</h1>
+          <p className="text-sm text-slate-500">
+            Para continuar, escolha uma opção:
+          </p>
+        </div>
+
+        <Button
+          className="w-full"
+          onClick={() => navigate(`/login?next=${encodeURIComponent("/dashboard")}`)}
+        >
+          Já tenho conta (Entrar)
+        </Button>
+
+        <Button
+          variant="outline"
+          className="w-full"
+          onClick={() => navigate("/onboarding")}
+        >
+          Sou novo (Fazer o Quiz)
+        </Button>
+
+        <div className="text-xs text-slate-500 pt-2">
+          Se você já pagou e tem premium, basta entrar com sua conta e você vai direto para o app.
+        </div>
+      </div>
+    </div>
+  );
+};
 
 /**
  * Guard de login (apenas onde precisamos de login).
@@ -243,12 +310,12 @@ const AppPagesRoutes = () => {
       {/* ✅ Alias /quiz -> /onboarding (quiz do início) */}
       <Route path="/quiz" element={<Navigate to="/onboarding" replace />} />
 
-      {/* Main (/) */}
+      {/* ✅ NOVO: Main (/) agora é a tela de entrada */}
       <Route
         path="/"
         element={
           <LayoutWrapper currentPageName={mainPageKey}>
-            <MainPage />
+            <EntryRoute />
           </LayoutWrapper>
         }
       />
