@@ -186,11 +186,22 @@ function sameDay(isoDatetimeOrDate, dayYYYYMMDD) {
 }
 
 // ✅ XP padrão para refeição personalizada
-function computeCustomMealXp({ isHealthy }) {
-  // simples e previsível:
-  // - base 10
-  // - +5 se saudável
-  return 10 + (isHealthy ? 5 : 0);
+function computeCustomMealXp({ isHealthy, calories, targetCalories }) {
+  // Se não for saudável -> não ganha XP (só registra as calorias)
+  if (!isHealthy) return 0;
+
+  const target = Number(targetCalories || 2000);
+  const cals = calories == null ? null : Number(calories);
+
+  // Se não informou calorias, recompensa moderada
+  if (!Number.isFinite(cals) || cals <= 0) return 10;
+
+  const ratio = cals / Math.max(target, 1); // % da meta diária
+
+  if (ratio <= 0.2) return 20;   // refeição leve/boa
+  if (ratio <= 0.35) return 15;  // normal/ok
+  if (ratio <= 0.5) return 10;   // um pouco pesada
+  return 5;                      // muito pesada, mas ainda "saudável"
 }
 
 /**
