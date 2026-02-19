@@ -494,7 +494,11 @@ export default function Alimentacao() {
     const kcal = customCalories === "" ? null : Number(customCalories);
     const caloriesNum = Number.isFinite(kcal) ? kcal : null;
 
-    const xp = computeCustomMealXp({ isHealthy: customHealthy });
+    const xp = computeCustomMealXp({
+  isHealthy: customHealthy,
+  calories: caloriesNum,
+  targetCalories: Number(profile?.basal_kcal || 2000),
+});
 
     setRegistering(true);
     try {
