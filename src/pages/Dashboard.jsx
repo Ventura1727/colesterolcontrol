@@ -13,6 +13,7 @@ import {
   Target,
   Zap,
   Bot,
+  LogOut,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { createPageUrl } from "@/utils";
@@ -56,6 +57,15 @@ export default function Dashboard() {
   const [historicoAgua, setHistoricoAgua] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [showLockedModal, setShowLockedModal] = useState(false);
+
+  const handleLogout = async () => {
+    try {
+      await supabase.auth.signOut();
+      window.location.href = "/"; // volta pra tela de entrada
+    } catch (e) {
+      alert("Não foi possível sair. Tente novamente.");
+    }
+  };
 
   useEffect(() => {
     let mounted = true;
@@ -263,7 +273,7 @@ export default function Dashboard() {
   return (
     <div className="min-h-screen bg-gradient-to-br from-red-50 via-white to-rose-50 p-4 pb-24">
       <div className="max-w-lg mx-auto pt-6">
-        <div className="flex items-center justify-between mb-6">
+        <div className="flex items-start justify-between mb-6">
           <div className="flex items-center gap-3">
             <div className="w-12 h-12 bg-gradient-to-br from-red-500 to-rose-600 rounded-xl flex items-center justify-center shadow-lg shadow-red-200">
               <Heart className="w-6 h-6 text-white" fill="white" />
@@ -283,12 +293,25 @@ export default function Dashboard() {
             </div>
           </div>
 
-          {isPremium && (
-            <div className="flex items-center gap-1 bg-yellow-100 text-yellow-700 px-3 py-1.5 rounded-full text-sm font-medium">
-              <Zap className="w-4 h-4" />
-              {profile?.xp_total || 0} XP
-            </div>
-          )}
+          <div className="flex flex-col items-end gap-2">
+            {isPremium && (
+              <div className="flex items-center gap-1 bg-yellow-100 text-yellow-700 px-3 py-1.5 rounded-full text-sm font-medium">
+                <Zap className="w-4 h-4" />
+                {profile?.xp_total || 0} XP
+              </div>
+            )}
+
+            <button
+              onClick={handleLogout}
+              className="text-xs font-bold text-slate-600 hover:underline flex items-center gap-1"
+              type="button"
+              title="Sair"
+              aria-label="Sair"
+            >
+              <LogOut className="w-4 h-4" />
+              Sair
+            </button>
+          </div>
         </div>
 
         {isPremium && (
