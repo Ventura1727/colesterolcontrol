@@ -1,6 +1,5 @@
 // api/create-payment.js
-
-import { createClient } from "@supabase/supabase-js";
+const { createClient } = require("@supabase/supabase-js");
 
 const PLANS = {
   mensal: { id: "mensal", name: "Mensal", price: 24.9, durationDays: 30 },
@@ -26,7 +25,7 @@ function getSupabaseAdmin() {
   });
 }
 
-export default async function handler(req, res) {
+module.exports = async function handler(req, res) {
   if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
 
   try {
@@ -50,7 +49,6 @@ export default async function handler(req, res) {
     const appUrlRaw = process.env.APP_URL || "https://heartbalance.com.br";
     const appUrl = String(appUrlRaw).replace(/\/$/, "");
 
-    // ---------- PAYER NORMALIZADO (nome + cpf) ----------
     const cpfDigits = customer?.cpf ? String(customer.cpf).replace(/\D/g, "").slice(0, 11) : null;
 
     const fullName = String(customer?.nome || "").trim();
@@ -75,11 +73,8 @@ export default async function handler(req, res) {
           currency_id: "BRL",
         },
       ],
-
       payer,
-
       external_reference: String(userId),
-
       metadata: {
         user_id: String(userId),
         plan_id: chosenPlan.id,
@@ -89,20 +84,15 @@ export default async function handler(req, res) {
         customer_cpf: cpfDigits || null,
         payment_method: paymentMethod || null,
       },
-
       binary_mode: true,
       statement_descriptor: "HEARTBALANCE",
-
       notification_url: `${appUrl}/api/mp-webhook`,
-
       back_urls: {
         success: `${appUrl}/checkout?status=approved`,
         pending: `${appUrl}/checkout?status=pending`,
         failure: `${appUrl}/checkout?status=failure`,
       },
-
       auto_return: "approved",
-
       payment_methods: {
         excluded_payment_types: [{ id: "ticket" }],
       },
@@ -144,7 +134,7 @@ export default async function handler(req, res) {
       });
     }
 
-    // ✅ Melhoria B: salva preference_id no Supabase para não depender do localStorage
+    // ✅ salva preference_id no Supabase (Melhoria B)
     try {
       const supabaseAdmin = getSupabaseAdmin();
       const { error: insErr } = await supabaseAdmin.from("checkout_sessions").insert({
@@ -154,7 +144,6 @@ export default async function handler(req, res) {
         payment_method: paymentMethod || null,
         status: "created",
       });
-
       if (insErr) console.error("checkout_sessions insert error:", insErr);
     } catch (e) {
       console.error("checkout_sessions insert unexpected error:", e);
@@ -162,10 +151,10 @@ export default async function handler(req, res) {
 
     return res.status(200).json({
       init_point: redirectUrl,
-      id: preferenceId, // preference_id
+      id: preferenceId,
     });
   } catch (err) {
     console.error("Create payment error:", err);
     return res.status(500).json({ error: "Internal error", message: err?.message ?? String(err) });
   }
-}
+};
