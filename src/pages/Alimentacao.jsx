@@ -1,5 +1,5 @@
 // src/pages/Alimentacao.jsx
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   ArrowLeft,
@@ -17,6 +17,7 @@ import {
   X,
   Loader2,
   BarChart3,
+  Plus,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { createPageUrl } from "@/utils";
@@ -143,7 +144,6 @@ function computeRankFromXp(xp) {
   return "Iniciante";
 }
 
-// Lê tabelas sem quebrar caso não existam ainda
 async function safeSelect(table, queryBuilderFn) {
   try {
     const q = queryBuilderFn(supabase.from(table).select("*"));
@@ -176,15 +176,40 @@ function readLocalDoneSet(day) {
 function writeLocalDoneSet(day, set) {
   try {
     localStorage.setItem(localKeyForDay(day), JSON.stringify(Array.from(set)));
-  } catch {
-    // ignore
-  }
+  } catch {}
 }
 
 function sameDay(isoDatetimeOrDate, dayYYYYMMDD) {
   if (!isoDatetimeOrDate) return false;
   const s = String(isoDatetimeOrDate);
   return s.slice(0, 10) === dayYYYYMMDD;
+}
+
+// ✅ XP padrão para refeição personalizada
+function computeCustomMealXp({ isHealthy }) {
+  // simples e previsível:
+  // - base 10
+  // - +5 se saudável
+  return 10 + (isHealthy ? 5 : 0);
+}
+
+/**
+ * ✅ Melhor tentativa de abrir câmera:
+ * - cria input "na hora" com capture + accept e dispara click dentro do gesto do usuário.
+ * - se o navegador não suportar, ele abre galeria mesmo (limitação do browser).
+ */
+function openImagePicker({ source, onFile }) {
+  const input = document.createElement("input");
+  input.type = "file";
+  input.accept = "image/*";
+  if (source === "camera") {
+    input.setAttribute("capture", "environment");
+  }
+  input.onchange = (e) => {
+    const file = e.target.files?.[0];
+    if (file) onFile(file);
+  };
+  input.click();
 }
 
 export default function Alimentacao() {
@@ -194,19 +219,31 @@ export default function Alimentacao() {
   const [selectedReceita, setSelectedReceita] = useState(null);
   const [completing, setCompleting] = useState(false);
 
-  const [showPhotoModal, setShowPhotoModal] = useState(false);
+  // ✅ modos separados (pedido do Vitor)
+  // - analyze: avaliar sem XP
+  // - register: registrar com XP
+  const [flowMode, setFlowMode] = useState(null); // "analyze" | "register" | null
+  const [showPickerModal, setShowPickerModal] = useState(false);
+
+  // foto escolhida no fluxo (pode ser usada tanto para avaliar quanto registrar)
   const [photoFile, setPhotoFile] = useState(null);
   const [photoPreview, setPhotoPreview] = useState(null);
+
+  // modal de análise (sem XP)
+  const [showAnalyzeModal, setShowAnalyzeModal] = useState(false);
   const [analyzing, setAnalyzing] = useState(false);
+
+  // modal de registro (com XP)
+  const [showRegisterModal, setShowRegisterModal] = useState(false);
+  const [registering, setRegistering] = useState(false);
+  const [customDesc, setCustomDesc] = useState("");
+  const [customCalories, setCustomCalories] = useState("");
+  const [customHealthy, setCustomHealthy] = useState(true);
 
   const [mealLogs, setMealLogs] = useState([]);
   const [activities, setActivities] = useState([]);
   const [colesterolRecords, setColesterolRecords] = useState([]);
   const [showAnalytics, setShowAnalytics] = useState(false);
-  const [showCameraOptions, setShowCameraOptions] = useState(false);
-
-  const fileInputRef = useRef(null);
-  const cameraInputRef = useRef(null);
 
   const day = useMemo(() => todayISODate(), []);
   const [localDoneSet, setLocalDoneSet] = useState(() => readLocalDoneSet(todayISODate()));
@@ -219,7 +256,6 @@ export default function Alimentacao() {
     }
 
     run();
-
     return () => {
       mounted = false;
     };
@@ -237,7 +273,7 @@ export default function Alimentacao() {
       return;
     }
 
-    // PERFIL: public.profiles
+    // PERFIL
     let prof = null;
 
     try {
@@ -271,7 +307,7 @@ export default function Alimentacao() {
 
     if (mountedFlag) setProfile(prof);
 
-    // ✅ IMPORTANTE: filtrar por user_id (privacidade)
+    // ✅ PRIVACIDADE: filtra user_id
     const meals = await safeSelect("meal_logs", (q) =>
       q.eq("user_id", user.id).order("created_at", { ascending: false }).limit(60)
     );
@@ -280,7 +316,7 @@ export default function Alimentacao() {
       q.eq("user_id", user.id).order("created_at", { ascending: false }).limit(60)
     );
 
-    // ✅ compatível: tenta "cholesterol_records" (mais provável), se vazio tenta "colesterol_records"
+    // compat
     let colesterol = await safeSelect("cholesterol_records", (q) =>
       q.eq("user_id", user.id).order("record_date", { ascending: false }).limit(5)
     );
@@ -295,7 +331,6 @@ export default function Alimentacao() {
       setMealLogs(meals);
       setActivities(acts);
       setColesterolRecords(colesterol);
-
       setLocalDoneSet(readLocalDoneSet(day));
       setIsLoading(false);
     }
@@ -307,10 +342,6 @@ export default function Alimentacao() {
     return userRankIndex >= requiredRankIndex;
   };
 
-  /**
-   * Fonte de verdade: meal_logs do dia com description == receita.name
-   * Fallback: localStorage do dia com recipe.id
-   */
   const completedTodaySet = useMemo(() => {
     const set = new Set();
 
@@ -346,85 +377,29 @@ export default function Alimentacao() {
     });
   }, [completedTodaySet]);
 
-  const completeReceita = async (receita) => {
-    if (!profile?.id) return;
-
-    if (isCompletedToday(receita)) {
-      setSelectedReceita(null);
-      return;
-    }
-
-    setCompleting(true);
-
-    // atualização otimista
-    const nextLocal = new Set(localDoneSet);
-    nextLocal.add(receita.id);
-    setLocalDoneSet(nextLocal);
-    writeLocalDoneSet(day, nextLocal);
-
-    try {
-      // 1) Meal log
-      try {
-        await supabase.from("meal_logs").insert({
-          user_id: profile.id,
-          description: receita.name,
-          calories: receita.calories,
-          is_healthy: true,
-          ai_feedback: `Receita saudável: ${receita.benefit}`,
-          date: day,
-        });
-      } catch {
-        // fallback fica no localStorage
-      }
-
-      // 2) Activity log
-      try {
-        await supabase.from("activity_logs").insert({
-          user_id: profile.id,
-          tipo: "alimentacao",
-          descricao: `Preparou: ${receita.name}`,
-          xp_ganho: receita.xp,
-          data: day,
-        });
-      } catch {
-        // ignore
-      }
-
-      // 3) Atualiza XP/rank
-      const currentXp = Number(profile?.xp_total || 0);
-      const currentMetas = Number(profile?.metas_concluidas || 0);
-
-      const newXp = currentXp + (receita.xp || 0);
-      const newMetas = currentMetas + 1;
-      const newRank = computeRankFromXp(newXp);
-
-      try {
-        await supabase.from("profiles").update({ xp_total: newXp, metas_concluidas: newMetas, rank: newRank }).eq("id", profile.id);
-      } catch {
-        // ignore
-      }
-
-      setProfile({ ...profile, xp_total: newXp, metas_concluidas: newMetas, rank: newRank });
-
-      await loadData(true);
-      setSelectedReceita(null);
-    } finally {
-      setCompleting(false);
-    }
+  // ✅ Fluxo: escolher origem da imagem (camera/galeria)
+  const startFlow = (mode) => {
+    setFlowMode(mode);
+    setPhotoFile(null);
+    setPhotoPreview(null);
+    setShowPickerModal(true);
   };
 
-  const handlePhotoSelect = (e) => {
-    const file = e.target.files?.[0];
-    e.target.value = "";
-    if (!file) return;
-
+  const onPickedFile = (file) => {
     setPhotoFile(file);
 
     const reader = new FileReader();
     reader.onloadend = () => setPhotoPreview(reader.result);
     reader.readAsDataURL(file);
 
-    setShowPhotoModal(true);
+    setShowPickerModal(false);
+
+    if (flowMode === "analyze") {
+      setShowAnalyzeModal(true);
+    } else {
+      // register
+      setShowRegisterModal(true);
+    }
   };
 
   const analyzeFood = async () => {
@@ -439,6 +414,130 @@ export default function Alimentacao() {
       setAnalyzing(false);
     }
   };
+
+  const completeReceita = async (receita) => {
+    if (!profile?.id) return;
+
+    if (isCompletedToday(receita)) {
+      setSelectedReceita(null);
+      return;
+    }
+
+    setCompleting(true);
+
+    // otimista
+    const nextLocal = new Set(localDoneSet);
+    nextLocal.add(receita.id);
+    setLocalDoneSet(nextLocal);
+    writeLocalDoneSet(day, nextLocal);
+
+    try {
+      try {
+        await supabase.from("meal_logs").insert({
+          user_id: profile.id,
+          description: receita.name,
+          calories: receita.calories,
+          is_healthy: true,
+          ai_feedback: `Receita saudável: ${receita.benefit}`,
+          date: day,
+        });
+      } catch {}
+
+      try {
+        await supabase.from("activity_logs").insert({
+          user_id: profile.id,
+          tipo: "alimentacao",
+          descricao: `Preparou: ${receita.name}`,
+          xp_ganho: receita.xp,
+          data: day,
+        });
+      } catch {}
+
+      const currentXp = Number(profile?.xp_total || 0);
+      const currentMetas = Number(profile?.metas_concluidas || 0);
+
+      const newXp = currentXp + (receita.xp || 0);
+      const newMetas = currentMetas + 1;
+      const newRank = computeRankFromXp(newXp);
+
+      try {
+        await supabase.from("profiles").update({ xp_total: newXp, metas_concluidas: newMetas, rank: newRank }).eq("id", profile.id);
+      } catch {}
+
+      setProfile({ ...profile, xp_total: newXp, metas_concluidas: newMetas, rank: newRank });
+
+      await loadData(true);
+      setSelectedReceita(null);
+    } finally {
+      setCompleting(false);
+    }
+  };
+
+  // ✅ Registro personalizado (com XP)
+  const registerCustomMeal = async () => {
+    if (!profile?.id) return;
+
+    const desc = String(customDesc || "").trim();
+    if (!desc) return;
+
+    const kcal = customCalories === "" ? null : Number(customCalories);
+    const caloriesNum = Number.isFinite(kcal) ? kcal : null;
+
+    const xp = computeCustomMealXp({ isHealthy: customHealthy });
+
+    setRegistering(true);
+    try {
+      // meal_logs
+      try {
+        await supabase.from("meal_logs").insert({
+          user_id: profile.id,
+          description: desc,
+          calories: caloriesNum ?? 0,
+          is_healthy: Boolean(customHealthy),
+          ai_feedback: null,
+          date: day,
+        });
+      } catch {}
+
+      // activity_logs
+      try {
+        await supabase.from("activity_logs").insert({
+          user_id: profile.id,
+          tipo: "alimentacao",
+          descricao: `Registrou refeição: ${desc}`,
+          xp_ganho: xp,
+          data: day,
+        });
+      } catch {}
+
+      // profiles XP/rank
+      const currentXp = Number(profile?.xp_total || 0);
+      const currentMetas = Number(profile?.metas_concluidas || 0);
+
+      const newXp = currentXp + xp;
+      const newMetas = currentMetas + 1;
+      const newRank = computeRankFromXp(newXp);
+
+      try {
+        await supabase.from("profiles").update({ xp_total: newXp, metas_concluidas: newMetas, rank: newRank }).eq("id", profile.id);
+      } catch {}
+
+      setProfile({ ...profile, xp_total: newXp, metas_concluidas: newMetas, rank: newRank });
+
+      setShowRegisterModal(false);
+      setPhotoFile(null);
+      setPhotoPreview(null);
+      setCustomDesc("");
+      setCustomCalories("");
+      setCustomHealthy(true);
+
+      await loadData(true);
+    } finally {
+      setRegistering(false);
+    }
+  };
+
+  const customMealXpPreview = useMemo(() => computeCustomMealXp({ isHealthy: customHealthy }), [customHealthy]);
 
   if (isLoading) {
     return (
@@ -491,44 +590,35 @@ export default function Alimentacao() {
         {/* Dashboard de Calorias */}
         <CaloriesDashboard mealLogs={mealLogs} basalRate={profile?.basal_kcal || 2000} />
 
-        {/* Botões de Ação */}
+        {/* ✅ Botões (separados por propósito) */}
         <div className="grid grid-cols-2 gap-3 mb-6">
-          <input
-            type="file"
-            ref={fileInputRef}
-            onChange={handlePhotoSelect}
-            accept="image/*"
-            className="hidden"
-          />
-
-          <input
-            type="file"
-            ref={cameraInputRef}
-            onChange={handlePhotoSelect}
-            accept="image/*"
-            capture="environment"
-            className="hidden"
-          />
-
           <Button
-            onClick={() => setShowCameraOptions(true)}
+            onClick={() => startFlow("analyze")}
             className="bg-gradient-to-r from-blue-500 to-indigo-600 hover:from-blue-600 hover:to-indigo-700 text-white py-5 rounded-xl shadow-md"
           >
             <Camera className="w-5 h-5 mr-2" />
-            Analisar Refeição
+            Avaliar refeição
           </Button>
 
           <Button
-            onClick={() => setShowAnalytics(!showAnalytics)}
-            variant="outline"
-            className="border-2 border-purple-200 hover:bg-purple-50 text-purple-700 py-5 rounded-xl"
+            onClick={() => startFlow("register")}
+            className="bg-gradient-to-r from-red-500 to-rose-600 hover:from-red-600 hover:to-rose-700 text-white py-5 rounded-xl shadow-md"
           >
-            <BarChart3 className="w-5 h-5 mr-2" />
-            {showAnalytics ? "Ocultar" : "Ver"} Análises
+            <Plus className="w-5 h-5 mr-2" />
+            Registrar (+XP)
           </Button>
         </div>
 
-        {/* Análises e Insights */}
+        {/* Botão análises */}
+        <Button
+          onClick={() => setShowAnalytics(!showAnalytics)}
+          variant="outline"
+          className="w-full mb-6 border-2 border-purple-200 hover:bg-purple-50 text-purple-700 py-5 rounded-xl"
+        >
+          <BarChart3 className="w-5 h-5 mr-2" />
+          {showAnalytics ? "Ocultar" : "Ver"} Análises
+        </Button>
+
         {showAnalytics && (
           <motion.div
             initial={{ opacity: 0, height: 0 }}
@@ -608,9 +698,7 @@ export default function Alimentacao() {
                     {unlocked ? (
                       <ChevronRight className="w-5 h-5 text-gray-400" />
                     ) : (
-                      <div className="text-xs text-gray-400 bg-gray-100 px-2 py-1 rounded-lg">
-                        {receita.rank_required}
-                      </div>
+                      <div className="text-xs text-gray-400 bg-gray-100 px-2 py-1 rounded-lg">{receita.rank_required}</div>
                     )}
                   </div>
                 </button>
@@ -619,35 +707,36 @@ export default function Alimentacao() {
           })}
         </div>
 
-        {/* Modal de Opções de Câmera */}
+        {/* ✅ Modal: escolha câmera/galeria */}
         <AnimatePresence>
-          {showCameraOptions && (
+          {showPickerModal && (
             <motion.div
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
               className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4"
-              onClick={() => setShowCameraOptions(false)}
+              onClick={() => setShowPickerModal(false)}
             >
               <motion.div
-                initial={{ scale: 0.9, opacity: 0 }}
+                initial={{ scale: 0.95, opacity: 0 }}
                 animate={{ scale: 1, opacity: 1 }}
-                exit={{ scale: 0.9, opacity: 0 }}
+                exit={{ scale: 0.95, opacity: 0 }}
                 onClick={(e) => e.stopPropagation()}
                 className="bg-white rounded-3xl w-full max-w-sm p-6"
               >
-                <h3 className="text-xl font-bold text-gray-900 mb-2 text-center">Como deseja adicionar a foto?</h3>
-                <p className="text-sm text-gray-500 mb-6 text-center">Escolha a origem da imagem da sua refeição</p>
+                <h3 className="text-xl font-bold text-gray-900 mb-2 text-center">
+                  {flowMode === "register" ? "Registrar com Foto" : "Avaliar Refeição"}
+                </h3>
+                <p className="text-sm text-gray-500 mb-6 text-center">Escolha a origem da imagem</p>
 
                 <div className="space-y-3">
                   <Button
-                    onClick={() => {
-                      setShowCameraOptions(false);
-                      if (cameraInputRef.current) {
-                        cameraInputRef.current.value = "";
-                        cameraInputRef.current.click();
-                      }
-                    }}
+                    onClick={() =>
+                      openImagePicker({
+                        source: "camera",
+                        onFile: onPickedFile,
+                      })
+                    }
                     className="w-full bg-gradient-to-r from-red-500 to-rose-600 hover:from-red-600 hover:to-rose-700 text-white py-5 rounded-xl flex items-center justify-center gap-3"
                   >
                     <Camera className="w-6 h-6" />
@@ -658,13 +747,12 @@ export default function Alimentacao() {
                   </Button>
 
                   <Button
-                    onClick={() => {
-                      setShowCameraOptions(false);
-                      if (fileInputRef.current) {
-                        fileInputRef.current.value = "";
-                        fileInputRef.current.click();
-                      }
-                    }}
+                    onClick={() =>
+                      openImagePicker({
+                        source: "gallery",
+                        onFile: onPickedFile,
+                      })
+                    }
                     variant="outline"
                     className="w-full border-2 border-gray-200 hover:bg-gray-50 py-5 rounded-xl flex items-center justify-center gap-3"
                   >
@@ -676,7 +764,7 @@ export default function Alimentacao() {
                   </Button>
                 </div>
 
-                <Button onClick={() => setShowCameraOptions(false)} variant="ghost" className="w-full mt-4 text-gray-500">
+                <Button onClick={() => setShowPickerModal(false)} variant="ghost" className="w-full mt-4 text-gray-500">
                   Cancelar
                 </Button>
               </motion.div>
@@ -684,28 +772,28 @@ export default function Alimentacao() {
           )}
         </AnimatePresence>
 
-        {/* Modal de Análise de Foto */}
+        {/* ✅ Modal: Avaliar (sem XP) */}
         <AnimatePresence>
-          {showPhotoModal && (
+          {showAnalyzeModal && (
             <motion.div
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
               className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4"
-              onClick={() => !analyzing && setShowPhotoModal(false)}
+              onClick={() => !analyzing && setShowAnalyzeModal(false)}
             >
               <motion.div
-                initial={{ scale: 0.9, opacity: 0 }}
+                initial={{ scale: 0.95, opacity: 0 }}
                 animate={{ scale: 1, opacity: 1 }}
-                exit={{ scale: 0.9, opacity: 0 }}
+                exit={{ scale: 0.95, opacity: 0 }}
                 onClick={(e) => e.stopPropagation()}
                 className="bg-white rounded-3xl w-full max-w-md overflow-hidden"
               >
                 <div className="p-6">
                   <div className="flex items-center justify-between mb-4">
-                    <h3 className="text-lg font-bold text-gray-900">Análise de Refeição</h3>
+                    <h3 className="text-lg font-bold text-gray-900">Avaliar Refeição</h3>
                     {!analyzing && (
-                      <button onClick={() => setShowPhotoModal(false)} className="text-gray-400 hover:text-gray-600">
+                      <button onClick={() => setShowAnalyzeModal(false)} className="text-gray-400 hover:text-gray-600">
                         <X className="w-6 h-6" />
                       </button>
                     )}
@@ -721,37 +809,158 @@ export default function Alimentacao() {
                     <div className="flex items-start gap-2 text-sm text-blue-700">
                       <Heart className="w-5 h-5 flex-shrink-0 mt-0.5" />
                       <p>
-                        A IA vai analisar sua refeição e te dar feedback sobre calorias e impacto no colesterol.
+                        Aqui é só para tirar dúvida (calorias/impacto). Não ganha XP.
                         <br />
-                        (Nesta versão, o recurso está em manutenção.)
+                        (Na versão atual, a IA está em manutenção.)
                       </p>
                     </div>
                   </div>
 
-                  <Button
-                    onClick={analyzeFood}
-                    disabled={analyzing}
-                    className="w-full bg-gradient-to-r from-red-500 to-rose-600 hover:from-red-600 hover:to-rose-700 text-white py-5 rounded-xl text-lg font-semibold"
-                  >
-                    {analyzing ? (
-                      <span className="flex items-center gap-2">
-                        <Loader2 className="w-5 h-5 animate-spin" />
-                        Analisando...
-                      </span>
-                    ) : (
-                      <span className="flex items-center gap-2">
-                        <Zap className="w-5 h-5" />
-                        Analisar Agora
-                      </span>
-                    )}
-                  </Button>
+                  <div className="space-y-3">
+                    <Button
+                      onClick={analyzeFood}
+                      disabled={analyzing}
+                      className="w-full bg-gradient-to-r from-blue-500 to-indigo-600 hover:from-blue-600 hover:to-indigo-700 text-white py-5 rounded-xl text-lg font-semibold"
+                    >
+                      {analyzing ? (
+                        <span className="flex items-center gap-2">
+                          <Loader2 className="w-5 h-5 animate-spin" />
+                          Analisando...
+                        </span>
+                      ) : (
+                        <span className="flex items-center gap-2">
+                          <Zap className="w-5 h-5" />
+                          Avaliar Agora
+                        </span>
+                      )}
+                    </Button>
+
+                    <Button
+                      onClick={() => {
+                        setShowAnalyzeModal(false);
+                        setShowRegisterModal(true);
+                        setFlowMode("register");
+                      }}
+                      variant="outline"
+                      className="w-full border-2 border-red-200 hover:bg-red-50 py-5 rounded-xl"
+                    >
+                      Registrar como refeição (+XP)
+                    </Button>
+                  </div>
                 </div>
               </motion.div>
             </motion.div>
           )}
         </AnimatePresence>
 
-        {/* Modal de Receita */}
+        {/* ✅ Modal: Registrar refeição personalizada (com XP) */}
+        <AnimatePresence>
+          {showRegisterModal && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4"
+              onClick={() => !registering && setShowRegisterModal(false)}
+            >
+              <motion.div
+                initial={{ scale: 0.95, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                exit={{ scale: 0.95, opacity: 0 }}
+                onClick={(e) => e.stopPropagation()}
+                className="bg-white rounded-3xl w-full max-w-md overflow-hidden"
+              >
+                <div className="p-6">
+                  <div className="flex items-center justify-between mb-4">
+                    <h3 className="text-lg font-bold text-gray-900">Registrar Refeição (+XP)</h3>
+                    {!registering && (
+                      <button onClick={() => setShowRegisterModal(false)} className="text-gray-400 hover:text-gray-600">
+                        <X className="w-6 h-6" />
+                      </button>
+                    )}
+                  </div>
+
+                  {photoPreview && (
+                    <div className="mb-4 rounded-xl overflow-hidden">
+                      <img src={photoPreview} alt="Prévia" className="w-full h-48 object-cover" />
+                    </div>
+                  )}
+
+                  <div className="space-y-3">
+                    <div>
+                      <label className="text-sm font-medium text-gray-700">O que você comeu?</label>
+                      <input
+                        value={customDesc}
+                        onChange={(e) => setCustomDesc(e.target.value)}
+                        placeholder="Ex: Arroz, feijão e frango"
+                        className="mt-1 w-full border border-gray-200 rounded-xl px-3 py-3 text-sm outline-none focus:ring-2 focus:ring-red-200"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="text-sm font-medium text-gray-700">Calorias (opcional)</label>
+                      <input
+                        value={customCalories}
+                        onChange={(e) => setCustomCalories(e.target.value.replace(/[^\d]/g, ""))}
+                        placeholder="Ex: 450"
+                        className="mt-1 w-full border border-gray-200 rounded-xl px-3 py-3 text-sm outline-none focus:ring-2 focus:ring-red-200"
+                        inputMode="numeric"
+                      />
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => setCustomHealthy((v) => !v)}
+                      className={`w-full rounded-xl px-4 py-3 text-sm border flex items-center justify-between ${
+                        customHealthy ? "bg-emerald-50 border-emerald-200 text-emerald-800" : "bg-gray-50 border-gray-200 text-gray-700"
+                      }`}
+                    >
+                      <span>Foi uma refeição saudável?</span>
+                      <span className="font-semibold">{customHealthy ? "Sim" : "Não"}</span>
+                    </button>
+
+                    <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-3 text-sm text-yellow-800 flex items-center justify-between">
+                      <span>XP ao registrar</span>
+                      <span className="font-bold">+{customMealXpPreview} XP</span>
+                    </div>
+
+                    <Button
+                      onClick={registerCustomMeal}
+                      disabled={registering || !String(customDesc || "").trim()}
+                      className="w-full bg-gradient-to-r from-red-500 to-rose-600 hover:from-red-600 hover:to-rose-700 text-white py-5 rounded-xl text-lg font-semibold disabled:opacity-70"
+                    >
+                      {registering ? (
+                        <span className="flex items-center gap-2">
+                          <Loader2 className="w-5 h-5 animate-spin" />
+                          Salvando...
+                        </span>
+                      ) : (
+                        <span className="flex items-center gap-2">
+                          <Check className="w-5 h-5" />
+                          Registrar Refeição (+{customMealXpPreview} XP)
+                        </span>
+                      )}
+                    </Button>
+
+                    <Button
+                      onClick={() => {
+                        setShowRegisterModal(false);
+                        setPhotoFile(null);
+                        setPhotoPreview(null);
+                      }}
+                      variant="ghost"
+                      className="w-full text-gray-500"
+                    >
+                      Cancelar
+                    </Button>
+                  </div>
+                </div>
+              </motion.div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* Modal de Receita (lista) */}
         <AnimatePresence>
           {selectedReceita && (
             <motion.div
