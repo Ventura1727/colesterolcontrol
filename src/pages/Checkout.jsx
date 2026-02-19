@@ -227,8 +227,10 @@ export default function Checkout() {
     const resp = await fetch("/api/check-payment", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ preferenceId, userId: user.id }),
-    });
+     body: JSON.stringify({ 
+  preferenceId: preferenceId || null, 
+  userId: user.id 
+}),
 
     const data = await resp.json().catch(() => ({}));
     return {
