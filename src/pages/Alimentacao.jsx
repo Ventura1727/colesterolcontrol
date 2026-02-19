@@ -1,5 +1,5 @@
 // src/pages/Alimentacao.jsx
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   ArrowLeft,
@@ -185,37 +185,33 @@ function sameDay(isoDatetimeOrDate, dayYYYYMMDD) {
   return s.slice(0, 10) === dayYYYYMMDD;
 }
 
-// ✅ XP padrão para refeição personalizada
+// ✅ XP padrão para refeição personalizada (coerente com seu posicionamento)
 function computeCustomMealXp({ isHealthy, calories, targetCalories }) {
-  // Se não for saudável -> não ganha XP (só registra as calorias)
   if (!isHealthy) return 0;
 
   const target = Number(targetCalories || 2000);
   const cals = calories == null ? null : Number(calories);
 
-  // Se não informou calorias, recompensa moderada
+  // sem calorias -> recompensa moderada
   if (!Number.isFinite(cals) || cals <= 0) return 10;
 
-  const ratio = cals / Math.max(target, 1); // % da meta diária
+  const ratio = cals / Math.max(target, 1);
 
-  if (ratio <= 0.2) return 20;   // refeição leve/boa
-  if (ratio <= 0.35) return 15;  // normal/ok
-  if (ratio <= 0.5) return 10;   // um pouco pesada
-  return 5;                      // muito pesada, mas ainda "saudável"
+  if (ratio <= 0.2) return 20;
+  if (ratio <= 0.35) return 15;
+  if (ratio <= 0.5) return 10;
+  return 5;
 }
 
 /**
  * ✅ Melhor tentativa de abrir câmera:
- * - cria input "na hora" com capture + accept e dispara click dentro do gesto do usuário.
- * - se o navegador não suportar, ele abre galeria mesmo (limitação do browser).
+ * Observação: iOS/Safari pode ignorar capture e abrir galeria mesmo — limitação do navegador.
  */
 function openImagePicker({ source, onFile }) {
   const input = document.createElement("input");
   input.type = "file";
   input.accept = "image/*";
-  if (source === "camera") {
-    input.setAttribute("capture", "environment");
-  }
+  if (source === "camera") input.setAttribute("capture", "environment");
   input.onchange = (e) => {
     const file = e.target.files?.[0];
     if (file) onFile(file);
@@ -224,27 +220,23 @@ function openImagePicker({ source, onFile }) {
 }
 
 export default function Alimentacao() {
+  const isMountedRef = useRef(true);
+
   const [profile, setProfile] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
 
   const [selectedReceita, setSelectedReceita] = useState(null);
   const [completing, setCompleting] = useState(false);
 
-  // ✅ modos separados (pedido do Vitor)
-  // - analyze: avaliar sem XP
-  // - register: registrar com XP
+  // modos: avaliar (sem XP) | registrar (com XP)
   const [flowMode, setFlowMode] = useState(null); // "analyze" | "register" | null
   const [showPickerModal, setShowPickerModal] = useState(false);
 
-  // foto escolhida no fluxo (pode ser usada tanto para avaliar quanto registrar)
-  const [photoFile, setPhotoFile] = useState(null);
   const [photoPreview, setPhotoPreview] = useState(null);
 
-  // modal de análise (sem XP)
   const [showAnalyzeModal, setShowAnalyzeModal] = useState(false);
   const [analyzing, setAnalyzing] = useState(false);
 
-  // modal de registro (com XP)
   const [showRegisterModal, setShowRegisterModal] = useState(false);
   const [registering, setRegistering] = useState(false);
   const [customDesc, setCustomDesc] = useState("");
@@ -259,91 +251,111 @@ export default function Alimentacao() {
   const day = useMemo(() => todayISODate(), []);
   const [localDoneSet, setLocalDoneSet] = useState(() => readLocalDoneSet(todayISODate()));
 
+  const resetMedia = () => {
+    setPhotoPreview(null);
+  };
+
+  const closeAllModals = () => {
+    setShowPickerModal(false);
+    setShowAnalyzeModal(false);
+    setShowRegisterModal(false);
+    setFlowMode(null);
+  };
+
+  const closeRegisterModal = () => {
+    setShowRegisterModal(false);
+    setFlowMode(null);
+    resetMedia();
+    setCustomDesc("");
+    setCustomCalories("");
+    setCustomHealthy(true);
+  };
+
   useEffect(() => {
-    let mounted = true;
+    isMountedRef.current = true;
 
-    async function run() {
-      await loadData(mounted);
-    }
+    (async () => {
+      await loadData();
+    })();
 
-    run();
     return () => {
-      mounted = false;
+      isMountedRef.current = false;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const loadData = async (mountedFlag = true) => {
-    setIsLoading(true);
-
-    const { data: userData } = await supabase.auth.getUser();
-    const user = userData?.user;
-
-    if (!user) {
-      window.location.href = `/login?next=${encodeURIComponent("/alimentacao")}`;
-      return;
-    }
-
-    // PERFIL
-    let prof = null;
-
+  const loadData = async () => {
     try {
-      const { data, error } = await supabase
-        .from("profiles")
-        .select("id, role, plano_ativo, rank, xp_total, metas_concluidas, dias_consecutivos, objetivo, basal_kcal")
-        .eq("id", user.id)
-        .maybeSingle();
+      if (isMountedRef.current) setIsLoading(true);
 
-      if (!error) prof = data;
-    } catch {
-      prof = null;
-    }
+      const { data: userData } = await supabase.auth.getUser();
+      const user = userData?.user;
 
-    if (!prof) {
-      try {
-        const { data: created, error: upsertErr } = await supabase
-          .from("profiles")
-          .upsert(
-            { id: user.id, rank: "Iniciante", xp_total: 0, metas_concluidas: 0, dias_consecutivos: 0 },
-            { onConflict: "id" }
-          )
-          .select("id, role, plano_ativo, rank, xp_total, metas_concluidas, dias_consecutivos, objetivo, basal_kcal")
-          .single();
-
-        if (!upsertErr) prof = created;
-      } catch {
-        prof = { id: user.id, rank: "Iniciante", xp_total: 0, metas_concluidas: 0, dias_consecutivos: 0 };
+      if (!user) {
+        window.location.href = `/login?next=${encodeURIComponent("/alimentacao")}`;
+        return;
       }
-    }
 
-    if (mountedFlag) setProfile(prof);
+      // PERFIL
+      let prof = null;
 
-    // ✅ PRIVACIDADE: filtra user_id
-    const meals = await safeSelect("meal_logs", (q) =>
-      q.eq("user_id", user.id).order("created_at", { ascending: false }).limit(60)
-    );
+      try {
+        const { data, error } = await supabase
+          .from("profiles")
+          .select("id, role, plano_ativo, rank, xp_total, metas_concluidas, dias_consecutivos, objetivo, basal_kcal")
+          .eq("id", user.id)
+          .maybeSingle();
 
-    const acts = await safeSelect("activity_logs", (q) =>
-      q.eq("user_id", user.id).order("created_at", { ascending: false }).limit(60)
-    );
+        if (!error) prof = data;
+      } catch {
+        prof = null;
+      }
 
-    // compat
-    let colesterol = await safeSelect("cholesterol_records", (q) =>
-      q.eq("user_id", user.id).order("record_date", { ascending: false }).limit(5)
-    );
+      if (!prof) {
+        try {
+          const { data: created, error: upsertErr } = await supabase
+            .from("profiles")
+            .upsert(
+              { id: user.id, rank: "Iniciante", xp_total: 0, metas_concluidas: 0, dias_consecutivos: 0 },
+              { onConflict: "id" }
+            )
+            .select("id, role, plano_ativo, rank, xp_total, metas_concluidas, dias_consecutivos, objetivo, basal_kcal")
+            .single();
 
-    if (!colesterol || colesterol.length === 0) {
-      colesterol = await safeSelect("colesterol_records", (q) =>
-        q.eq("user_id", user.id).order("data_exame", { ascending: false }).limit(5)
+          if (!upsertErr) prof = created;
+        } catch {
+          prof = { id: user.id, rank: "Iniciante", xp_total: 0, metas_concluidas: 0, dias_consecutivos: 0 };
+        }
+      }
+
+      // PRIVACIDADE: filtra user_id
+      const meals = await safeSelect("meal_logs", (q) =>
+        q.eq("user_id", user.id).order("created_at", { ascending: false }).limit(60)
       );
-    }
 
-    if (mountedFlag) {
+      const acts = await safeSelect("activity_logs", (q) =>
+        q.eq("user_id", user.id).order("created_at", { ascending: false }).limit(60)
+      );
+
+      let colesterol = await safeSelect("cholesterol_records", (q) =>
+        q.eq("user_id", user.id).order("record_date", { ascending: false }).limit(5)
+      );
+
+      if (!colesterol || colesterol.length === 0) {
+        colesterol = await safeSelect("colesterol_records", (q) =>
+          q.eq("user_id", user.id).order("data_exame", { ascending: false }).limit(5)
+        );
+      }
+
+      if (!isMountedRef.current) return;
+
+      setProfile(prof);
       setMealLogs(meals);
       setActivities(acts);
       setColesterolRecords(colesterol);
       setLocalDoneSet(readLocalDoneSet(day));
-      setIsLoading(false);
+    } finally {
+      if (isMountedRef.current) setIsLoading(false);
     }
   };
 
@@ -388,29 +400,24 @@ export default function Alimentacao() {
     });
   }, [completedTodaySet]);
 
-  // ✅ Fluxo: escolher origem da imagem (camera/galeria)
+  // Fluxo: escolher origem da imagem
   const startFlow = (mode) => {
     setFlowMode(mode);
-    setPhotoFile(null);
-    setPhotoPreview(null);
+    resetMedia();
     setShowPickerModal(true);
   };
 
   const onPickedFile = (file) => {
-    setPhotoFile(file);
-
     const reader = new FileReader();
-    reader.onloadend = () => setPhotoPreview(reader.result);
+    reader.onloadend = () => {
+      if (!isMountedRef.current) return;
+      setPhotoPreview(reader.result);
+      setShowPickerModal(false);
+
+      if (flowMode === "analyze") setShowAnalyzeModal(true);
+      else setShowRegisterModal(true);
+    };
     reader.readAsDataURL(file);
-
-    setShowPickerModal(false);
-
-    if (flowMode === "analyze") {
-      setShowAnalyzeModal(true);
-    } else {
-      // register
-      setShowRegisterModal(true);
-    }
   };
 
   const analyzeFood = async () => {
@@ -436,7 +443,6 @@ export default function Alimentacao() {
 
     setCompleting(true);
 
-    // otimista
     const nextLocal = new Set(localDoneSet);
     nextLocal.add(receita.id);
     setLocalDoneSet(nextLocal);
@@ -472,19 +478,34 @@ export default function Alimentacao() {
       const newRank = computeRankFromXp(newXp);
 
       try {
-        await supabase.from("profiles").update({ xp_total: newXp, metas_concluidas: newMetas, rank: newRank }).eq("id", profile.id);
+        await supabase
+          .from("profiles")
+          .update({ xp_total: newXp, metas_concluidas: newMetas, rank: newRank })
+          .eq("id", profile.id);
       } catch {}
 
       setProfile({ ...profile, xp_total: newXp, metas_concluidas: newMetas, rank: newRank });
 
-      await loadData(true);
+      await loadData();
       setSelectedReceita(null);
     } finally {
       setCompleting(false);
     }
   };
 
-  // ✅ Registro personalizado (com XP)
+  const targetCaloriesForXp = Number(profile?.basal_kcal || 2000);
+
+  const customMealXpPreview = useMemo(() => {
+    const kcal = customCalories === "" ? null : Number(customCalories);
+    const caloriesNum = Number.isFinite(kcal) ? kcal : null;
+
+    return computeCustomMealXp({
+      isHealthy: customHealthy,
+      calories: caloriesNum,
+      targetCalories: targetCaloriesForXp,
+    });
+  }, [customHealthy, customCalories, targetCaloriesForXp]);
+
   const registerCustomMeal = async () => {
     if (!profile?.id) return;
 
@@ -495,14 +516,13 @@ export default function Alimentacao() {
     const caloriesNum = Number.isFinite(kcal) ? kcal : null;
 
     const xp = computeCustomMealXp({
-  isHealthy: customHealthy,
-  calories: caloriesNum,
-  targetCalories: Number(profile?.basal_kcal || 2000),
-});
+      isHealthy: customHealthy,
+      calories: caloriesNum,
+      targetCalories: targetCaloriesForXp,
+    });
 
     setRegistering(true);
     try {
-      // meal_logs
       try {
         await supabase.from("meal_logs").insert({
           user_id: profile.id,
@@ -514,7 +534,6 @@ export default function Alimentacao() {
         });
       } catch {}
 
-      // activity_logs
       try {
         await supabase.from("activity_logs").insert({
           user_id: profile.id,
@@ -525,45 +544,31 @@ export default function Alimentacao() {
         });
       } catch {}
 
-      // profiles XP/rank
       const currentXp = Number(profile?.xp_total || 0);
       const currentMetas = Number(profile?.metas_concluidas || 0);
 
+      // ✅ coerência: só conta “meta concluída” se for saudável (ou seja, se gerou XP)
+      const shouldCountMeta = xp > 0;
+
       const newXp = currentXp + xp;
-      const newMetas = currentMetas + 1;
+      const newMetas = currentMetas + (shouldCountMeta ? 1 : 0);
       const newRank = computeRankFromXp(newXp);
 
       try {
-        await supabase.from("profiles").update({ xp_total: newXp, metas_concluidas: newMetas, rank: newRank }).eq("id", profile.id);
+        await supabase
+          .from("profiles")
+          .update({ xp_total: newXp, metas_concluidas: newMetas, rank: newRank })
+          .eq("id", profile.id);
       } catch {}
 
       setProfile({ ...profile, xp_total: newXp, metas_concluidas: newMetas, rank: newRank });
 
-      setShowRegisterModal(false);
-      setPhotoFile(null);
-      setPhotoPreview(null);
-      setCustomDesc("");
-      setCustomCalories("");
-      setCustomHealthy(true);
-
-      await loadData(true);
+      closeRegisterModal();
+      await loadData();
     } finally {
       setRegistering(false);
     }
   };
-
- const targetCaloriesForXp = Number(profile?.basal_kcal || 2000);
-
-const customMealXpPreview = useMemo(() => {
-  const kcal = customCalories === "" ? null : Number(customCalories);
-  const caloriesNum = Number.isFinite(kcal) ? kcal : null;
-
-  return computeCustomMealXp({
-    isHealthy: customHealthy,
-    calories: caloriesNum,
-    targetCalories: targetCaloriesForXp,
-  });
-}, [customHealthy, customCalories, targetCaloriesForXp]);
 
   if (isLoading) {
     return (
@@ -616,7 +621,7 @@ const customMealXpPreview = useMemo(() => {
         {/* Dashboard de Calorias */}
         <CaloriesDashboard mealLogs={mealLogs} basalRate={profile?.basal_kcal || 2000} />
 
-        {/* ✅ Botões (separados por propósito) */}
+        {/* Botões por propósito */}
         <div className="grid grid-cols-2 gap-3 mb-6">
           <Button
             onClick={() => startFlow("analyze")}
@@ -733,7 +738,7 @@ const customMealXpPreview = useMemo(() => {
           })}
         </div>
 
-        {/* ✅ Modal: escolha câmera/galeria */}
+        {/* Modal: escolha câmera/galeria */}
         <AnimatePresence>
           {showPickerModal && (
             <motion.div
@@ -753,16 +758,11 @@ const customMealXpPreview = useMemo(() => {
                 <h3 className="text-xl font-bold text-gray-900 mb-2 text-center">
                   {flowMode === "register" ? "Registrar com Foto" : "Avaliar Refeição"}
                 </h3>
-                <p className="text-sm text-gray-500 mb-6 text-center">Escolha a origem da imagem</p>
+                <p className="text-sm text-gray-500 mb-6 text-center">Escolha a origem</p>
 
                 <div className="space-y-3">
                   <Button
-                    onClick={() =>
-                      openImagePicker({
-                        source: "camera",
-                        onFile: onPickedFile,
-                      })
-                    }
+                    onClick={() => openImagePicker({ source: "camera", onFile: onPickedFile })}
                     className="w-full bg-gradient-to-r from-red-500 to-rose-600 hover:from-red-600 hover:to-rose-700 text-white py-5 rounded-xl flex items-center justify-center gap-3"
                   >
                     <Camera className="w-6 h-6" />
@@ -773,12 +773,7 @@ const customMealXpPreview = useMemo(() => {
                   </Button>
 
                   <Button
-                    onClick={() =>
-                      openImagePicker({
-                        source: "gallery",
-                        onFile: onPickedFile,
-                      })
-                    }
+                    onClick={() => openImagePicker({ source: "gallery", onFile: onPickedFile })}
                     variant="outline"
                     className="w-full border-2 border-gray-200 hover:bg-gray-50 py-5 rounded-xl flex items-center justify-center gap-3"
                   >
@@ -788,6 +783,20 @@ const customMealXpPreview = useMemo(() => {
                       <div className="text-xs text-gray-500">Selecionar foto existente</div>
                     </div>
                   </Button>
+
+                  {/* ✅ reduz atrito e não depende do capture */}
+                  {flowMode === "register" && (
+                    <Button
+                      onClick={() => {
+                        setShowPickerModal(false);
+                        setShowRegisterModal(true);
+                      }}
+                      variant="ghost"
+                      className="w-full text-gray-700"
+                    >
+                      Continuar sem foto
+                    </Button>
+                  )}
                 </div>
 
                 <Button onClick={() => setShowPickerModal(false)} variant="ghost" className="w-full mt-4 text-gray-500">
@@ -798,7 +807,7 @@ const customMealXpPreview = useMemo(() => {
           )}
         </AnimatePresence>
 
-        {/* ✅ Modal: Avaliar (sem XP) */}
+        {/* Modal: Avaliar (sem XP) */}
         <AnimatePresence>
           {showAnalyzeModal && (
             <motion.div
@@ -864,8 +873,8 @@ const customMealXpPreview = useMemo(() => {
                     <Button
                       onClick={() => {
                         setShowAnalyzeModal(false);
-                        setShowRegisterModal(true);
                         setFlowMode("register");
+                        setShowRegisterModal(true);
                       }}
                       variant="outline"
                       className="w-full border-2 border-red-200 hover:bg-red-50 py-5 rounded-xl"
@@ -879,7 +888,7 @@ const customMealXpPreview = useMemo(() => {
           )}
         </AnimatePresence>
 
-        {/* ✅ Modal: Registrar refeição personalizada (com XP) */}
+        {/* Modal: Registrar refeição personalizada (com XP) */}
         <AnimatePresence>
           {showRegisterModal && (
             <motion.div
@@ -887,7 +896,7 @@ const customMealXpPreview = useMemo(() => {
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
               className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4"
-              onClick={() => !registering && setShowRegisterModal(false)}
+              onClick={() => !registering && closeRegisterModal()}
             >
               <motion.div
                 initial={{ scale: 0.95, opacity: 0 }}
@@ -900,7 +909,7 @@ const customMealXpPreview = useMemo(() => {
                   <div className="flex items-center justify-between mb-4">
                     <h3 className="text-lg font-bold text-gray-900">Registrar Refeição (+XP)</h3>
                     {!registering && (
-                      <button onClick={() => setShowRegisterModal(false)} className="text-gray-400 hover:text-gray-600">
+                      <button onClick={closeRegisterModal} className="text-gray-400 hover:text-gray-600">
                         <X className="w-6 h-6" />
                       </button>
                     )}
@@ -938,7 +947,9 @@ const customMealXpPreview = useMemo(() => {
                       type="button"
                       onClick={() => setCustomHealthy((v) => !v)}
                       className={`w-full rounded-xl px-4 py-3 text-sm border flex items-center justify-between ${
-                        customHealthy ? "bg-emerald-50 border-emerald-200 text-emerald-800" : "bg-gray-50 border-gray-200 text-gray-700"
+                        customHealthy
+                          ? "bg-emerald-50 border-emerald-200 text-emerald-800"
+                          : "bg-gray-50 border-gray-200 text-gray-700"
                       }`}
                     >
                       <span>Foi uma refeição saudável?</span>
@@ -946,16 +957,15 @@ const customMealXpPreview = useMemo(() => {
                     </button>
 
                     <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-3 text-sm text-yellow-800 flex items-center justify-between">
-  <span>XP ao registrar</span>
-  <span className="font-bold">+{customMealXpPreview} XP</span>
-</div>
+                      <span>XP ao registrar</span>
+                      <span className="font-bold">+{customMealXpPreview} XP</span>
+                    </div>
 
-{/* 🔴 Aviso quando NÃO for saudável */}
-{!customHealthy && (
-  <div className="bg-red-50 border border-red-200 rounded-xl p-3 text-sm text-red-800 mt-3">
-    Refeições não saudáveis não geram XP. Vamos registrar apenas as calorias.
-  </div>
-)}
+                    {!customHealthy && (
+                      <div className="bg-red-50 border border-red-200 rounded-xl p-3 text-sm text-red-800">
+                        Refeições não saudáveis não geram XP. Vamos registrar apenas as calorias.
+                      </div>
+                    )}
 
                     <Button
                       onClick={registerCustomMeal}
@@ -975,15 +985,7 @@ const customMealXpPreview = useMemo(() => {
                       )}
                     </Button>
 
-                    <Button
-                      onClick={() => {
-                        setShowRegisterModal(false);
-                        setPhotoFile(null);
-                        setPhotoPreview(null);
-                      }}
-                      variant="ghost"
-                      className="w-full text-gray-500"
-                    >
+                    <Button onClick={closeRegisterModal} variant="ghost" className="w-full text-gray-500">
                       Cancelar
                     </Button>
                   </div>
@@ -993,7 +995,7 @@ const customMealXpPreview = useMemo(() => {
           )}
         </AnimatePresence>
 
-        {/* Modal de Receita (lista) */}
+        {/* Modal de Receita */}
         <AnimatePresence>
           {selectedReceita && (
             <motion.div
@@ -1024,11 +1026,7 @@ const customMealXpPreview = useMemo(() => {
                       <span className="flex items-center gap-1 text-orange-500">
                         <Flame className="w-4 h-4" /> {selectedReceita.calories} kcal
                       </span>
-                      <span
-                        className={`flex items-center gap-1 ${
-                          isCompletedToday(selectedReceita) ? "text-gray-300" : "text-yellow-500"
-                        }`}
-                      >
+                      <span className={`flex items-center gap-1 ${isCompletedToday(selectedReceita) ? "text-gray-300" : "text-yellow-500"}`}>
                         <Zap className="w-4 h-4" /> +{selectedReceita.xp} XP
                       </span>
                     </div>
