@@ -1,5 +1,5 @@
 // src/pages/Alimentacao.jsx
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   ArrowLeft,
@@ -144,6 +144,7 @@ function computeRankFromXp(xp) {
   return "Iniciante";
 }
 
+// Lê tabelas sem quebrar caso não existam ainda
 async function safeSelect(table, queryBuilderFn) {
   try {
     const q = queryBuilderFn(supabase.from(table).select("*"));
@@ -185,14 +186,13 @@ function sameDay(isoDatetimeOrDate, dayYYYYMMDD) {
   return s.slice(0, 10) === dayYYYYMMDD;
 }
 
-// ✅ XP padrão para refeição personalizada (coerente com seu posicionamento)
+// ✅ XP padrão para refeição personalizada
 function computeCustomMealXp({ isHealthy, calories, targetCalories }) {
-  if (!isHealthy) return 0;
+  if (!isHealthy) return 0; // não saudável não gera XP
 
   const target = Number(targetCalories || 2000);
   const cals = calories == null ? null : Number(calories);
 
-  // sem calorias -> recompensa moderada
   if (!Number.isFinite(cals) || cals <= 0) return 10;
 
   const ratio = cals / Math.max(target, 1);
@@ -204,8 +204,7 @@ function computeCustomMealXp({ isHealthy, calories, targetCalories }) {
 }
 
 /**
- * ✅ Melhor tentativa de abrir câmera:
- * Observação: iOS/Safari pode ignorar capture e abrir galeria mesmo — limitação do navegador.
+ * ✅ Melhor tentativa de abrir câmera
  */
 function openImagePicker({ source, onFile }) {
   const input = document.createElement("input");
@@ -220,23 +219,17 @@ function openImagePicker({ source, onFile }) {
 }
 
 export default function Alimentacao() {
-  const isMountedRef = useRef(true);
-  const [foodQuery, setFoodQuery] = useState("");
-  const [foodResults, setFoodResults] = useState([]);
-  const [foodSearching, setFoodSearching] = useState(false);
-  const [foodSelected, setFoodSelected] = useState(null);
-  const [portionGrams, setPortionGrams] = useState("100"); // padrão 100g
-
   const [profile, setProfile] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
 
   const [selectedReceita, setSelectedReceita] = useState(null);
   const [completing, setCompleting] = useState(false);
 
-  // modos: avaliar (sem XP) | registrar (com XP)
+  // modos separados
   const [flowMode, setFlowMode] = useState(null); // "analyze" | "register" | null
   const [showPickerModal, setShowPickerModal] = useState(false);
 
+  const [photoFile, setPhotoFile] = useState(null);
   const [photoPreview, setPhotoPreview] = useState(null);
 
   const [showAnalyzeModal, setShowAnalyzeModal] = useState(false);
@@ -248,6 +241,13 @@ export default function Alimentacao() {
   const [customCalories, setCustomCalories] = useState("");
   const [customHealthy, setCustomHealthy] = useState(true);
 
+  // ✅ BUSCA FOODS (autocomplete)
+  const [foodQuery, setFoodQuery] = useState("");
+  const [foodResults, setFoodResults] = useState([]);
+  const [foodSearching, setFoodSearching] = useState(false);
+  const [foodSelected, setFoodSelected] = useState(null);
+  const [portionGrams, setPortionGrams] = useState("100"); // padrão
+
   const [mealLogs, setMealLogs] = useState([]);
   const [activities, setActivities] = useState([]);
   const [colesterolRecords, setColesterolRecords] = useState([]);
@@ -256,111 +256,72 @@ export default function Alimentacao() {
   const day = useMemo(() => todayISODate(), []);
   const [localDoneSet, setLocalDoneSet] = useState(() => readLocalDoneSet(todayISODate()));
 
-  const resetMedia = () => {
-    setPhotoPreview(null);
-  };
-
-  const closeAllModals = () => {
-    setShowPickerModal(false);
-    setShowAnalyzeModal(false);
-    setShowRegisterModal(false);
-    setFlowMode(null);
-  };
-
-  const closeRegisterModal = () => {
-    setShowRegisterModal(false);
-    setFlowMode(null);
-    resetMedia();
-    setCustomDesc("");
-    setCustomCalories("");
-    setCustomHealthy(true);
-  };
-
   useEffect(() => {
-    isMountedRef.current = true;
-
+    let mounted = true;
     (async () => {
-      await loadData();
+      await loadData(mounted);
     })();
-
     return () => {
-      isMountedRef.current = false;
+      mounted = false;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const loadData = async () => {
+  const loadData = async (mountedFlag = true) => {
+    setIsLoading(true);
+
+    const { data: userData } = await supabase.auth.getUser();
+    const user = userData?.user;
+
+    if (!user) {
+      window.location.href = `/login?next=${encodeURIComponent("/alimentacao")}`;
+      return;
+    }
+
+    let prof = null;
+
     try {
-      if (isMountedRef.current) setIsLoading(true);
+      const { data, error } = await supabase
+        .from("profiles")
+        .select("id, role, plano_ativo, rank, xp_total, metas_concluidas, dias_consecutivos, objetivo, basal_kcal")
+        .eq("id", user.id)
+        .maybeSingle();
 
-      const { data: userData } = await supabase.auth.getUser();
-      const user = userData?.user;
+      if (!error) prof = data;
+    } catch {
+      prof = null;
+    }
 
-      if (!user) {
-        window.location.href = `/login?next=${encodeURIComponent("/alimentacao")}`;
-        return;
-      }
-
-      // PERFIL
-      let prof = null;
-
+    if (!prof) {
       try {
-        const { data, error } = await supabase
+        const { data: created, error: upsertErr } = await supabase
           .from("profiles")
+          .upsert({ id: user.id, rank: "Iniciante", xp_total: 0, metas_concluidas: 0, dias_consecutivos: 0 }, { onConflict: "id" })
           .select("id, role, plano_ativo, rank, xp_total, metas_concluidas, dias_consecutivos, objetivo, basal_kcal")
-          .eq("id", user.id)
-          .maybeSingle();
+          .single();
 
-        if (!error) prof = data;
+        if (!upsertErr) prof = created;
       } catch {
-        prof = null;
+        prof = { id: user.id, rank: "Iniciante", xp_total: 0, metas_concluidas: 0, dias_consecutivos: 0 };
       }
+    }
 
-      if (!prof) {
-        try {
-          const { data: created, error: upsertErr } = await supabase
-            .from("profiles")
-            .upsert(
-              { id: user.id, rank: "Iniciante", xp_total: 0, metas_concluidas: 0, dias_consecutivos: 0 },
-              { onConflict: "id" }
-            )
-            .select("id, role, plano_ativo, rank, xp_total, metas_concluidas, dias_consecutivos, objetivo, basal_kcal")
-            .single();
+    if (mountedFlag) setProfile(prof);
 
-          if (!upsertErr) prof = created;
-        } catch {
-          prof = { id: user.id, rank: "Iniciante", xp_total: 0, metas_concluidas: 0, dias_consecutivos: 0 };
-        }
-      }
+    const meals = await safeSelect("meal_logs", (q) => q.eq("user_id", user.id).order("created_at", { ascending: false }).limit(60));
+    const acts = await safeSelect("activity_logs", (q) => q.eq("user_id", user.id).order("created_at", { ascending: false }).limit(60));
 
-      // PRIVACIDADE: filtra user_id
-      const meals = await safeSelect("meal_logs", (q) =>
-        q.eq("user_id", user.id).order("created_at", { ascending: false }).limit(60)
-      );
+    let colesterol = await safeSelect("cholesterol_records", (q) => q.eq("user_id", user.id).order("record_date", { ascending: false }).limit(5));
+    if (!colesterol || colesterol.length === 0) {
+      colesterol = await safeSelect("colesterol_records", (q) => q.eq("user_id", user.id).order("data_exame", { ascending: false }).limit(5));
+    }
 
-      const acts = await safeSelect("activity_logs", (q) =>
-        q.eq("user_id", user.id).order("created_at", { ascending: false }).limit(60)
-      );
-
-      let colesterol = await safeSelect("cholesterol_records", (q) =>
-        q.eq("user_id", user.id).order("record_date", { ascending: false }).limit(5)
-      );
-
-      if (!colesterol || colesterol.length === 0) {
-        colesterol = await safeSelect("colesterol_records", (q) =>
-          q.eq("user_id", user.id).order("data_exame", { ascending: false }).limit(5)
-        );
-      }
-
-      if (!isMountedRef.current) return;
-
-      setProfile(prof);
+    if (mountedFlag) {
       setMealLogs(meals);
       setActivities(acts);
       setColesterolRecords(colesterol);
       setLocalDoneSet(readLocalDoneSet(day));
-    } finally {
-      if (isMountedRef.current) setIsLoading(false);
+      setIsLoading(false);
     }
   };
 
@@ -373,9 +334,7 @@ export default function Alimentacao() {
   const completedTodaySet = useMemo(() => {
     const set = new Set();
 
-    const todaysMeals = Array.isArray(mealLogs)
-      ? mealLogs.filter((m) => sameDay(m?.date || m?.created_at, day))
-      : [];
+    const todaysMeals = Array.isArray(mealLogs) ? mealLogs.filter((m) => sameDay(m?.date || m?.created_at, day)) : [];
 
     for (const m of todaysMeals) {
       const desc = (m?.description || "").trim();
@@ -385,7 +344,6 @@ export default function Alimentacao() {
     }
 
     for (const id of localDoneSet) set.add(id);
-
     return set;
   }, [mealLogs, localDoneSet, day]);
 
@@ -405,33 +363,109 @@ export default function Alimentacao() {
     });
   }, [completedTodaySet]);
 
-  // Fluxo: escolher origem da imagem
+  // ✅ Helpers foods
+  function calcCaloriesFromFood(food, gramsStr) {
+    const grams = Number(gramsStr || 0);
+    const kcal100 = Number(food?.kcal_per_100g || 0);
+    if (!Number.isFinite(grams) || grams <= 0) return "";
+    if (!Number.isFinite(kcal100) || kcal100 <= 0) return "";
+    const total = (kcal100 * grams) / 100;
+    return String(Math.round(total));
+  }
+
+  async function searchFoods(q) {
+    const query = String(q || "").trim();
+    if (query.length < 2) {
+      setFoodResults([]);
+      return;
+    }
+
+    setFoodSearching(true);
+    try {
+      const { data, error } = await supabase
+        .from("foods")
+        .select("id, canonical_name, kcal_per_100g, is_healthy, category_id")
+        .ilike("canonical_name", `%${query}%`)
+        .order("canonical_name", { ascending: true })
+        .limit(8);
+
+      if (error) {
+        setFoodResults([]);
+        return;
+      }
+      setFoodResults(Array.isArray(data) ? data : []);
+    } catch {
+      setFoodResults([]);
+    } finally {
+      setFoodSearching(false);
+    }
+  }
+
+  // ✅ debounce busca foods
+  useEffect(() => {
+    const t = setTimeout(() => {
+      searchFoods(foodQuery);
+    }, 250);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [foodQuery]);
+
+  function onSelectFood(food) {
+    setFoodSelected(food);
+    const name = food?.canonical_name || "";
+    setFoodQuery(name);
+    setCustomDesc(name);
+
+    if (typeof food?.is_healthy === "boolean") {
+      setCustomHealthy(food.is_healthy);
+    }
+
+    const cals = calcCaloriesFromFood(food, portionGrams);
+    if (cals !== "") setCustomCalories(cals);
+  }
+
+  // ✅ Fluxo: escolher origem da imagem
   const startFlow = (mode) => {
     setFlowMode(mode);
-    resetMedia();
+
+    setPhotoFile(null);
+    setPhotoPreview(null);
+
+    // reset do modal register
+    setCustomDesc("");
+    setCustomCalories("");
+    setCustomHealthy(true);
+    setFoodQuery("");
+    setFoodResults([]);
+    setFoodSelected(null);
+    setPortionGrams("100");
+
     setShowPickerModal(true);
   };
 
   const onPickedFile = (file) => {
-    const reader = new FileReader();
-    reader.onloadend = () => {
-      if (!isMountedRef.current) return;
-      setPhotoPreview(reader.result);
-      setShowPickerModal(false);
+    setPhotoFile(file);
 
-      if (flowMode === "analyze") setShowAnalyzeModal(true);
-      else setShowRegisterModal(true);
-    };
+    const reader = new FileReader();
+    reader.onloadend = () => setPhotoPreview(reader.result);
     reader.readAsDataURL(file);
+
+    setShowPickerModal(false);
+
+    if (flowMode === "analyze") {
+      setShowAnalyzeModal(true);
+    } else {
+      setShowRegisterModal(true);
+    }
   };
 
   const analyzeFood = async () => {
     setAnalyzing(true);
     try {
       alert(
-        "Análise por IA está em manutenção nesta versão.\n\n" +
-          "Próximo passo: upload no Supabase Storage + endpoint /api/analyze-meal.\n" +
-          "Se você quiser, eu te passo isso prontinho."
+        "Nesta versão, a análise automática por foto está desativada.\n\n" +
+          "Agora usamos a opção B (base de alimentos + busca) para manter gratuito e coerente.\n" +
+          "Você pode registrar pela base e o app calcula as calorias."
       );
     } finally {
       setAnalyzing(false);
@@ -483,18 +517,101 @@ export default function Alimentacao() {
       const newRank = computeRankFromXp(newXp);
 
       try {
-        await supabase
-          .from("profiles")
-          .update({ xp_total: newXp, metas_concluidas: newMetas, rank: newRank })
-          .eq("id", profile.id);
+        await supabase.from("profiles").update({ xp_total: newXp, metas_concluidas: newMetas, rank: newRank }).eq("id", profile.id);
       } catch {}
 
       setProfile({ ...profile, xp_total: newXp, metas_concluidas: newMetas, rank: newRank });
 
-      await loadData();
+      await loadData(true);
       setSelectedReceita(null);
     } finally {
       setCompleting(false);
+    }
+  };
+
+  // ✅ Registro personalizado (com XP)
+  const registerCustomMeal = async () => {
+    if (!profile?.id) return;
+
+    const desc = String(customDesc || "").trim();
+    if (!desc) return;
+
+    const kcal = customCalories === "" ? null : Number(customCalories);
+    const caloriesNum = Number.isFinite(kcal) ? kcal : null;
+
+    const xp = computeCustomMealXp({
+      isHealthy: customHealthy,
+      calories: caloriesNum,
+      targetCalories: Number(profile?.basal_kcal || 2000),
+    });
+
+    setRegistering(true);
+    try {
+      // meal_logs
+      try {
+        await supabase.from("meal_logs").insert({
+          user_id: profile.id,
+          description: desc,
+          calories: caloriesNum ?? 0,
+          is_healthy: Boolean(customHealthy),
+          ai_feedback: null,
+          date: day,
+        });
+      } catch {}
+
+      // ✅ se não selecionou da base, salva sugestão (para enriquecer o app depois)
+      if (!foodSelected) {
+        try {
+          await supabase.from("food_suggestions").insert({
+            user_id: profile.id,
+            query_text: desc,
+          });
+        } catch {
+          // se tabela não existir, não quebra
+        }
+      }
+
+      // activity_logs
+      try {
+        await supabase.from("activity_logs").insert({
+          user_id: profile.id,
+          tipo: "alimentacao",
+          descricao: `Registrou refeição: ${desc}`,
+          xp_ganho: xp,
+          data: day,
+        });
+      } catch {}
+
+      // profiles XP/rank
+      const currentXp = Number(profile?.xp_total || 0);
+      const currentMetas = Number(profile?.metas_concluidas || 0);
+
+      const newXp = currentXp + xp;
+      const newMetas = currentMetas + 1;
+      const newRank = computeRankFromXp(newXp);
+
+      try {
+        await supabase.from("profiles").update({ xp_total: newXp, metas_concluidas: newMetas, rank: newRank }).eq("id", profile.id);
+      } catch {}
+
+      setProfile({ ...profile, xp_total: newXp, metas_concluidas: newMetas, rank: newRank });
+
+      setShowRegisterModal(false);
+      setPhotoFile(null);
+      setPhotoPreview(null);
+
+      setCustomDesc("");
+      setCustomCalories("");
+      setCustomHealthy(true);
+
+      setFoodQuery("");
+      setFoodResults([]);
+      setFoodSelected(null);
+      setPortionGrams("100");
+
+      await loadData(true);
+    } finally {
+      setRegistering(false);
     }
   };
 
@@ -510,70 +627,6 @@ export default function Alimentacao() {
       targetCalories: targetCaloriesForXp,
     });
   }, [customHealthy, customCalories, targetCaloriesForXp]);
-
-  const registerCustomMeal = async () => {
-    if (!profile?.id) return;
-
-    const desc = String(customDesc || "").trim();
-    if (!desc) return;
-
-    const kcal = customCalories === "" ? null : Number(customCalories);
-    const caloriesNum = Number.isFinite(kcal) ? kcal : null;
-
-    const xp = computeCustomMealXp({
-      isHealthy: customHealthy,
-      calories: caloriesNum,
-      targetCalories: targetCaloriesForXp,
-    });
-
-    setRegistering(true);
-    try {
-      try {
-        await supabase.from("meal_logs").insert({
-          user_id: profile.id,
-          description: desc,
-          calories: caloriesNum ?? 0,
-          is_healthy: Boolean(customHealthy),
-          ai_feedback: null,
-          date: day,
-        });
-      } catch {}
-
-      try {
-        await supabase.from("activity_logs").insert({
-          user_id: profile.id,
-          tipo: "alimentacao",
-          descricao: `Registrou refeição: ${desc}`,
-          xp_ganho: xp,
-          data: day,
-        });
-      } catch {}
-
-      const currentXp = Number(profile?.xp_total || 0);
-      const currentMetas = Number(profile?.metas_concluidas || 0);
-
-      // ✅ coerência: só conta “meta concluída” se for saudável (ou seja, se gerou XP)
-      const shouldCountMeta = xp > 0;
-
-      const newXp = currentXp + xp;
-      const newMetas = currentMetas + (shouldCountMeta ? 1 : 0);
-      const newRank = computeRankFromXp(newXp);
-
-      try {
-        await supabase
-          .from("profiles")
-          .update({ xp_total: newXp, metas_concluidas: newMetas, rank: newRank })
-          .eq("id", profile.id);
-      } catch {}
-
-      setProfile({ ...profile, xp_total: newXp, metas_concluidas: newMetas, rank: newRank });
-
-      closeRegisterModal();
-      await loadData();
-    } finally {
-      setRegistering(false);
-    }
-  };
 
   if (isLoading) {
     return (
@@ -626,7 +679,7 @@ export default function Alimentacao() {
         {/* Dashboard de Calorias */}
         <CaloriesDashboard mealLogs={mealLogs} basalRate={profile?.basal_kcal || 2000} />
 
-        {/* Botões por propósito */}
+        {/* Botões separados */}
         <div className="grid grid-cols-2 gap-3 mb-6">
           <Button
             onClick={() => startFlow("analyze")}
@@ -680,34 +733,22 @@ export default function Alimentacao() {
             const done = isCompletedToday(receita);
 
             return (
-              <motion.div
-                key={receita.id}
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: idx * 0.03 }}
-              >
+              <motion.div key={receita.id} initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: idx * 0.03 }}>
                 <button
                   onClick={() => unlocked && setSelectedReceita(receita)}
                   disabled={!unlocked}
                   className={`w-full text-left bg-white rounded-2xl p-4 border transition-all ${
-                    unlocked
-                      ? "border-red-100 hover:border-red-300 hover:shadow-md cursor-pointer"
-                      : "border-gray-200 opacity-60 cursor-not-allowed"
+                    unlocked ? "border-red-100 hover:border-red-300 hover:shadow-md cursor-pointer" : "border-gray-200 opacity-60 cursor-not-allowed"
                   } ${done ? "opacity-70" : ""}`}
                 >
                   <div className="flex items-center gap-4">
-                    <div
-                      className={`w-14 h-14 rounded-xl flex items-center justify-center text-3xl ${
-                        unlocked ? "bg-red-50" : "bg-gray-100"
-                      }`}
-                    >
+                    <div className={`w-14 h-14 rounded-xl flex items-center justify-center text-3xl ${unlocked ? "bg-red-50" : "bg-gray-100"}`}>
                       {unlocked ? receita.image : <Lock className="w-6 h-6 text-gray-400" />}
                     </div>
 
                     <div className="flex-1">
                       <div className="flex items-center gap-2">
                         <div className="font-semibold text-gray-900">{receita.name}</div>
-
                         {done && (
                           <span className="inline-flex items-center gap-1 text-xs bg-emerald-50 text-emerald-700 px-2 py-0.5 rounded-full border border-emerald-100">
                             <Check className="w-3 h-3" />
@@ -763,7 +804,7 @@ export default function Alimentacao() {
                 <h3 className="text-xl font-bold text-gray-900 mb-2 text-center">
                   {flowMode === "register" ? "Registrar com Foto" : "Avaliar Refeição"}
                 </h3>
-                <p className="text-sm text-gray-500 mb-6 text-center">Escolha a origem</p>
+                <p className="text-sm text-gray-500 mb-6 text-center">Escolha a origem da imagem</p>
 
                 <div className="space-y-3">
                   <Button
@@ -788,20 +829,6 @@ export default function Alimentacao() {
                       <div className="text-xs text-gray-500">Selecionar foto existente</div>
                     </div>
                   </Button>
-
-                  {/* ✅ reduz atrito e não depende do capture */}
-                  {flowMode === "register" && (
-                    <Button
-                      onClick={() => {
-                        setShowPickerModal(false);
-                        setShowRegisterModal(true);
-                      }}
-                      variant="ghost"
-                      className="w-full text-gray-700"
-                    >
-                      Continuar sem foto
-                    </Button>
-                  )}
                 </div>
 
                 <Button onClick={() => setShowPickerModal(false)} variant="ghost" className="w-full mt-4 text-gray-500">
@@ -849,9 +876,9 @@ export default function Alimentacao() {
                     <div className="flex items-start gap-2 text-sm text-blue-700">
                       <Heart className="w-5 h-5 flex-shrink-0 mt-0.5" />
                       <p>
-                        Aqui é só para tirar dúvida (calorias/impacto). Não ganha XP.
+                        Aqui é só para tirar dúvida. Não ganha XP.
                         <br />
-                        (Na versão atual, a IA está em manutenção.)
+                        (Na versão atual, a IA por foto está desativada.)
                       </p>
                     </div>
                   </div>
@@ -878,8 +905,8 @@ export default function Alimentacao() {
                     <Button
                       onClick={() => {
                         setShowAnalyzeModal(false);
-                        setFlowMode("register");
                         setShowRegisterModal(true);
+                        setFlowMode("register");
                       }}
                       variant="outline"
                       className="w-full border-2 border-red-200 hover:bg-red-50 py-5 rounded-xl"
@@ -893,7 +920,7 @@ export default function Alimentacao() {
           )}
         </AnimatePresence>
 
-        {/* Modal: Registrar refeição personalizada (com XP) */}
+        {/* Modal: Registrar refeição (com XP + busca foods) */}
         <AnimatePresence>
           {showRegisterModal && (
             <motion.div
@@ -901,7 +928,7 @@ export default function Alimentacao() {
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
               className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4"
-              onClick={() => !registering && closeRegisterModal()}
+              onClick={() => !registering && setShowRegisterModal(false)}
             >
               <motion.div
                 initial={{ scale: 0.95, opacity: 0 }}
@@ -914,7 +941,7 @@ export default function Alimentacao() {
                   <div className="flex items-center justify-between mb-4">
                     <h3 className="text-lg font-bold text-gray-900">Registrar Refeição (+XP)</h3>
                     {!registering && (
-                      <button onClick={closeRegisterModal} className="text-gray-400 hover:text-gray-600">
+                      <button onClick={() => setShowRegisterModal(false)} className="text-gray-400 hover:text-gray-600">
                         <X className="w-6 h-6" />
                       </button>
                     )}
@@ -927,34 +954,112 @@ export default function Alimentacao() {
                   )}
 
                   <div className="space-y-3">
+                    {/* ✅ BUSCA DE ALIMENTOS */}
                     <div>
                       <label className="text-sm font-medium text-gray-700">O que você comeu?</label>
                       <input
-                        value={customDesc}
-                        onChange={(e) => setCustomDesc(e.target.value)}
-                        placeholder="Ex: Arroz, feijão e frango"
+                        value={foodQuery}
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          setFoodQuery(v);
+                          setFoodSelected(null);
+                          setCustomDesc(v);
+                        }}
+                        placeholder="Digite para buscar (ex: banana, arroz, frango...)"
                         className="mt-1 w-full border border-gray-200 rounded-xl px-3 py-3 text-sm outline-none focus:ring-2 focus:ring-red-200"
                       />
+
+                      {(foodSearching || foodResults.length > 0 || (foodQuery || "").trim().length >= 2) && (
+                        <div className="mt-2 rounded-xl border border-gray-200 bg-white overflow-hidden">
+                          {foodSearching && <div className="px-3 py-2 text-xs text-gray-500">Buscando…</div>}
+
+                          {!foodSearching && foodResults.length === 0 && (foodQuery || "").trim().length >= 2 && (
+                            <div className="px-3 py-2 text-xs text-gray-500">
+                              Nenhum alimento encontrado. Você pode registrar manualmente.
+                            </div>
+                          )}
+
+                          {!foodSearching &&
+                            foodResults.map((f) => (
+                              <button
+                                key={f.id}
+                                type="button"
+                                onClick={() => onSelectFood(f)}
+                                className="w-full text-left px-3 py-2 hover:bg-gray-50 flex items-center justify-between"
+                              >
+                                <div>
+                                  <div className="text-sm text-gray-900 font-medium">{f.canonical_name}</div>
+                                  <div className="text-xs text-gray-500">{Number(f.kcal_per_100g || 0)} kcal / 100g</div>
+                                </div>
+
+                                <span
+                                  className={`text-[11px] px-2 py-1 rounded-full border ${
+                                    f.is_healthy
+                                      ? "bg-emerald-50 border-emerald-200 text-emerald-700"
+                                      : "bg-red-50 border-red-200 text-red-700"
+                                  }`}
+                                >
+                                  {f.is_healthy ? "Saudável" : "Não saudável"}
+                                </span>
+                              </button>
+                            ))}
+                        </div>
+                      )}
+
+                      {foodSelected && (
+                        <div className="mt-2 text-xs text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-xl px-3 py-2">
+                          Selecionado da base ✅ (calorias e saudável preenchidos automaticamente)
+                        </div>
+                      )}
                     </div>
 
+                    {/* Porção (g) */}
+                    <div>
+                      <label className="text-sm font-medium text-gray-700">Porção (g)</label>
+                      <input
+                        value={portionGrams}
+                        onChange={(e) => {
+                          const v = e.target.value.replace(/[^\d]/g, "");
+                          setPortionGrams(v);
+
+                          if (foodSelected) {
+                            const cals = calcCaloriesFromFood(foodSelected, v);
+                            if (cals !== "") setCustomCalories(cals);
+                          }
+                        }}
+                        placeholder="Ex: 100"
+                        className="mt-1 w-full border border-gray-200 rounded-xl px-3 py-3 text-sm outline-none focus:ring-2 focus:ring-red-200"
+                        inputMode="numeric"
+                      />
+                      <div className="mt-1 text-xs text-gray-500">
+                        Se você escolher um alimento da lista, as calorias são calculadas por 100g automaticamente.
+                      </div>
+                    </div>
+
+                    {/* Calorias (opcional) */}
                     <div>
                       <label className="text-sm font-medium text-gray-700">Calorias (opcional)</label>
                       <input
                         value={customCalories}
-                        onChange={(e) => setCustomCalories(e.target.value.replace(/[^\d]/g, ""))}
+                        onChange={(e) => {
+                          setCustomCalories(e.target.value.replace(/[^\d]/g, ""));
+                          // se editar manualmente, mantém seleção, mas você pode trocar depois se quiser
+                        }}
                         placeholder="Ex: 450"
                         className="mt-1 w-full border border-gray-200 rounded-xl px-3 py-3 text-sm outline-none focus:ring-2 focus:ring-red-200"
                         inputMode="numeric"
                       />
                     </div>
 
+                    {/* Saudável? */}
                     <button
                       type="button"
-                      onClick={() => setCustomHealthy((v) => !v)}
+                      onClick={() => {
+                        setCustomHealthy((v) => !v);
+                        // se usuário mexer manualmente, não faz sentido travar pelo selected
+                      }}
                       className={`w-full rounded-xl px-4 py-3 text-sm border flex items-center justify-between ${
-                        customHealthy
-                          ? "bg-emerald-50 border-emerald-200 text-emerald-800"
-                          : "bg-gray-50 border-gray-200 text-gray-700"
+                        customHealthy ? "bg-emerald-50 border-emerald-200 text-emerald-800" : "bg-gray-50 border-gray-200 text-gray-700"
                       }`}
                     >
                       <span>Foi uma refeição saudável?</span>
@@ -990,7 +1095,15 @@ export default function Alimentacao() {
                       )}
                     </Button>
 
-                    <Button onClick={closeRegisterModal} variant="ghost" className="w-full text-gray-500">
+                    <Button
+                      onClick={() => {
+                        setShowRegisterModal(false);
+                        setPhotoFile(null);
+                        setPhotoPreview(null);
+                      }}
+                      variant="ghost"
+                      className="w-full text-gray-500"
+                    >
                       Cancelar
                     </Button>
                   </div>
@@ -1000,7 +1113,7 @@ export default function Alimentacao() {
           )}
         </AnimatePresence>
 
-        {/* Modal de Receita */}
+        {/* Modal da Receita */}
         <AnimatePresence>
           {selectedReceita && (
             <motion.div
