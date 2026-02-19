@@ -1,5 +1,7 @@
 // api/create-payment.js
 
+import { createClient } from "@supabase/supabase-js";
+
 const PLANS = {
   mensal: { id: "mensal", name: "Mensal", price: 24.9, durationDays: 30 },
   trimestral: { id: "trimestral", name: "Trimestral", price: 59.9, durationDays: 90 },
@@ -12,18 +14,16 @@ function pickPlanFromBody(body) {
   return key ? PLANS[key] : null;
 }
 
-function normalizeCpf(value) {
-  return String(value || "").replace(/\D/g, "").slice(0, 11);
-}
+function getSupabaseAdmin() {
+  const url = process.env.SUPABASE_URL;
+  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
-function splitName(fullName) {
-  const parts = String(fullName || "")
-    .trim()
-    .split(/\s+/)
-    .filter(Boolean);
-  const firstName = parts[0] || "";
-  const lastName = parts.slice(1).join(" ") || "";
-  return { firstName, lastName };
+  if (!url) throw new Error("Missing SUPABASE_URL");
+  if (!serviceKey) throw new Error("Missing SUPABASE_SERVICE_ROLE_KEY");
+
+  return createClient(url, serviceKey, {
+    auth: { persistSession: false, autoRefreshToken: false },
+  });
 }
 
 export default async function handler(req, res) {
@@ -47,21 +47,16 @@ export default async function handler(req, res) {
     const token = process.env.MERCADOPAGO_ACCESS_TOKEN;
     if (!token) return res.status(500).json({ error: "Missing MERCADOPAGO_ACCESS_TOKEN env var" });
 
-    // evita APP_URL com "/" no fim (duplo //)
     const appUrlRaw = process.env.APP_URL || "https://heartbalance.com.br";
     const appUrl = String(appUrlRaw).replace(/\/$/, "");
 
-    const cpfDigits = normalizeCpf(customer?.cpf);
+    // ---------- PAYER NORMALIZADO (nome + cpf) ----------
+    const cpfDigits = customer?.cpf ? String(customer.cpf).replace(/\D/g, "").slice(0, 11) : null;
 
     const fullName = String(customer?.nome || "").trim();
-    const fromCustomerSplit = splitName(fullName);
-
-    // prioriza o que veio do front (customer.first_name/last_name),
-    // mas garante fallback pelo nome completo
-    const firstName =
-      String(customer?.first_name || "").trim() || fromCustomerSplit.firstName || "Cliente";
+    const firstName = fullName ? fullName.split(" ")[0] : undefined;
     const lastName =
-      String(customer?.last_name || "").trim() || fromCustomerSplit.lastName || "HeartBalance";
+      fullName && fullName.split(" ").length > 1 ? fullName.split(" ").slice(1).join(" ") : undefined;
 
     const payer = {
       email: userEmail,
@@ -70,22 +65,13 @@ export default async function handler(req, res) {
       identification: cpfDigits ? { type: "CPF", number: cpfDigits } : undefined,
     };
 
-    const itemTitle = `HeartBalance Premium - ${chosenPlan.name}`;
-    const itemDescription =
-      `Assinatura ${chosenPlan.name.toLowerCase()} do HeartBalance: recursos premium, acompanhamento e orientações para controle de colesterol.`;
-
     const preference = {
       items: [
         {
-          id: `heartbalance-${chosenPlan.id}`,
-          title: itemTitle,
-
-          // ✅ melhora score
-          description: itemDescription,
-          category_id: "services",
-
+          id: chosenPlan.id,
+          title: `Heartbalance Premium - ${chosenPlan.name}`,
           quantity: 1,
-          unit_price: Number(chosenPlan.price), // 🔒 nunca vem do front
+          unit_price: Number(chosenPlan.price),
           currency_id: "BRL",
         },
       ],
@@ -94,29 +80,21 @@ export default async function handler(req, res) {
 
       external_reference: String(userId),
 
-      // ✅ importante pro webhook ativar o plano certo
       metadata: {
         user_id: String(userId),
         plan_id: chosenPlan.id,
         duration_days: chosenPlan.durationDays,
         customer_email: userEmail || customer?.email || null,
         customer_name: customer?.nome || null,
-        customer_first_name: firstName || null,
-        customer_last_name: lastName || null,
         customer_cpf: cpfDigits || null,
         payment_method: paymentMethod || null,
       },
 
-      // ✅ ajuda a evitar status “pendente” e inconsistência
       binary_mode: true,
-
-      // ✅ aparece na fatura do cartão (se aplicável)
       statement_descriptor: "HEARTBALANCE",
 
-      // ✅ webhook em produção
       notification_url: `${appUrl}/api/mp-webhook`,
 
-      // ✅ retorno para o app
       back_urls: {
         success: `${appUrl}/checkout?status=approved`,
         pending: `${appUrl}/checkout?status=pending`,
@@ -157,17 +135,34 @@ export default async function handler(req, res) {
     }
 
     const redirectUrl = data?.init_point || data?.sandbox_init_point;
+    const preferenceId = data?.id ? String(data.id) : null;
 
-    if (!redirectUrl) {
+    if (!redirectUrl || !preferenceId) {
       return res.status(502).json({
-        error: "MercadoPago did not return init_point",
+        error: "MercadoPago did not return init_point/id",
         details: data,
       });
     }
 
+    // ✅ Melhoria B: salva preference_id no Supabase para não depender do localStorage
+    try {
+      const supabaseAdmin = getSupabaseAdmin();
+      const { error: insErr } = await supabaseAdmin.from("checkout_sessions").insert({
+        user_id: userId,
+        preference_id: preferenceId,
+        plan_id: chosenPlan.id,
+        payment_method: paymentMethod || null,
+        status: "created",
+      });
+
+      if (insErr) console.error("checkout_sessions insert error:", insErr);
+    } catch (e) {
+      console.error("checkout_sessions insert unexpected error:", e);
+    }
+
     return res.status(200).json({
       init_point: redirectUrl,
-      id: data?.id, // preference_id
+      id: preferenceId, // preference_id
     });
   } catch (err) {
     console.error("Create payment error:", err);
