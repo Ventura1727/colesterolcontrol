@@ -1,5 +1,5 @@
 // api/check-payment.js
-import { createClient } from "@supabase/supabase-js";
+const { createClient } = require("@supabase/supabase-js");
 
 function getSupabaseAdmin() {
   const url = process.env.SUPABASE_URL;
@@ -13,7 +13,7 @@ function getSupabaseAdmin() {
   });
 }
 
-export default async function handler(req, res) {
+module.exports = async function handler(req, res) {
   if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
 
   try {
@@ -25,7 +25,7 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: "Missing userId or preferenceId" });
     }
 
-    // ✅ Se não veio preferenceId, busca o último do usuário no Supabase
+    // ✅ fallback: buscar último preference_id do usuário
     if (!preferenceId && userId) {
       try {
         const supabaseAdmin = getSupabaseAdmin();
@@ -81,4 +81,4 @@ export default async function handler(req, res) {
   } catch (e) {
     return res.status(500).json({ error: "Internal error", message: e?.message ?? String(e) });
   }
-}
+};
