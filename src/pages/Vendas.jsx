@@ -699,10 +699,12 @@ export default function Vendas() {
           <Button
             onClick={handleContinue}
             disabled={isContinuing}
-            className="w-full bg-gradient-to-r from-red-500 to-rose-600 hover:from-red-600 hover:to-rose-700 text-white py-6 rounded-xl text-lg font-semibold shadow-lg disabled:opacity-70 disabled:cursor-not-allowed"
+            className="w-full bg-gradient-to-r from-red-500 to-rose-600 hover:from-red-600 hover:to-rose-700 text-white py-5 rounded-xl text-base font-semibold shadow-lg disabled:opacity-70 disabled:cursor-not-allowed whitespace-normal leading-tight"
           >
-            {isContinuing ? 'Salvando…' : 'Quero Desbloquear Meu Plano Agora'}
-            <Zap className="w-5 h-5 ml-2" />
+            <span className="flex items-center justify-center gap-2">
+              {isContinuing ? 'Salvando…' : 'Desbloquear Premium'}
+              <Zap className="w-5 h-5 shrink-0" />
+            </span>
           </Button>
 
           <div className="mt-3 flex items-center justify-center gap-2 text-xs text-gray-600">
