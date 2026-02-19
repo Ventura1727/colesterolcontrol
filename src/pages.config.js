@@ -33,6 +33,6 @@ export const PAGES = {
 };
 
 export const pagesConfig = {
-  mainPage: "Onboarding",
+  mainPage: "Home", // ✅ agora "/" abre a Home com os 2 botões
   Pages: PAGES,
 };
