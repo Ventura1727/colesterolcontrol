@@ -1,20 +1,47 @@
-import React from 'react';
-import { motion } from 'framer-motion';
-import { Flame, Target, TrendingUp, Calendar } from 'lucide-react';
-import { format } from 'date-fns';
-import { ptBR } from 'date-fns/locale';
+import React from "react";
+import { motion } from "framer-motion";
+import { Flame, Target, TrendingUp, Calendar } from "lucide-react";
+import { format } from "date-fns";
+import { ptBR } from "date-fns/locale";
+
+function toISODate(value) {
+  if (!value) return null;
+  const s = String(value);
+
+  // se já está YYYY-MM-DD
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+
+  const d = new Date(s);
+  if (!Number.isFinite(d.getTime())) return null;
+  return d.toISOString().split("T")[0];
+}
+
+function toDate(value) {
+  if (!value) return null;
+  const s = String(value);
+
+  // YYYY-MM-DD -> cria como local
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) {
+    const [y, m, day] = s.split("-").map((n) => Number(n));
+    return new Date(y, (m || 1) - 1, day || 1);
+  }
+
+  const d = new Date(s);
+  return Number.isFinite(d.getTime()) ? d : null;
+}
 
 export default function CaloriesDashboard({ mealLogs, basalRate }) {
-  // Calcular calorias do dia
-  const today = new Date().toISOString().split('T')[0];
-  const todayMeals = mealLogs?.filter(m => {
-    const mealDate = new Date(m.date).toISOString().split('T')[0];
-    return mealDate === today;
-  }) || [];
+  const today = new Date().toISOString().split("T")[0];
 
-  const todayCalories = todayMeals.reduce((sum, m) => sum + (m.calories || 0), 0);
-  const targetCalories = basalRate || 2000;
-  const percentage = Math.min((todayCalories / targetCalories) * 100, 100);
+  const todayMeals =
+    mealLogs?.filter((m) => {
+      const mealISO = toISODate(m?.date || m?.created_at);
+      return mealISO === today;
+    }) || [];
+
+  const todayCalories = todayMeals.reduce((sum, m) => sum + (m?.calories || 0), 0);
+  const targetCalories = Number(basalRate || 2000);
+  const percentage = Math.min((todayCalories / Math.max(targetCalories, 1)) * 100, 100);
   const remaining = Math.max(targetCalories - todayCalories, 0);
 
   // Últimos 7 dias
@@ -22,20 +49,24 @@ export default function CaloriesDashboard({ mealLogs, basalRate }) {
   for (let i = 6; i >= 0; i--) {
     const date = new Date();
     date.setDate(date.getDate() - i);
-    const dateStr = date.toISOString().split('T')[0];
-    const dayMeals = mealLogs?.filter(m => {
-      const mealDate = new Date(m.date).toISOString().split('T')[0];
-      return mealDate === dateStr;
-    }) || [];
-    const dayCalories = dayMeals.reduce((sum, m) => sum + (m.calories || 0), 0);
+    const dateStr = date.toISOString().split("T")[0];
+
+    const dayMeals =
+      mealLogs?.filter((m) => {
+        const mealISO = toISODate(m?.date || m?.created_at);
+        return mealISO === dateStr;
+      }) || [];
+
+    const dayCalories = dayMeals.reduce((sum, m) => sum + (m?.calories || 0), 0);
+
     last7Days.push({
       date: dateStr,
       calories: dayCalories,
-      label: format(date, 'EEE', { locale: ptBR })
+      label: format(date, "EEE", { locale: ptBR }),
     });
   }
 
-  const maxCalories = Math.max(...last7Days.map(d => d.calories), targetCalories);
+  const maxCalories = Math.max(...last7Days.map((d) => d.calories), targetCalories);
 
   return (
     <motion.div
@@ -51,7 +82,7 @@ export default function CaloriesDashboard({ mealLogs, basalRate }) {
         </div>
         <div className="text-xs text-gray-500">
           <Calendar className="w-4 h-4 inline mr-1" />
-          {format(new Date(), 'dd/MM/yyyy')}
+          {format(new Date(), "dd/MM/yyyy")}
         </div>
       </div>
 
@@ -68,14 +99,13 @@ export default function CaloriesDashboard({ mealLogs, basalRate }) {
           </div>
         </div>
 
-        {/* Barra de Progresso */}
         <div className="relative h-3 bg-white rounded-full overflow-hidden">
           <motion.div
             initial={{ width: 0 }}
             animate={{ width: `${percentage}%` }}
-            transition={{ duration: 0.8, ease: 'easeOut' }}
+            transition={{ duration: 0.8, ease: "easeOut" }}
             className={`h-full rounded-full ${
-              percentage < 70 ? 'bg-green-500' : percentage < 90 ? 'bg-yellow-500' : 'bg-red-500'
+              percentage < 70 ? "bg-green-500" : percentage < 90 ? "bg-yellow-500" : "bg-red-500"
             }`}
           />
         </div>
@@ -95,22 +125,21 @@ export default function CaloriesDashboard({ mealLogs, basalRate }) {
         <div className="mb-5">
           <h4 className="text-sm font-semibold text-gray-700 mb-3">Refeições de Hoje</h4>
           <div className="space-y-2">
-            {todayMeals.slice(-3).reverse().map((meal, idx) => (
-              <div key={idx} className="flex items-center justify-between bg-gray-50 rounded-lg p-3">
-                <div className="flex-1">
-                  <div className="text-sm font-medium text-gray-900 line-clamp-1">
-                    {meal.description}
+            {todayMeals.slice(-3).reverse().map((meal, idx) => {
+              const d = toDate(meal?.created_at || meal?.date);
+              return (
+                <div key={idx} className="flex items-center justify-between bg-gray-50 rounded-lg p-3">
+                  <div className="flex-1">
+                    <div className="text-sm font-medium text-gray-900 line-clamp-1">{meal?.description}</div>
+                    <div className="text-xs text-gray-500">{d ? format(d, "HH:mm") : ""}</div>
                   </div>
-                  <div className="text-xs text-gray-500">
-                    {format(new Date(meal.date), 'HH:mm')}
+                  <div className="flex items-center gap-1 text-orange-600 font-semibold">
+                    <Flame className="w-4 h-4" />
+                    {meal?.calories || 0}
                   </div>
                 </div>
-                <div className="flex items-center gap-1 text-orange-600 font-semibold">
-                  <Flame className="w-4 h-4" />
-                  {meal.calories || 0}
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       )}
@@ -121,29 +150,24 @@ export default function CaloriesDashboard({ mealLogs, basalRate }) {
           <TrendingUp className="w-4 h-4 text-blue-600" />
           <h4 className="text-sm font-semibold text-gray-700">Últimos 7 Dias</h4>
         </div>
-        
+
         <div className="flex items-end justify-between gap-1 h-24">
-          {last7Days.map((day, idx) => {
-            const height = maxCalories > 0 ? (day.calories / maxCalories) * 100 : 0;
-            const isToday = day.date === today;
+          {last7Days.map((d, idx) => {
+            const height = maxCalories > 0 ? (d.calories / maxCalories) * 100 : 0;
+            const isToday = d.date === today;
+
             return (
               <div key={idx} className="flex-1 flex flex-col items-center gap-1">
-                <div className="text-[10px] text-gray-500 font-medium">
-                  {day.calories > 0 ? day.calories : ''}
-                </div>
+                <div className="text-[10px] text-gray-500 font-medium">{d.calories > 0 ? d.calories : ""}</div>
                 <motion.div
                   initial={{ height: 0 }}
                   animate={{ height: `${height}%` }}
                   transition={{ duration: 0.5, delay: idx * 0.1 }}
-                  className={`w-full rounded-t-lg ${
-                    isToday ? 'bg-orange-500' : 'bg-gray-300'
-                  }`}
-                  style={{ minHeight: day.calories > 0 ? '8px' : '2px' }}
+                  className={`w-full rounded-t-lg ${isToday ? "bg-orange-500" : "bg-gray-300"}`}
+                  style={{ minHeight: d.calories > 0 ? "8px" : "2px" }}
                 />
-                <div className={`text-[10px] font-medium ${
-                  isToday ? 'text-orange-600' : 'text-gray-500'
-                }`}>
-                  {day.label}
+                <div className={`text-[10px] font-medium ${isToday ? "text-orange-600" : "text-gray-500"}`}>
+                  {d.label}
                 </div>
               </div>
             );
@@ -156,7 +180,6 @@ export default function CaloriesDashboard({ mealLogs, basalRate }) {
         </div>
       </div>
 
-      {/* Dica */}
       {remaining < 300 && remaining > 0 && (
         <div className="mt-4 bg-amber-50 rounded-lg p-3 border border-amber-200">
           <p className="text-xs text-amber-800">
