@@ -74,8 +74,9 @@ export default function Checkout() {
   const [polling, setPolling] = useState(false);
   const [isCheckingNow, setIsCheckingNow] = useState(false);
 
-  // evita disparar auto-check várias vezes
+  // ✅ controle do fluxo UX no step 4
   const autoCheckStartedRef = useRef(false);
+  const [pollTimedOut, setPollTimedOut] = useState(false); // ✅ se passar tempo, libera botão alternativo
 
   useEffect(() => {
     let mounted = true;
@@ -248,7 +249,6 @@ export default function Checkout() {
     let cancelled = false;
 
     async function runAutoCheck() {
-      // Se caiu no step 4, normalmente é PIX pendente/retorno do MP.
       setIsCheckingNow(true);
 
       for (let attempt = 1; attempt <= 3; attempt++) {
@@ -274,8 +274,7 @@ export default function Checkout() {
           if (result?.approved) {
             if (result?.payment_id) localStorage.setItem("hb_last_payment_id", String(result.payment_id));
             setWaitingMsg("Pagamento aprovado! Liberando Premium…");
-            // o webhook deve atualizar subscriptions; o polling finaliza
-            break;
+            break; // webhook/polling finaliza
           }
         } catch {
           // ignore e tenta de novo
@@ -286,8 +285,6 @@ export default function Checkout() {
 
       if (!cancelled) {
         setIsCheckingNow(false);
-
-        // mensagem final amigável caso não aprovado ainda
         setWaitingMsg(
           "Ainda não consta como aprovado. Às vezes o PIX pode levar alguns instantes. " +
             "Se você já pagou, clique em “Já paguei” para verificar novamente."
@@ -302,7 +299,7 @@ export default function Checkout() {
     };
   }, [step, user?.id]);
 
-  // Botão “Já paguei” (consulta MP pelo preference_id) e deixa o polling pegar a ativação
+  // Botão “Já paguei” (consulta MP pelo preference_id)
   const handleIAlreadyPaid = async () => {
     if (!user?.id) return;
 
@@ -321,7 +318,6 @@ export default function Checkout() {
       if (result?.approved) {
         if (result?.payment_id) localStorage.setItem("hb_last_payment_id", String(result.payment_id));
         setWaitingMsg("Pagamento aprovado! Liberando Premium…");
-        // o webhook deve atualizar subscriptions; o polling (abaixo) finaliza
       } else {
         setWaitingMsg("Ainda não consta como aprovado. Aguarde alguns segundos e tente novamente.");
       }
@@ -342,7 +338,9 @@ export default function Checkout() {
 
     async function pollPremium() {
       setPolling(true);
+      setPollTimedOut(false);
 
+      // 24 tentativas * 5s = 2 minutos
       for (let i = 0; i < 24; i++) {
         if (stop) break;
 
@@ -359,6 +357,9 @@ export default function Checkout() {
 
         await wait(5000);
       }
+
+      // ✅ timeout: libera alternativa
+      setPollTimedOut(true);
 
       setWaitingMsg(
         "Ainda não recebemos a confirmação final do Mercado Pago. Pode levar alguns minutos. " +
@@ -566,7 +567,7 @@ export default function Checkout() {
                   </p>
                 </div>
                 <p className="text-xs text-gray-500 mt-2">
-                  Se você pagou via PIX, volte para o app. Nós verificamos automaticamente — e você também pode forçar a verificação abaixo.
+                  Se você pagou via PIX, nós verificamos automaticamente. Se quiser, você pode forçar a verificação abaixo.
                 </p>
               </div>
 
@@ -574,9 +575,12 @@ export default function Checkout() {
                 {isCheckingNow ? "Verificando..." : "Já paguei, verificar agora"}
               </Button>
 
-              <Button className="w-full" onClick={() => (window.location.href = createPageUrl("Dashboard"))}>
-                Ir para o Dashboard
-              </Button>
+              {/* ✅ Só mostra o "Ir para o Dashboard" quando tiver timeout (pra não confundir) */}
+              {pollTimedOut && (
+                <Button className="w-full" onClick={goToDashboard}>
+                  Ir para o Dashboard
+                </Button>
+              )}
 
               <Button
                 variant="outline"
