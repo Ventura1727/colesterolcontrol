@@ -548,7 +548,18 @@ export default function Alimentacao() {
     }
   };
 
-  const customMealXpPreview = useMemo(() => computeCustomMealXp({ isHealthy: customHealthy }), [customHealthy]);
+ const targetCaloriesForXp = Number(profile?.basal_kcal || 2000);
+
+const customMealXpPreview = useMemo(() => {
+  const kcal = customCalories === "" ? null : Number(customCalories);
+  const caloriesNum = Number.isFinite(kcal) ? kcal : null;
+
+  return computeCustomMealXp({
+    isHealthy: customHealthy,
+    calories: caloriesNum,
+    targetCalories: targetCaloriesForXp,
+  });
+}, [customHealthy, customCalories, targetCaloriesForXp]);
 
   if (isLoading) {
     return (
