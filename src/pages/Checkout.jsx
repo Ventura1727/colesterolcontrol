@@ -45,6 +45,16 @@ async function wait(ms) {
   return new Promise((r) => setTimeout(r, ms));
 }
 
+function splitName(fullName) {
+  const parts = String(fullName || "")
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+  const firstName = parts[0] || "";
+  const lastName = parts.slice(1).join(" ") || "";
+  return { firstName, lastName, partsCount: parts.length };
+}
+
 export default function Checkout() {
   const [step, setStep] = useState(1);
   const [selectedPlan, setSelectedPlan] = useState(null);
@@ -137,6 +147,12 @@ export default function Checkout() {
       return;
     }
 
+    const { partsCount } = splitName(personalData.nome);
+    if (partsCount < 2) {
+      alert("Digite seu nome e sobrenome (ex.: João Silva).");
+      return;
+    }
+
     if (!isValidCpfDigits(cpfDigits)) {
       alert("CPF inválido. Digite os 11 números do CPF.");
       return;
@@ -157,6 +173,9 @@ export default function Checkout() {
     setIsProcessing(true);
 
     try {
+      const cpfDigits = normalizeCpf(personalData.cpf);
+      const { firstName, lastName } = splitName(personalData.nome);
+
       const resp = await fetch("/api/create-payment", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -167,8 +186,10 @@ export default function Checkout() {
           paymentMethod,
           customer: {
             nome: personalData.nome,
+            first_name: firstName,
+            last_name: lastName,
             email: personalData.email,
-            cpf: normalizeCpf(personalData.cpf),
+            cpf: cpfDigits,
           },
         }),
       });
@@ -317,7 +338,10 @@ export default function Checkout() {
 
         <div className="flex mb-6 gap-2">
           {[1, 2, 3].map((s) => (
-            <div key={s} className={`h-2 flex-1 rounded-full ${s <= Math.min(step, 3) ? "bg-red-500" : "bg-gray-200"}`} />
+            <div
+              key={s}
+              className={`h-2 flex-1 rounded-full ${s <= Math.min(step, 3) ? "bg-red-500" : "bg-gray-200"}`}
+            />
           ))}
         </div>
 
@@ -367,7 +391,7 @@ export default function Checkout() {
 
               <div className="space-y-3">
                 <Input
-                  placeholder="Nome"
+                  placeholder="Nome e Sobrenome"
                   value={personalData.nome}
                   onChange={(e) => setPersonalData({ ...personalData, nome: e.target.value })}
                 />
@@ -432,10 +456,18 @@ export default function Checkout() {
               className="space-y-4"
             >
               <div className="bg-gray-50 p-4 rounded-xl space-y-1">
-                <p><b>Plano:</b> {selectedPlan.name}</p>
-                <p><b>Valor:</b> R$ {selectedPlan.price.toFixed(2)}</p>
-                <p><b>Método:</b> {paymentMethod === "pix" ? "PIX" : "Cartão"}</p>
-                <p><b>Email:</b> {personalData.email}</p>
+                <p>
+                  <b>Plano:</b> {selectedPlan.name}
+                </p>
+                <p>
+                  <b>Valor:</b> R$ {selectedPlan.price.toFixed(2)}
+                </p>
+                <p>
+                  <b>Método:</b> {paymentMethod === "pix" ? "PIX" : "Cartão"}
+                </p>
+                <p>
+                  <b>Email:</b> {personalData.email}
+                </p>
               </div>
 
               <Button className="w-full" onClick={handlePay} disabled={isProcessing}>
@@ -459,9 +491,7 @@ export default function Checkout() {
               <div className="bg-gray-50 p-4 rounded-xl">
                 <div className="flex items-center gap-2">
                   <Loader2 className="w-4 h-4 animate-spin" />
-                  <p className="text-sm text-gray-700">
-                    {waitingMsg || "Aguardando confirmação do pagamento…"}
-                  </p>
+                  <p className="text-sm text-gray-700">{waitingMsg || "Aguardando confirmação do pagamento…"}</p>
                 </div>
                 <p className="text-xs text-gray-500 mt-2">
                   Se você pagou via PIX, volte para o app e clique em “Já paguei” para verificar.
@@ -476,11 +506,7 @@ export default function Checkout() {
                 Ir para o Dashboard
               </Button>
 
-              <Button
-                variant="outline"
-                className="w-full"
-                onClick={() => (window.location.href = createPageUrl("Vendas"))}
-              >
+              <Button variant="outline" className="w-full" onClick={() => (window.location.href = createPageUrl("Vendas"))}>
                 Voltar
               </Button>
             </motion.div>
