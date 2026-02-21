@@ -26,6 +26,9 @@ import AIInsights from "@/components/analytics/AIInsights";
 import CaloriesDashboard from "@/components/nutrition/CaloriesDashboard";
 import { supabase } from "@/lib/supabaseClient";
 
+/* =========================
+   RECEITAS (mantido)
+========================= */
 const receitas = [
   {
     id: "aveia-frutas",
@@ -144,7 +147,6 @@ function computeRankFromXp(xp) {
   return "Iniciante";
 }
 
-// Lê tabelas sem quebrar caso não existam ainda
 async function safeSelect(table, queryBuilderFn) {
   try {
     const q = queryBuilderFn(supabase.from(table).select("*"));
@@ -186,7 +188,7 @@ function sameDay(isoDatetimeOrDate, dayYYYYMMDD) {
   return s.slice(0, 10) === dayYYYYMMDD;
 }
 
-// ✅ XP padrão para refeição personalizada (agora baseado no “meal is healthy” automático)
+// XP baseado no “meal saudável”
 function computeCustomMealXp({ isHealthy, calories, targetCalories }) {
   if (!isHealthy) return 0;
 
@@ -196,16 +198,12 @@ function computeCustomMealXp({ isHealthy, calories, targetCalories }) {
   if (!Number.isFinite(cals) || cals <= 0) return 10;
 
   const ratio = cals / Math.max(target, 1);
-
   if (ratio <= 0.2) return 20;
   if (ratio <= 0.35) return 15;
   if (ratio <= 0.5) return 10;
   return 5;
 }
 
-/**
- * ✅ Melhor tentativa de abrir câmera
- */
 function openImagePicker({ source, onFile }) {
   const input = document.createElement("input");
   input.type = "file";
@@ -218,41 +216,38 @@ function openImagePicker({ source, onFile }) {
   input.click();
 }
 
-// ===== Helpers novo sistema =====
-
-// normaliza unit/kcal conforme seu schema atual
-function getFoodUnitType(food) {
-  // se você adicionar unit_type no futuro, já funciona
-  if (food?.unit_type === "ml") return "ml";
-  if (food?.unit_type === "unit") return "unit";
-  return "g"; // default legado
+/* =========================
+   HELPERS: foods/custom
+========================= */
+function getFoodUnitType(row) {
+  if (row?.unit_type === "ml") return "ml";
+  if (row?.unit_type === "unit") return "unit";
+  return "g";
 }
 
-function getFoodKcalPer100(food) {
-  // futuro: kcal_per_100
-  if (food?.kcal_per_100 != null) return Number(food.kcal_per_100) || 0;
-  // legado: kcal_per_100g
-  if (food?.kcal_per_100g != null) return Number(food.kcal_per_100g) || 0;
+function getFoodKcalPer100(row) {
+  // foods: kcal_per_100g
+  if (row?.kcal_per_100g != null) return Number(row.kcal_per_100g) || 0;
+  // custom: kcal_per_100
+  if (row?.kcal_per_100 != null) return Number(row.kcal_per_100) || 0;
+  // fallback
+  if (row?.kcal_per_100 != null) return Number(row.kcal_per_100) || 0;
   return 0;
 }
 
 function calcItemKcalTotal({ unit_type, quantity, kcal_per_100 }) {
   const q = Number(quantity || 0);
   const k100 = Number(kcal_per_100 || 0);
-
   if (!Number.isFinite(q) || q <= 0) return 0;
 
-  // primeira versão: g/ml calculam; unit fica 0 (vamos evoluir depois)
   if (unit_type === "g" || unit_type === "ml") {
     if (!Number.isFinite(k100) || k100 <= 0) return 0;
     return (k100 * q) / 100;
   }
-
   return 0;
 }
 
 function nowLocalISO() {
-  // mantém como ISO (o Supabase guarda timestamptz)
   return new Date().toISOString();
 }
 
@@ -263,17 +258,15 @@ export default function Alimentacao() {
   const [selectedReceita, setSelectedReceita] = useState(null);
   const [completing, setCompleting] = useState(false);
 
-  // modos separados
-  const [flowMode, setFlowMode] = useState(null); // "analyze" | null
+  // analyze foto (mantido)
+  const [flowMode, setFlowMode] = useState(null);
   const [showPickerModal, setShowPickerModal] = useState(false);
-
   const [photoFile, setPhotoFile] = useState(null);
   const [photoPreview, setPhotoPreview] = useState(null);
-
   const [showAnalyzeModal, setShowAnalyzeModal] = useState(false);
   const [analyzing, setAnalyzing] = useState(false);
 
-  // ✅ NOVO: Registro manual em meal_entries / meal_entry_items
+  // NOVO: Registro manual
   const [showRegisterModal, setShowRegisterModal] = useState(false);
   const [registering, setRegistering] = useState(false);
   const [mealType, setMealType] = useState("almoco");
@@ -283,15 +276,23 @@ export default function Alimentacao() {
   const [foodResults, setFoodResults] = useState([]);
   const [foodSearching, setFoodSearching] = useState(false);
 
-  const [cartItems, setCartItems] = useState([]); // itens selecionados para a refeição
+  const [cartItems, setCartItems] = useState([]);
 
-  // estados antigos/analytics
+  // criação de alimento personalizado inline
+  const [showCreateCustom, setShowCreateCustom] = useState(false);
+  const [customName, setCustomName] = useState("");
+  const [customUnitType, setCustomUnitType] = useState("g"); // g/ml
+  const [customKcalPer100, setCustomKcalPer100] = useState("");
+  const [customIsHealthy, setCustomIsHealthy] = useState(true);
+  const [creatingCustom, setCreatingCustom] = useState(false);
+
+  // dados antigos/analytics (mantidos)
   const [mealLogs, setMealLogs] = useState([]);
   const [activities, setActivities] = useState([]);
   const [colesterolRecords, setColesterolRecords] = useState([]);
   const [showAnalytics, setShowAnalytics] = useState(false);
 
-  // novo: lista de refeições do dia (meal_entries)
+  // novo: entries do dia
   const [todayEntries, setTodayEntries] = useState([]);
 
   const day = useMemo(() => todayISODate(), []);
@@ -389,7 +390,6 @@ export default function Alimentacao() {
 
     if (mountedFlag) setProfile(prof);
 
-    // antigos (para não quebrar seus dashboards)
     const meals = await safeSelect("meal_logs", (q) => q.eq("user_id", user.id).order("created_at", { ascending: false }).limit(60));
     const acts = await safeSelect("activity_logs", (q) => q.eq("user_id", user.id).order("created_at", { ascending: false }).limit(60));
 
@@ -405,7 +405,6 @@ export default function Alimentacao() {
       setLocalDoneSet(readLocalDoneSet(day));
     }
 
-    // novo (meal_entries)
     await loadTodayEntries(user.id);
 
     if (mountedFlag) setIsLoading(false);
@@ -449,9 +448,9 @@ export default function Alimentacao() {
     });
   }, [completedTodaySet]);
 
-  // ========= BUSCA FOODS =========
-  // Primeiro tenta RPC search_food (que você já criou). Se não existir, faz fallback para ilike no foods.
-
+  /* =========================
+     BUSCA: foods + custom
+  ========================= */
   async function searchFoods(q) {
     const query = String(q || "").trim();
     if (query.length < 2) {
@@ -461,32 +460,88 @@ export default function Alimentacao() {
 
     setFoodSearching(true);
     try {
-      // 1) tenta RPC search_food
+      const userId = profile?.id;
+      let combined = [];
+
+      // 1) tenta RPC search_food (global)
       try {
         const { data, error } = await supabase.rpc("search_food", { q: query });
         if (!error && Array.isArray(data)) {
-          // esperado: pelo menos id/canonical_name/kcal/.../is_healthy
-          setFoodResults(data.slice(0, 8));
-          setFoodSearching(false);
-          return;
+          combined = combined.concat(
+            data.slice(0, 8).map((row) => ({
+              ...row,
+              _source: "global",
+              _displayName: row.canonical_name || row.name,
+              _kcal100: getFoodKcalPer100(row),
+              _unit: getFoodUnitType(row),
+              _healthy: row.is_healthy,
+            }))
+          );
         }
       } catch {
-        // ignora e faz fallback
+        // ignora
       }
 
-      // 2) fallback simples
-      const { data, error } = await supabase
-        .from("foods")
-        .select("id, canonical_name, kcal_per_100g, is_healthy, category_id")
-        .ilike("canonical_name", `%${query}%`)
-        .order("canonical_name", { ascending: true })
-        .limit(8);
+      // 2) fallback foods (se RPC falhou ou veio vazio)
+      if (combined.length === 0) {
+        const { data, error } = await supabase
+          .from("foods")
+          .select("id, canonical_name, kcal_per_100g, is_healthy")
+          .ilike("canonical_name", `%${query}%`)
+          .order("canonical_name", { ascending: true })
+          .limit(8);
 
-      if (error) {
-        setFoodResults([]);
-        return;
+        if (!error && Array.isArray(data)) {
+          combined = combined.concat(
+            data.map((row) => ({
+              ...row,
+              _source: "global",
+              _displayName: row.canonical_name,
+              _kcal100: getFoodKcalPer100(row),
+              _unit: "g",
+              _healthy: row.is_healthy,
+            }))
+          );
+        }
       }
-      setFoodResults(Array.isArray(data) ? data : []);
+
+      // 3) busca também no custom do usuário (pra ficar eficiente)
+      if (userId) {
+        const { data: customData, error: customErr } = await supabase
+          .from("user_custom_foods")
+          .select("id, name, unit_type, kcal_per_100, kcal_per_unit")
+          .eq("user_id", userId)
+          .ilike("name", `%${query}%`)
+          .order("name", { ascending: true })
+          .limit(8);
+
+        if (!customErr && Array.isArray(customData)) {
+          combined = combined.concat(
+            customData.map((row) => ({
+              ...row,
+              _source: "custom",
+              _displayName: row.name,
+              _kcal100: Number(row.kcal_per_100 || 0),
+              _unit: row.unit_type || "g",
+              _healthy: null, // não existe no schema custom atual; tratamos depois
+            }))
+          );
+        }
+      }
+
+      // remove duplicados por nome (best-effort)
+      const seen = new Set();
+      const final = [];
+      for (const r of combined) {
+        const key = String(r._displayName || "").toLowerCase();
+        if (!key) continue;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        final.push(r);
+        if (final.length >= 10) break;
+      }
+
+      setFoodResults(final);
     } catch {
       setFoodResults([]);
     } finally {
@@ -502,24 +557,28 @@ export default function Alimentacao() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [foodQuery]);
 
-  function addFoodToCart(food) {
-    const name = food?.canonical_name || food?.name || "";
+  function addFoodToCart(row) {
+    const name = row?._displayName || row?.canonical_name || row?.name || "";
     if (!name) return;
 
-    const unit_type = getFoodUnitType(food);
-    const kcal_per_100 = getFoodKcalPer100(food);
+    const unit_type = row?._unit || getFoodUnitType(row);
+    const kcal_per_100 = row?._kcal100 ?? getFoodKcalPer100(row);
 
-    // default quantidade: 100 para g/ml, 1 para unit
     const defaultQty = unit_type === "unit" ? 1 : 100;
 
     const item = {
-      key: `${food.id}-${Date.now()}`,
-      food_id: food.id,
+      key: `${row.id}-${Date.now()}`,
+      food_id: row._source === "global" ? row.id : null,
+      custom_food_id: row._source === "custom" ? row.id : null,
       name,
       unit_type,
       quantity: defaultQty,
       kcal_per_100,
-      is_healthy: typeof food?.is_healthy === "boolean" ? food.is_healthy : null,
+      // saudável:
+      // - global: vem de foods.is_healthy
+      // - custom: a gente vai permitir salvar saudável quando criar (aqui pode vir null)
+      is_healthy: typeof row.is_healthy === "boolean" ? row.is_healthy : null,
+      is_custom: row._source === "custom",
     };
 
     item.kcal_total = calcItemKcalTotal(item);
@@ -527,6 +586,7 @@ export default function Alimentacao() {
     setCartItems((prev) => [...prev, item]);
     setFoodQuery("");
     setFoodResults([]);
+    setShowCreateCustom(false);
   }
 
   function updateCartQty(itemKey, nextQtyStr) {
@@ -546,14 +606,13 @@ export default function Alimentacao() {
   }
 
   const cartTotalKcal = useMemo(() => {
-    return Math.round(
-      (cartItems || []).reduce((sum, it) => sum + (Number(it.kcal_total || 0) || 0), 0)
-    );
+    return Math.round((cartItems || []).reduce((sum, it) => sum + (Number(it.kcal_total || 0) || 0), 0));
   }, [cartItems]);
 
   const mealIsHealthy = useMemo(() => {
     if (!cartItems || cartItems.length === 0) return false;
-    // regra: só é saudável se TODOS os itens vierem como true
+    // regra por enquanto: só é saudável se TODOS os itens do catálogo forem saudáveis e nenhum item desconhecido existir.
+    // itens custom (sem is_healthy) contam como "desconhecido" => não dá XP.
     return cartItems.every((it) => it.is_healthy === true);
   }, [cartItems]);
 
@@ -565,7 +624,71 @@ export default function Alimentacao() {
     });
   }, [mealIsHealthy, cartTotalKcal, profile?.basal_kcal]);
 
-  // ========= Fluxo: Avaliar refeição (foto) =========
+  /* =========================
+     CRIAR ALIMENTO PERSONALIZADO (inline)
+  ========================= */
+  const openCreateCustom = () => {
+    const base = String(foodQuery || "").trim();
+    setCustomName(base);
+    setCustomUnitType("g");
+    setCustomKcalPer100("");
+    setCustomIsHealthy(true);
+    setShowCreateCustom(true);
+  };
+
+  const createCustomFood = async () => {
+    if (!profile?.id) return;
+    const name = String(customName || "").trim();
+    if (!name) return;
+
+    const kcal100 = Number(String(customKcalPer100 || "").replace(",", "."));
+    if (!Number.isFinite(kcal100) || kcal100 <= 0) {
+      alert("Informe as calorias por 100g (ex: 165).");
+      return;
+    }
+
+    setCreatingCustom(true);
+    try {
+      // Schema atual user_custom_foods não tem is_healthy.
+      // Então: salvamos custom e ele entra no carrinho como "desconhecido" (sem XP).
+      // Se você quiser XP também para custom, eu te mando um SQL curto pra adicionar a coluna is_healthy e pronto.
+      const { data, error } = await supabase
+        .from("user_custom_foods")
+        .insert({
+          user_id: profile.id,
+          name,
+          unit_type: customUnitType,
+          kcal_per_100: kcal100,
+          kcal_per_unit: null,
+        })
+        .select()
+        .single();
+
+      if (error || !data?.id) {
+        console.error(error);
+        alert("Erro ao criar alimento personalizado. Veja o console.");
+        return;
+      }
+
+      // adiciona no carrinho imediatamente
+      addFoodToCart({
+        id: data.id,
+        _source: "custom",
+        _displayName: data.name,
+        _kcal100: Number(data.kcal_per_100 || 0),
+        _unit: data.unit_type || "g",
+        is_healthy: null,
+      });
+
+      setShowCreateCustom(false);
+    } finally {
+      setCreatingCustom(false);
+    }
+  };
+
+  /* =========================
+     FLUXO ANALISAR FOTO (mantido)
+  ========================= */
   const startAnalyzeFlow = () => {
     setFlowMode("analyze");
     setPhotoFile(null);
@@ -588,15 +711,17 @@ export default function Alimentacao() {
     try {
       alert(
         "Nesta versão, a análise automática por foto está desativada.\n\n" +
-          "Use o botão: Registrar alimentação (manual)\n" +
-          "O app calcula calorias e decide se é saudável automaticamente."
+          "Use: Registrar alimentação (manual)\n" +
+          "O app calcula calorias e decide saudável automaticamente."
       );
     } finally {
       setAnalyzing(false);
     }
   };
 
-  // ========= Receitas =========
+  /* =========================
+     RECEITAS (mantido)
+  ========================= */
   const completeReceita = async (receita) => {
     if (!profile?.id) return;
 
@@ -654,12 +779,15 @@ export default function Alimentacao() {
     }
   };
 
-  // ========= NOVO: Salvar refeição manual =========
+  /* =========================
+     SALVAR REFEIÇÃO (meal_entries + items)
+  ========================= */
   const registerMealEntry = async () => {
     if (!profile?.id) return;
     if (!cartItems || cartItems.length === 0) return;
 
     const totalKcal = cartTotalKcal;
+
     const xp = computeCustomMealXp({
       isHealthy: mealIsHealthy,
       calories: totalKcal,
@@ -668,7 +796,6 @@ export default function Alimentacao() {
 
     setRegistering(true);
     try {
-      // 1) cria meal_entries
       const { data: entry, error: entryErr } = await supabase
         .from("meal_entries")
         .insert({
@@ -682,32 +809,31 @@ export default function Alimentacao() {
         .single();
 
       if (entryErr || !entry?.id) {
-        alert("Erro ao salvar refeição (meal_entries). Veja o console.");
         console.error(entryErr);
+        alert("Erro ao salvar refeição (meal_entries). Veja o console.");
         return;
       }
 
-      // 2) cria meal_entry_items
       const itemsToInsert = cartItems.map((it) => ({
         meal_entry_id: entry.id,
         food_id: it.food_id,
+        custom_food_id: it.custom_food_id,
         name_snapshot: it.name,
         unit_type: it.unit_type,
         quantity: it.quantity,
-        kcal_per_100_snapshot: (it.unit_type === "g" || it.unit_type === "ml") ? it.kcal_per_100 : null,
+        kcal_per_100_snapshot: it.unit_type === "g" || it.unit_type === "ml" ? it.kcal_per_100 : null,
         kcal_total: Math.round(Number(it.kcal_total || 0)),
         is_healthy_snapshot: it.is_healthy === true ? true : it.is_healthy === false ? false : null,
       }));
 
       const { error: itemsErr } = await supabase.from("meal_entry_items").insert(itemsToInsert);
-
       if (itemsErr) {
-        alert("Erro ao salvar itens (meal_entry_items). Veja o console.");
         console.error(itemsErr);
+        alert("Erro ao salvar itens (meal_entry_items). Veja o console.");
         return;
       }
 
-      // 3) compat: mantém meal_logs para dashboards existentes
+      // compat com seu dashboard atual
       try {
         const desc = cartItems.map((it) => it.name).slice(0, 4).join(", ") + (cartItems.length > 4 ? "..." : "");
         await supabase.from("meal_logs").insert({
@@ -720,7 +846,6 @@ export default function Alimentacao() {
         });
       } catch {}
 
-      // 4) activity_logs + XP
       try {
         await supabase.from("activity_logs").insert({
           user_id: profile.id,
@@ -731,7 +856,6 @@ export default function Alimentacao() {
         });
       } catch {}
 
-      // 5) profiles XP/rank
       const currentXp = Number(profile?.xp_total || 0);
       const currentMetas = Number(profile?.metas_concluidas || 0);
 
@@ -745,13 +869,14 @@ export default function Alimentacao() {
 
       setProfile({ ...profile, xp_total: newXp, metas_concluidas: newMetas, rank: newRank });
 
-      // reset modal
+      // reset
       setShowRegisterModal(false);
       setMealType("almoco");
       setEntryAt(nowLocalISO());
       setFoodQuery("");
       setFoodResults([]);
       setCartItems([]);
+      setShowCreateCustom(false);
 
       await loadData(true);
     } finally {
@@ -807,10 +932,10 @@ export default function Alimentacao() {
           </div>
         </div>
 
-        {/* Dashboard de Calorias (mantido via meal_logs para não quebrar seu componente atual) */}
+        {/* Dashboard de Calorias (mantido) */}
         <CaloriesDashboard mealLogs={mealLogs} basalRate={profile?.basal_kcal || 2000} />
 
-        {/* Botões principais */}
+        {/* Botões */}
         <div className="grid grid-cols-2 gap-3 mb-4">
           <Button
             onClick={startAnalyzeFlow}
@@ -822,13 +947,17 @@ export default function Alimentacao() {
 
           <Button
             onClick={() => {
-              // abre registro MANUAL direto (sem foto)
               setShowRegisterModal(true);
               setMealType("almoco");
               setEntryAt(nowLocalISO());
               setFoodQuery("");
               setFoodResults([]);
               setCartItems([]);
+              setShowCreateCustom(false);
+              setCustomName("");
+              setCustomKcalPer100("");
+              setCustomUnitType("g");
+              setCustomIsHealthy(true);
             }}
             className="bg-gradient-to-r from-red-500 to-rose-600 hover:from-red-600 hover:to-rose-700 text-white py-5 rounded-xl shadow-md"
           >
@@ -837,19 +966,15 @@ export default function Alimentacao() {
           </Button>
         </div>
 
-        {/* Lista do dia (novo: meal_entries) */}
+        {/* Refeições de hoje */}
         <div className="bg-white rounded-2xl border border-gray-100 p-4 mb-6">
           <div className="flex items-center justify-between mb-2">
             <h2 className="font-semibold text-gray-900">Minhas refeições de hoje</h2>
-            <span className="text-xs text-gray-500">
-              {todayEntries?.length || 0} registro(s)
-            </span>
+            <span className="text-xs text-gray-500">{todayEntries?.length || 0} registro(s)</span>
           </div>
 
           {(!todayEntries || todayEntries.length === 0) ? (
-            <div className="text-sm text-gray-500">
-              Você ainda não registrou refeições hoje.
-            </div>
+            <div className="text-sm text-gray-500">Você ainda não registrou refeições hoje.</div>
           ) : (
             <div className="space-y-3">
               {todayEntries.map((e) => (
@@ -857,28 +982,21 @@ export default function Alimentacao() {
                   <div className="flex items-center justify-between">
                     <div className="text-sm font-semibold text-gray-900">
                       {String(e.meal_type || "refeicao").toUpperCase()}
-                      <span className="ml-2 text-xs font-normal text-gray-500">
-                        {String(e.entry_at || "").slice(11, 16)}
-                      </span>
+                      <span className="ml-2 text-xs font-normal text-gray-500">{String(e.entry_at || "").slice(11, 16)}</span>
                     </div>
-                    <div className="text-sm font-bold text-orange-600">
-                      {Math.round(Number(e.total_kcal || 0))} kcal
-                    </div>
+                    <div className="text-sm font-bold text-orange-600">{Math.round(Number(e.total_kcal || 0))} kcal</div>
                   </div>
 
                   <div className="mt-2 space-y-1">
                     {(e.meal_entry_items || []).map((it) => (
                       <div key={it.id} className="flex items-center justify-between text-xs text-gray-600">
-                        <span className="truncate max-w-[70%]">
-                          {it.name_snapshot}
-                        </span>
+                        <span className="truncate max-w-[70%]">{it.name_snapshot}</span>
                         <span className="flex items-center gap-2">
                           <span className="text-gray-500">
-                            {Number(it.quantity || 0)}{it.unit_type === "g" ? "g" : it.unit_type === "ml" ? "ml" : ""}
+                            {Number(it.quantity || 0)}
+                            {it.unit_type === "g" ? "g" : it.unit_type === "ml" ? "ml" : ""}
                           </span>
-                          <span className="text-gray-700 font-medium">
-                            {Math.round(Number(it.kcal_total || 0))} kcal
-                          </span>
+                          <span className="text-gray-700 font-medium">{Math.round(Number(it.kcal_total || 0))} kcal</span>
                           <span
                             className={`text-[10px] px-2 py-0.5 rounded-full border ${
                               it.is_healthy_snapshot === true
@@ -888,11 +1006,7 @@ export default function Alimentacao() {
                                 : "bg-gray-50 border-gray-200 text-gray-600"
                             }`}
                           >
-                            {it.is_healthy_snapshot === true
-                              ? "Saudável"
-                              : it.is_healthy_snapshot === false
-                              ? "Não"
-                              : "N/A"}
+                            {it.is_healthy_snapshot === true ? "Saudável" : it.is_healthy_snapshot === false ? "Não" : "N/A"}
                           </span>
                         </span>
                       </div>
@@ -915,12 +1029,7 @@ export default function Alimentacao() {
         </Button>
 
         {showAnalytics && (
-          <motion.div
-            initial={{ opacity: 0, height: 0 }}
-            animate={{ opacity: 1, height: "auto" }}
-            exit={{ opacity: 0, height: 0 }}
-            className="space-y-4 mb-6"
-          >
+          <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }} className="space-y-4 mb-6">
             <CaloriesChart mealLogs={mealLogs} />
             <AIInsights
               profile={profile}
@@ -978,11 +1087,7 @@ export default function Alimentacao() {
                       </div>
                     </div>
 
-                    {unlocked ? (
-                      <ChevronRight className="w-5 h-5 text-gray-400" />
-                    ) : (
-                      <div className="text-xs text-gray-400 bg-gray-100 px-2 py-1 rounded-lg">{receita.rank_required}</div>
-                    )}
+                    {unlocked ? <ChevronRight className="w-5 h-5 text-gray-400" /> : <div className="text-xs text-gray-400 bg-gray-100 px-2 py-1 rounded-lg">{receita.rank_required}</div>}
                   </div>
                 </button>
               </motion.div>
@@ -990,16 +1095,10 @@ export default function Alimentacao() {
           })}
         </div>
 
-        {/* Modal: escolha câmera/galeria (apenas para analisar) */}
+        {/* Modal picker analyze */}
         <AnimatePresence>
           {showPickerModal && (
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4"
-              onClick={() => setShowPickerModal(false)}
-            >
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4" onClick={() => setShowPickerModal(false)}>
               <motion.div
                 initial={{ scale: 0.95, opacity: 0 }}
                 animate={{ scale: 1, opacity: 1 }}
@@ -1043,16 +1142,10 @@ export default function Alimentacao() {
           )}
         </AnimatePresence>
 
-        {/* Modal: Avaliar (sem XP) */}
+        {/* Modal analyze */}
         <AnimatePresence>
           {showAnalyzeModal && (
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4"
-              onClick={() => !analyzing && setShowAnalyzeModal(false)}
-            >
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4" onClick={() => !analyzing && setShowAnalyzeModal(false)}>
               <motion.div
                 initial={{ scale: 0.95, opacity: 0 }}
                 animate={{ scale: 1, opacity: 1 }}
@@ -1115,6 +1208,7 @@ export default function Alimentacao() {
                         setFoodQuery("");
                         setFoodResults([]);
                         setCartItems([]);
+                        setShowCreateCustom(false);
                       }}
                       variant="outline"
                       className="w-full border-2 border-red-200 hover:bg-red-50 py-5 rounded-xl"
@@ -1128,16 +1222,10 @@ export default function Alimentacao() {
           )}
         </AnimatePresence>
 
-        {/* Modal: Registrar alimentação (manual, novo sistema) */}
+        {/* Modal registrar */}
         <AnimatePresence>
           {showRegisterModal && (
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4"
-              onClick={() => !registering && setShowRegisterModal(false)}
-            >
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4" onClick={() => !registering && setShowRegisterModal(false)}>
               <motion.div
                 initial={{ scale: 0.95, opacity: 0 }}
                 animate={{ scale: 1, opacity: 1 }}
@@ -1156,7 +1244,6 @@ export default function Alimentacao() {
                   </div>
 
                   <div className="space-y-3">
-                    {/* Tipo */}
                     <div>
                       <label className="text-sm font-medium text-gray-700">Tipo de refeição</label>
                       <select
@@ -1172,13 +1259,15 @@ export default function Alimentacao() {
                       </select>
                     </div>
 
-                    {/* Busca */}
                     <div>
                       <label className="text-sm font-medium text-gray-700">Buscar alimento</label>
                       <input
                         value={foodQuery}
-                        onChange={(e) => setFoodQuery(e.target.value)}
-                        placeholder="Digite para buscar (ex: banana, arroz, frango...)"
+                        onChange={(e) => {
+                          setFoodQuery(e.target.value);
+                          setShowCreateCustom(false);
+                        }}
+                        placeholder="Ex: aveia, cereal, frango..."
                         className="mt-1 w-full border border-gray-200 rounded-xl px-3 py-3 text-sm outline-none focus:ring-2 focus:ring-red-200"
                       />
 
@@ -1187,48 +1276,134 @@ export default function Alimentacao() {
                           {foodSearching && <div className="px-3 py-2 text-xs text-gray-500">Buscando…</div>}
 
                           {!foodSearching && foodResults.length === 0 && (foodQuery || "").trim().length >= 2 && (
-                            <div className="px-3 py-2 text-xs text-gray-500">
-                              Nenhum alimento encontrado.
-                              <br />
-                              (Em breve: “Criar alimento personalizado”)
+                            <div className="px-3 py-2 text-xs text-gray-600">
+                              Não encontrei esse alimento.
+                              <div className="mt-2">
+                                <Button
+                                  type="button"
+                                  onClick={openCreateCustom}
+                                  variant="outline"
+                                  className="w-full border-2 border-red-200 hover:bg-red-50 rounded-xl"
+                                >
+                                  Criar alimento: “{String(foodQuery || "").trim()}”
+                                </Button>
+                              </div>
                             </div>
                           )}
 
                           {!foodSearching &&
-                            foodResults.map((f) => {
-                              const name = f.canonical_name || f.name;
-                              const unit = getFoodUnitType(f);
-                              const kcal100 = getFoodKcalPer100(f);
-
-                              return (
-                                <button
-                                  key={f.id}
-                                  type="button"
-                                  onClick={() => addFoodToCart(f)}
-                                  className="w-full text-left px-3 py-2 hover:bg-gray-50 flex items-center justify-between"
-                                >
-                                  <div>
-                                    <div className="text-sm text-gray-900 font-medium">{name}</div>
-                                    <div className="text-xs text-gray-500">
-                                      {kcal100} kcal / 100{unit === "ml" ? "ml" : "g"}
-                                    </div>
+                            foodResults.map((r) => (
+                              <button
+                                key={`${r._source}-${r.id}`}
+                                type="button"
+                                onClick={() => addFoodToCart(r)}
+                                className="w-full text-left px-3 py-2 hover:bg-gray-50 flex items-center justify-between"
+                              >
+                                <div className="min-w-0">
+                                  <div className="text-sm text-gray-900 font-medium truncate">
+                                    {r._displayName}
+                                    {r._source === "custom" && (
+                                      <span className="ml-2 text-[10px] px-2 py-0.5 rounded-full border bg-purple-50 border-purple-200 text-purple-700">
+                                        Meu
+                                      </span>
+                                    )}
                                   </div>
+                                  <div className="text-xs text-gray-500">
+                                    {Number(r._kcal100 || 0)} kcal / 100{r._unit === "ml" ? "ml" : "g"}
+                                  </div>
+                                </div>
 
+                                {r._source === "global" ? (
                                   <span
                                     className={`text-[11px] px-2 py-1 rounded-full border ${
-                                      f.is_healthy
-                                        ? "bg-emerald-50 border-emerald-200 text-emerald-700"
-                                        : "bg-red-50 border-red-200 text-red-700"
+                                      r.is_healthy ? "bg-emerald-50 border-emerald-200 text-emerald-700" : "bg-red-50 border-red-200 text-red-700"
                                     }`}
                                   >
-                                    {f.is_healthy ? "Saudável" : "Não saudável"}
+                                    {r.is_healthy ? "Saudável" : "Não saudável"}
                                   </span>
-                                </button>
-                              );
-                            })}
+                                ) : (
+                                  <span className="text-[11px] px-2 py-1 rounded-full border bg-gray-50 border-gray-200 text-gray-700">
+                                    Personalizado
+                                  </span>
+                                )}
+                              </button>
+                            ))}
                         </div>
                       )}
                     </div>
+
+                    {/* Criar alimento inline */}
+                    {showCreateCustom && (
+                      <div className="rounded-2xl border border-red-200 bg-red-50 p-4">
+                        <div className="text-sm font-semibold text-gray-900 mb-2">Criar alimento personalizado</div>
+
+                        <div className="space-y-2">
+                          <div>
+                            <label className="text-xs font-medium text-gray-700">Nome</label>
+                            <input
+                              value={customName}
+                              onChange={(e) => setCustomName(e.target.value)}
+                              className="mt-1 w-full border border-gray-200 rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-red-200 bg-white"
+                            />
+                          </div>
+
+                          <div className="grid grid-cols-2 gap-2">
+                            <div>
+                              <label className="text-xs font-medium text-gray-700">Unidade</label>
+                              <select
+                                value={customUnitType}
+                                onChange={(e) => setCustomUnitType(e.target.value)}
+                                className="mt-1 w-full border border-gray-200 rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-red-200 bg-white"
+                              >
+                                <option value="g">g</option>
+                                <option value="ml">ml</option>
+                              </select>
+                            </div>
+
+                            <div>
+                              <label className="text-xs font-medium text-gray-700">Kcal por 100</label>
+                              <input
+                                value={customKcalPer100}
+                                onChange={(e) => setCustomKcalPer100(e.target.value.replace(/[^\d.,]/g, ""))}
+                                placeholder="Ex: 165"
+                                inputMode="decimal"
+                                className="mt-1 w-full border border-gray-200 rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-red-200 bg-white"
+                              />
+                            </div>
+                          </div>
+
+                          <div className="flex gap-2 pt-1">
+                            <Button
+                              type="button"
+                              onClick={createCustomFood}
+                              disabled={creatingCustom}
+                              className="flex-1 bg-gradient-to-r from-red-500 to-rose-600 hover:from-red-600 hover:to-rose-700 text-white rounded-xl"
+                            >
+                              {creatingCustom ? (
+                                <span className="flex items-center gap-2">
+                                  <Loader2 className="w-4 h-4 animate-spin" />
+                                  Salvando...
+                                </span>
+                              ) : (
+                                "Salvar alimento"
+                              )}
+                            </Button>
+                            <Button
+                              type="button"
+                              onClick={() => setShowCreateCustom(false)}
+                              variant="outline"
+                              className="rounded-xl border-2 border-gray-200 hover:bg-white"
+                            >
+                              Cancelar
+                            </Button>
+                          </div>
+
+                          <div className="text-[11px] text-gray-600">
+                            Dica: você pode criar em 10s e usar sempre depois. (Isso torna o app rápido no dia a dia.)
+                          </div>
+                        </div>
+                      </div>
+                    )}
 
                     {/* Carrinho */}
                     <div className="rounded-2xl border border-gray-200 p-3">
@@ -1238,9 +1413,7 @@ export default function Alimentacao() {
                       </div>
 
                       {cartItems.length === 0 ? (
-                        <div className="text-xs text-gray-500">
-                          Adicione pelo menos 1 alimento.
-                        </div>
+                        <div className="text-xs text-gray-500">Adicione pelo menos 1 alimento.</div>
                       ) : (
                         <div className="space-y-2">
                           {cartItems.map((it) => (
@@ -1248,7 +1421,8 @@ export default function Alimentacao() {
                               <div className="flex-1 min-w-0">
                                 <div className="text-sm font-medium text-gray-900 truncate">{it.name}</div>
                                 <div className="text-xs text-gray-500">
-                                  {it.is_healthy === true ? "Saudável ✅" : it.is_healthy === false ? "Não saudável ⚠️" : "N/A"}
+                                  {it.is_custom ? "Personalizado" : it.is_healthy === true ? "Saudável ✅" : "Não saudável ⚠️"}
+                                  {it.is_healthy == null && it.is_custom && " (não conta XP ainda)"}
                                 </div>
                               </div>
 
@@ -1259,15 +1433,11 @@ export default function Alimentacao() {
                                   className="w-full border border-gray-200 rounded-xl px-2 py-2 text-sm outline-none focus:ring-2 focus:ring-red-200"
                                   inputMode="decimal"
                                 />
-                                <div className="text-[10px] text-gray-500 text-center mt-0.5">
-                                  {it.unit_type === "ml" ? "ml" : it.unit_type === "g" ? "g" : "un"}
-                                </div>
+                                <div className="text-[10px] text-gray-500 text-center mt-0.5">{it.unit_type === "ml" ? "ml" : it.unit_type === "g" ? "g" : "un"}</div>
                               </div>
 
                               <div className="w-16 text-right">
-                                <div className="text-sm font-semibold text-gray-900">
-                                  {Math.round(Number(it.kcal_total || 0))}
-                                </div>
+                                <div className="text-sm font-semibold text-gray-900">{Math.round(Number(it.kcal_total || 0))}</div>
                                 <div className="text-[10px] text-gray-500">kcal</div>
                               </div>
 
@@ -1284,17 +1454,19 @@ export default function Alimentacao() {
                       )}
                     </div>
 
-                    {/* XP preview */}
-                    <div className={`rounded-xl p-3 text-sm border flex items-center justify-between ${
-                      mealIsHealthy ? "bg-emerald-50 border-emerald-200 text-emerald-800" : "bg-red-50 border-red-200 text-red-800"
-                    }`}>
+                    {/* XP */}
+                    <div
+                      className={`rounded-xl p-3 text-sm border flex items-center justify-between ${
+                        mealIsHealthy ? "bg-emerald-50 border-emerald-200 text-emerald-800" : "bg-yellow-50 border-yellow-200 text-yellow-800"
+                      }`}
+                    >
                       <span>XP ao registrar</span>
                       <span className="font-bold">+{customMealXpPreview} XP</span>
                     </div>
 
                     {!mealIsHealthy && (
                       <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-3 text-sm text-yellow-800">
-                        Para ganhar XP, a refeição precisa ser saudável. (O app decide automaticamente pelos alimentos selecionados.)
+                        Para ganhar XP, a refeição precisa ser saudável (somente itens “Saudável ✅” do catálogo). Itens personalizados ainda não contam XP nesta versão.
                       </div>
                     )}
 
@@ -1316,11 +1488,7 @@ export default function Alimentacao() {
                       )}
                     </Button>
 
-                    <Button
-                      onClick={() => setShowRegisterModal(false)}
-                      variant="ghost"
-                      className="w-full text-gray-500"
-                    >
+                    <Button onClick={() => setShowRegisterModal(false)} variant="ghost" className="w-full text-gray-500">
                       Cancelar
                     </Button>
                   </div>
@@ -1330,16 +1498,10 @@ export default function Alimentacao() {
           )}
         </AnimatePresence>
 
-        {/* Modal da Receita */}
+        {/* Modal receita (mantido) */}
         <AnimatePresence>
           {selectedReceita && (
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              className="fixed inset-0 bg-black/60 flex items-end justify-center z-50 p-4"
-              onClick={() => setSelectedReceita(null)}
-            >
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 bg-black/60 flex items-end justify-center z-50 p-4" onClick={() => setSelectedReceita(null)}>
               <motion.div
                 initial={{ y: "100%" }}
                 animate={{ y: 0 }}
@@ -1349,7 +1511,6 @@ export default function Alimentacao() {
               >
                 <div className="p-6">
                   <div className="w-12 h-1 bg-gray-300 rounded-full mx-auto mb-6" />
-
                   <div className="text-center mb-6">
                     <div className="text-6xl mb-3">{selectedReceita.image}</div>
                     <h2 className="text-xl font-bold text-gray-900">{selectedReceita.name}</h2>
@@ -1395,9 +1556,7 @@ export default function Alimentacao() {
                   <div className="space-y-3 mb-6">
                     {selectedReceita.steps.map((step, idx) => (
                       <div key={idx} className="flex items-start gap-3">
-                        <div className="w-6 h-6 rounded-full bg-emerald-500 text-white flex items-center justify-center font-bold text-xs flex-shrink-0">
-                          {idx + 1}
-                        </div>
+                        <div className="w-6 h-6 rounded-full bg-emerald-500 text-white flex items-center justify-center font-bold text-xs flex-shrink-0">{idx + 1}</div>
                         <p className="text-sm text-gray-700">{step}</p>
                       </div>
                     ))}
@@ -1413,11 +1572,7 @@ export default function Alimentacao() {
                     }`}
                   >
                     {completing ? (
-                      <motion.div
-                        animate={{ rotate: 360 }}
-                        transition={{ repeat: Infinity, duration: 1, ease: "linear" }}
-                        className="w-6 h-6 border-2 border-white border-t-transparent rounded-full"
-                      />
+                      <motion.div animate={{ rotate: 360 }} transition={{ repeat: Infinity, duration: 1, ease: "linear" }} className="w-6 h-6 border-2 border-white border-t-transparent rounded-full" />
                     ) : isCompletedToday(selectedReceita) ? (
                       <>
                         <Check className="w-5 h-5 mr-2" />
