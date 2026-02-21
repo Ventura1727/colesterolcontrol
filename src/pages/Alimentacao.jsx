@@ -186,9 +186,9 @@ function sameDay(isoDatetimeOrDate, dayYYYYMMDD) {
   return s.slice(0, 10) === dayYYYYMMDD;
 }
 
-// ✅ XP padrão para refeição personalizada
+// ✅ XP padrão para refeição personalizada (agora baseado no “meal is healthy” automático)
 function computeCustomMealXp({ isHealthy, calories, targetCalories }) {
-  if (!isHealthy) return 0; // não saudável não gera XP
+  if (!isHealthy) return 0;
 
   const target = Number(targetCalories || 2000);
   const cals = calories == null ? null : Number(calories);
@@ -218,6 +218,44 @@ function openImagePicker({ source, onFile }) {
   input.click();
 }
 
+// ===== Helpers novo sistema =====
+
+// normaliza unit/kcal conforme seu schema atual
+function getFoodUnitType(food) {
+  // se você adicionar unit_type no futuro, já funciona
+  if (food?.unit_type === "ml") return "ml";
+  if (food?.unit_type === "unit") return "unit";
+  return "g"; // default legado
+}
+
+function getFoodKcalPer100(food) {
+  // futuro: kcal_per_100
+  if (food?.kcal_per_100 != null) return Number(food.kcal_per_100) || 0;
+  // legado: kcal_per_100g
+  if (food?.kcal_per_100g != null) return Number(food.kcal_per_100g) || 0;
+  return 0;
+}
+
+function calcItemKcalTotal({ unit_type, quantity, kcal_per_100 }) {
+  const q = Number(quantity || 0);
+  const k100 = Number(kcal_per_100 || 0);
+
+  if (!Number.isFinite(q) || q <= 0) return 0;
+
+  // primeira versão: g/ml calculam; unit fica 0 (vamos evoluir depois)
+  if (unit_type === "g" || unit_type === "ml") {
+    if (!Number.isFinite(k100) || k100 <= 0) return 0;
+    return (k100 * q) / 100;
+  }
+
+  return 0;
+}
+
+function nowLocalISO() {
+  // mantém como ISO (o Supabase guarda timestamptz)
+  return new Date().toISOString();
+}
+
 export default function Alimentacao() {
   const [profile, setProfile] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -226,7 +264,7 @@ export default function Alimentacao() {
   const [completing, setCompleting] = useState(false);
 
   // modos separados
-  const [flowMode, setFlowMode] = useState(null); // "analyze" | "register" | null
+  const [flowMode, setFlowMode] = useState(null); // "analyze" | null
   const [showPickerModal, setShowPickerModal] = useState(false);
 
   const [photoFile, setPhotoFile] = useState(null);
@@ -235,23 +273,26 @@ export default function Alimentacao() {
   const [showAnalyzeModal, setShowAnalyzeModal] = useState(false);
   const [analyzing, setAnalyzing] = useState(false);
 
+  // ✅ NOVO: Registro manual em meal_entries / meal_entry_items
   const [showRegisterModal, setShowRegisterModal] = useState(false);
   const [registering, setRegistering] = useState(false);
-  const [customDesc, setCustomDesc] = useState("");
-  const [customCalories, setCustomCalories] = useState("");
-  const [customHealthy, setCustomHealthy] = useState(true);
+  const [mealType, setMealType] = useState("almoco");
+  const [entryAt, setEntryAt] = useState(() => nowLocalISO());
 
-  // ✅ BUSCA FOODS (autocomplete)
   const [foodQuery, setFoodQuery] = useState("");
   const [foodResults, setFoodResults] = useState([]);
   const [foodSearching, setFoodSearching] = useState(false);
-  const [foodSelected, setFoodSelected] = useState(null);
-  const [portionGrams, setPortionGrams] = useState("100"); // padrão
 
+  const [cartItems, setCartItems] = useState([]); // itens selecionados para a refeição
+
+  // estados antigos/analytics
   const [mealLogs, setMealLogs] = useState([]);
   const [activities, setActivities] = useState([]);
   const [colesterolRecords, setColesterolRecords] = useState([]);
   const [showAnalytics, setShowAnalytics] = useState(false);
+
+  // novo: lista de refeições do dia (meal_entries)
+  const [todayEntries, setTodayEntries] = useState([]);
 
   const day = useMemo(() => todayISODate(), []);
   const [localDoneSet, setLocalDoneSet] = useState(() => readLocalDoneSet(todayISODate()));
@@ -266,6 +307,46 @@ export default function Alimentacao() {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  const loadTodayEntries = async (userId) => {
+    try {
+      const start = new Date();
+      start.setHours(0, 0, 0, 0);
+
+      const { data, error } = await supabase
+        .from("meal_entries")
+        .select(
+          `
+          id,
+          entry_at,
+          meal_type,
+          total_kcal,
+          source,
+          notes,
+          meal_entry_items (
+            id,
+            name_snapshot,
+            unit_type,
+            quantity,
+            kcal_total,
+            is_healthy_snapshot
+          )
+        `
+        )
+        .eq("user_id", userId)
+        .gte("entry_at", start.toISOString())
+        .order("entry_at", { ascending: false });
+
+      if (error) {
+        setTodayEntries([]);
+        return;
+      }
+
+      setTodayEntries(Array.isArray(data) ? data : []);
+    } catch {
+      setTodayEntries([]);
+    }
+  };
 
   const loadData = async (mountedFlag = true) => {
     setIsLoading(true);
@@ -308,6 +389,7 @@ export default function Alimentacao() {
 
     if (mountedFlag) setProfile(prof);
 
+    // antigos (para não quebrar seus dashboards)
     const meals = await safeSelect("meal_logs", (q) => q.eq("user_id", user.id).order("created_at", { ascending: false }).limit(60));
     const acts = await safeSelect("activity_logs", (q) => q.eq("user_id", user.id).order("created_at", { ascending: false }).limit(60));
 
@@ -321,8 +403,12 @@ export default function Alimentacao() {
       setActivities(acts);
       setColesterolRecords(colesterol);
       setLocalDoneSet(readLocalDoneSet(day));
-      setIsLoading(false);
     }
+
+    // novo (meal_entries)
+    await loadTodayEntries(user.id);
+
+    if (mountedFlag) setIsLoading(false);
   };
 
   const isUnlocked = (receita) => {
@@ -363,15 +449,8 @@ export default function Alimentacao() {
     });
   }, [completedTodaySet]);
 
-  // ✅ Helpers foods
-  function calcCaloriesFromFood(food, gramsStr) {
-    const grams = Number(gramsStr || 0);
-    const kcal100 = Number(food?.kcal_per_100g || 0);
-    if (!Number.isFinite(grams) || grams <= 0) return "";
-    if (!Number.isFinite(kcal100) || kcal100 <= 0) return "";
-    const total = (kcal100 * grams) / 100;
-    return String(Math.round(total));
-  }
+  // ========= BUSCA FOODS =========
+  // Primeiro tenta RPC search_food (que você já criou). Se não existir, faz fallback para ilike no foods.
 
   async function searchFoods(q) {
     const query = String(q || "").trim();
@@ -382,6 +461,20 @@ export default function Alimentacao() {
 
     setFoodSearching(true);
     try {
+      // 1) tenta RPC search_food
+      try {
+        const { data, error } = await supabase.rpc("search_food", { q: query });
+        if (!error && Array.isArray(data)) {
+          // esperado: pelo menos id/canonical_name/kcal/.../is_healthy
+          setFoodResults(data.slice(0, 8));
+          setFoodSearching(false);
+          return;
+        }
+      } catch {
+        // ignora e faz fallback
+      }
+
+      // 2) fallback simples
       const { data, error } = await supabase
         .from("foods")
         .select("id, canonical_name, kcal_per_100g, is_healthy, category_id")
@@ -401,7 +494,6 @@ export default function Alimentacao() {
     }
   }
 
-  // ✅ debounce busca foods
   useEffect(() => {
     const t = setTimeout(() => {
       searchFoods(foodQuery);
@@ -410,53 +502,85 @@ export default function Alimentacao() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [foodQuery]);
 
-  function onSelectFood(food) {
-    setFoodSelected(food);
-    const name = food?.canonical_name || "";
-    setFoodQuery(name);
-    setCustomDesc(name);
+  function addFoodToCart(food) {
+    const name = food?.canonical_name || food?.name || "";
+    if (!name) return;
 
-    if (typeof food?.is_healthy === "boolean") {
-      setCustomHealthy(food.is_healthy);
-    }
+    const unit_type = getFoodUnitType(food);
+    const kcal_per_100 = getFoodKcalPer100(food);
 
-    const cals = calcCaloriesFromFood(food, portionGrams);
-    if (cals !== "") setCustomCalories(cals);
-  }
+    // default quantidade: 100 para g/ml, 1 para unit
+    const defaultQty = unit_type === "unit" ? 1 : 100;
 
-  // ✅ Fluxo: escolher origem da imagem
-  const startFlow = (mode) => {
-    setFlowMode(mode);
+    const item = {
+      key: `${food.id}-${Date.now()}`,
+      food_id: food.id,
+      name,
+      unit_type,
+      quantity: defaultQty,
+      kcal_per_100,
+      is_healthy: typeof food?.is_healthy === "boolean" ? food.is_healthy : null,
+    };
 
-    setPhotoFile(null);
-    setPhotoPreview(null);
+    item.kcal_total = calcItemKcalTotal(item);
 
-    // reset do modal register
-    setCustomDesc("");
-    setCustomCalories("");
-    setCustomHealthy(true);
+    setCartItems((prev) => [...prev, item]);
     setFoodQuery("");
     setFoodResults([]);
-    setFoodSelected(null);
-    setPortionGrams("100");
+  }
 
+  function updateCartQty(itemKey, nextQtyStr) {
+    const nextQty = Number(String(nextQtyStr || "").replace(",", "."));
+    setCartItems((prev) =>
+      prev.map((it) => {
+        if (it.key !== itemKey) return it;
+        const updated = { ...it, quantity: Number.isFinite(nextQty) ? nextQty : it.quantity };
+        updated.kcal_total = calcItemKcalTotal(updated);
+        return updated;
+      })
+    );
+  }
+
+  function removeCartItem(itemKey) {
+    setCartItems((prev) => prev.filter((it) => it.key !== itemKey));
+  }
+
+  const cartTotalKcal = useMemo(() => {
+    return Math.round(
+      (cartItems || []).reduce((sum, it) => sum + (Number(it.kcal_total || 0) || 0), 0)
+    );
+  }, [cartItems]);
+
+  const mealIsHealthy = useMemo(() => {
+    if (!cartItems || cartItems.length === 0) return false;
+    // regra: só é saudável se TODOS os itens vierem como true
+    return cartItems.every((it) => it.is_healthy === true);
+  }, [cartItems]);
+
+  const customMealXpPreview = useMemo(() => {
+    return computeCustomMealXp({
+      isHealthy: mealIsHealthy,
+      calories: cartTotalKcal,
+      targetCalories: Number(profile?.basal_kcal || 2000),
+    });
+  }, [mealIsHealthy, cartTotalKcal, profile?.basal_kcal]);
+
+  // ========= Fluxo: Avaliar refeição (foto) =========
+  const startAnalyzeFlow = () => {
+    setFlowMode("analyze");
+    setPhotoFile(null);
+    setPhotoPreview(null);
     setShowPickerModal(true);
   };
 
   const onPickedFile = (file) => {
     setPhotoFile(file);
-
     const reader = new FileReader();
     reader.onloadend = () => setPhotoPreview(reader.result);
     reader.readAsDataURL(file);
 
     setShowPickerModal(false);
-
-    if (flowMode === "analyze") {
-      setShowAnalyzeModal(true);
-    } else {
-      setShowRegisterModal(true);
-    }
+    setShowAnalyzeModal(true);
   };
 
   const analyzeFood = async () => {
@@ -464,14 +588,15 @@ export default function Alimentacao() {
     try {
       alert(
         "Nesta versão, a análise automática por foto está desativada.\n\n" +
-          "Agora usamos a opção B (base de alimentos + busca) para manter gratuito e coerente.\n" +
-          "Você pode registrar pela base e o app calcula as calorias."
+          "Use o botão: Registrar alimentação (manual)\n" +
+          "O app calcula calorias e decide se é saudável automaticamente."
       );
     } finally {
       setAnalyzing(false);
     }
   };
 
+  // ========= Receitas =========
   const completeReceita = async (receita) => {
     if (!profile?.id) return;
 
@@ -529,60 +654,84 @@ export default function Alimentacao() {
     }
   };
 
-  // ✅ Registro personalizado (com XP)
-  const registerCustomMeal = async () => {
+  // ========= NOVO: Salvar refeição manual =========
+  const registerMealEntry = async () => {
     if (!profile?.id) return;
+    if (!cartItems || cartItems.length === 0) return;
 
-    const desc = String(customDesc || "").trim();
-    if (!desc) return;
-
-    const kcal = customCalories === "" ? null : Number(customCalories);
-    const caloriesNum = Number.isFinite(kcal) ? kcal : null;
-
+    const totalKcal = cartTotalKcal;
     const xp = computeCustomMealXp({
-      isHealthy: customHealthy,
-      calories: caloriesNum,
+      isHealthy: mealIsHealthy,
+      calories: totalKcal,
       targetCalories: Number(profile?.basal_kcal || 2000),
     });
 
     setRegistering(true);
     try {
-      // meal_logs
+      // 1) cria meal_entries
+      const { data: entry, error: entryErr } = await supabase
+        .from("meal_entries")
+        .insert({
+          user_id: profile.id,
+          entry_at: entryAt,
+          meal_type: mealType,
+          source: "manual",
+          notes: null,
+        })
+        .select()
+        .single();
+
+      if (entryErr || !entry?.id) {
+        alert("Erro ao salvar refeição (meal_entries). Veja o console.");
+        console.error(entryErr);
+        return;
+      }
+
+      // 2) cria meal_entry_items
+      const itemsToInsert = cartItems.map((it) => ({
+        meal_entry_id: entry.id,
+        food_id: it.food_id,
+        name_snapshot: it.name,
+        unit_type: it.unit_type,
+        quantity: it.quantity,
+        kcal_per_100_snapshot: (it.unit_type === "g" || it.unit_type === "ml") ? it.kcal_per_100 : null,
+        kcal_total: Math.round(Number(it.kcal_total || 0)),
+        is_healthy_snapshot: it.is_healthy === true ? true : it.is_healthy === false ? false : null,
+      }));
+
+      const { error: itemsErr } = await supabase.from("meal_entry_items").insert(itemsToInsert);
+
+      if (itemsErr) {
+        alert("Erro ao salvar itens (meal_entry_items). Veja o console.");
+        console.error(itemsErr);
+        return;
+      }
+
+      // 3) compat: mantém meal_logs para dashboards existentes
       try {
+        const desc = cartItems.map((it) => it.name).slice(0, 4).join(", ") + (cartItems.length > 4 ? "..." : "");
         await supabase.from("meal_logs").insert({
           user_id: profile.id,
-          description: desc,
-          calories: caloriesNum ?? 0,
-          is_healthy: Boolean(customHealthy),
+          description: desc || "Refeição registrada",
+          calories: totalKcal || 0,
+          is_healthy: Boolean(mealIsHealthy),
           ai_feedback: null,
           date: day,
         });
       } catch {}
 
-      // ✅ se não selecionou da base, salva sugestão (para enriquecer o app depois)
-      if (!foodSelected) {
-        try {
-          await supabase.from("food_suggestions").insert({
-            user_id: profile.id,
-            query_text: desc,
-          });
-        } catch {
-          // se tabela não existir, não quebra
-        }
-      }
-
-      // activity_logs
+      // 4) activity_logs + XP
       try {
         await supabase.from("activity_logs").insert({
           user_id: profile.id,
           tipo: "alimentacao",
-          descricao: `Registrou refeição: ${desc}`,
+          descricao: `Registrou refeição (${mealType})`,
           xp_ganho: xp,
           data: day,
         });
       } catch {}
 
-      // profiles XP/rank
+      // 5) profiles XP/rank
       const currentXp = Number(profile?.xp_total || 0);
       const currentMetas = Number(profile?.metas_concluidas || 0);
 
@@ -596,37 +745,19 @@ export default function Alimentacao() {
 
       setProfile({ ...profile, xp_total: newXp, metas_concluidas: newMetas, rank: newRank });
 
+      // reset modal
       setShowRegisterModal(false);
-      setPhotoFile(null);
-      setPhotoPreview(null);
-
-      setCustomDesc("");
-      setCustomCalories("");
-      setCustomHealthy(true);
-
+      setMealType("almoco");
+      setEntryAt(nowLocalISO());
       setFoodQuery("");
       setFoodResults([]);
-      setFoodSelected(null);
-      setPortionGrams("100");
+      setCartItems([]);
 
       await loadData(true);
     } finally {
       setRegistering(false);
     }
   };
-
-  const targetCaloriesForXp = Number(profile?.basal_kcal || 2000);
-
-  const customMealXpPreview = useMemo(() => {
-    const kcal = customCalories === "" ? null : Number(customCalories);
-    const caloriesNum = Number.isFinite(kcal) ? kcal : null;
-
-    return computeCustomMealXp({
-      isHealthy: customHealthy,
-      calories: caloriesNum,
-      targetCalories: targetCaloriesForXp,
-    });
-  }, [customHealthy, customCalories, targetCaloriesForXp]);
 
   if (isLoading) {
     return (
@@ -653,7 +784,7 @@ export default function Alimentacao() {
           </button>
           <div>
             <h1 className="text-xl font-bold text-gray-900">Alimentação</h1>
-            <p className="text-sm text-gray-500">Receitas para reduzir colesterol</p>
+            <p className="text-sm text-gray-500">Registre suas refeições e ganhe XP</p>
           </div>
         </div>
 
@@ -672,17 +803,17 @@ export default function Alimentacao() {
           <div className="bg-white rounded-xl p-3 border border-gray-100 text-center">
             <Salad className="w-5 h-5 text-green-500 mx-auto mb-1" />
             <div className="font-bold text-gray-900">{sortedReceitas.filter((r) => isUnlocked(r)).length}</div>
-            <div className="text-xs text-gray-500">Liberadas</div>
+            <div className="text-xs text-gray-500">Receitas liberadas</div>
           </div>
         </div>
 
-        {/* Dashboard de Calorias */}
+        {/* Dashboard de Calorias (mantido via meal_logs para não quebrar seu componente atual) */}
         <CaloriesDashboard mealLogs={mealLogs} basalRate={profile?.basal_kcal || 2000} />
 
-        {/* Botões separados */}
-        <div className="grid grid-cols-2 gap-3 mb-6">
+        {/* Botões principais */}
+        <div className="grid grid-cols-2 gap-3 mb-4">
           <Button
-            onClick={() => startFlow("analyze")}
+            onClick={startAnalyzeFlow}
             className="bg-gradient-to-r from-blue-500 to-indigo-600 hover:from-blue-600 hover:to-indigo-700 text-white py-5 rounded-xl shadow-md"
           >
             <Camera className="w-5 h-5 mr-2" />
@@ -690,12 +821,87 @@ export default function Alimentacao() {
           </Button>
 
           <Button
-            onClick={() => startFlow("register")}
+            onClick={() => {
+              // abre registro MANUAL direto (sem foto)
+              setShowRegisterModal(true);
+              setMealType("almoco");
+              setEntryAt(nowLocalISO());
+              setFoodQuery("");
+              setFoodResults([]);
+              setCartItems([]);
+            }}
             className="bg-gradient-to-r from-red-500 to-rose-600 hover:from-red-600 hover:to-rose-700 text-white py-5 rounded-xl shadow-md"
           >
             <Plus className="w-5 h-5 mr-2" />
-            Registrar (+XP)
+            Registrar alimentação
           </Button>
+        </div>
+
+        {/* Lista do dia (novo: meal_entries) */}
+        <div className="bg-white rounded-2xl border border-gray-100 p-4 mb-6">
+          <div className="flex items-center justify-between mb-2">
+            <h2 className="font-semibold text-gray-900">Minhas refeições de hoje</h2>
+            <span className="text-xs text-gray-500">
+              {todayEntries?.length || 0} registro(s)
+            </span>
+          </div>
+
+          {(!todayEntries || todayEntries.length === 0) ? (
+            <div className="text-sm text-gray-500">
+              Você ainda não registrou refeições hoje.
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {todayEntries.map((e) => (
+                <div key={e.id} className="rounded-xl border border-gray-100 p-3">
+                  <div className="flex items-center justify-between">
+                    <div className="text-sm font-semibold text-gray-900">
+                      {String(e.meal_type || "refeicao").toUpperCase()}
+                      <span className="ml-2 text-xs font-normal text-gray-500">
+                        {String(e.entry_at || "").slice(11, 16)}
+                      </span>
+                    </div>
+                    <div className="text-sm font-bold text-orange-600">
+                      {Math.round(Number(e.total_kcal || 0))} kcal
+                    </div>
+                  </div>
+
+                  <div className="mt-2 space-y-1">
+                    {(e.meal_entry_items || []).map((it) => (
+                      <div key={it.id} className="flex items-center justify-between text-xs text-gray-600">
+                        <span className="truncate max-w-[70%]">
+                          {it.name_snapshot}
+                        </span>
+                        <span className="flex items-center gap-2">
+                          <span className="text-gray-500">
+                            {Number(it.quantity || 0)}{it.unit_type === "g" ? "g" : it.unit_type === "ml" ? "ml" : ""}
+                          </span>
+                          <span className="text-gray-700 font-medium">
+                            {Math.round(Number(it.kcal_total || 0))} kcal
+                          </span>
+                          <span
+                            className={`text-[10px] px-2 py-0.5 rounded-full border ${
+                              it.is_healthy_snapshot === true
+                                ? "bg-emerald-50 border-emerald-200 text-emerald-700"
+                                : it.is_healthy_snapshot === false
+                                ? "bg-red-50 border-red-200 text-red-700"
+                                : "bg-gray-50 border-gray-200 text-gray-600"
+                            }`}
+                          >
+                            {it.is_healthy_snapshot === true
+                              ? "Saudável"
+                              : it.is_healthy_snapshot === false
+                              ? "Não"
+                              : "N/A"}
+                          </span>
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
 
         {/* Botão análises */}
@@ -784,7 +990,7 @@ export default function Alimentacao() {
           })}
         </div>
 
-        {/* Modal: escolha câmera/galeria */}
+        {/* Modal: escolha câmera/galeria (apenas para analisar) */}
         <AnimatePresence>
           {showPickerModal && (
             <motion.div
@@ -801,15 +1007,13 @@ export default function Alimentacao() {
                 onClick={(e) => e.stopPropagation()}
                 className="bg-white rounded-3xl w-full max-w-sm p-6"
               >
-                <h3 className="text-xl font-bold text-gray-900 mb-2 text-center">
-                  {flowMode === "register" ? "Registrar com Foto" : "Avaliar Refeição"}
-                </h3>
+                <h3 className="text-xl font-bold text-gray-900 mb-2 text-center">Avaliar Refeição</h3>
                 <p className="text-sm text-gray-500 mb-6 text-center">Escolha a origem da imagem</p>
 
                 <div className="space-y-3">
                   <Button
                     onClick={() => openImagePicker({ source: "camera", onFile: onPickedFile })}
-                    className="w-full bg-gradient-to-r from-red-500 to-rose-600 hover:from-red-600 hover:to-rose-700 text-white py-5 rounded-xl flex items-center justify-center gap-3"
+                    className="w-full bg-gradient-to-r from-blue-500 to-indigo-600 hover:from-blue-600 hover:to-indigo-700 text-white py-5 rounded-xl flex items-center justify-center gap-3"
                   >
                     <Camera className="w-6 h-6" />
                     <div className="text-left">
@@ -906,12 +1110,16 @@ export default function Alimentacao() {
                       onClick={() => {
                         setShowAnalyzeModal(false);
                         setShowRegisterModal(true);
-                        setFlowMode("register");
+                        setMealType("almoco");
+                        setEntryAt(nowLocalISO());
+                        setFoodQuery("");
+                        setFoodResults([]);
+                        setCartItems([]);
                       }}
                       variant="outline"
                       className="w-full border-2 border-red-200 hover:bg-red-50 py-5 rounded-xl"
                     >
-                      Registrar como refeição (+XP)
+                      Registrar alimentação (manual)
                     </Button>
                   </div>
                 </div>
@@ -920,7 +1128,7 @@ export default function Alimentacao() {
           )}
         </AnimatePresence>
 
-        {/* Modal: Registrar refeição (com XP + busca foods) */}
+        {/* Modal: Registrar alimentação (manual, novo sistema) */}
         <AnimatePresence>
           {showRegisterModal && (
             <motion.div
@@ -939,7 +1147,7 @@ export default function Alimentacao() {
               >
                 <div className="p-6">
                   <div className="flex items-center justify-between mb-4">
-                    <h3 className="text-lg font-bold text-gray-900">Registrar Refeição (+XP)</h3>
+                    <h3 className="text-lg font-bold text-gray-900">Registrar Alimentação</h3>
                     {!registering && (
                       <button onClick={() => setShowRegisterModal(false)} className="text-gray-400 hover:text-gray-600">
                         <X className="w-6 h-6" />
@@ -947,24 +1155,29 @@ export default function Alimentacao() {
                     )}
                   </div>
 
-                  {photoPreview && (
-                    <div className="mb-4 rounded-xl overflow-hidden">
-                      <img src={photoPreview} alt="Prévia" className="w-full h-48 object-cover" />
-                    </div>
-                  )}
-
                   <div className="space-y-3">
-                    {/* ✅ BUSCA DE ALIMENTOS */}
+                    {/* Tipo */}
                     <div>
-                      <label className="text-sm font-medium text-gray-700">O que você comeu?</label>
+                      <label className="text-sm font-medium text-gray-700">Tipo de refeição</label>
+                      <select
+                        value={mealType}
+                        onChange={(e) => setMealType(e.target.value)}
+                        className="mt-1 w-full border border-gray-200 rounded-xl px-3 py-3 text-sm outline-none focus:ring-2 focus:ring-red-200 bg-white"
+                      >
+                        <option value="cafe">Café da manhã</option>
+                        <option value="almoco">Almoço</option>
+                        <option value="lanche">Lanche</option>
+                        <option value="jantar">Jantar</option>
+                        <option value="ceia">Ceia</option>
+                      </select>
+                    </div>
+
+                    {/* Busca */}
+                    <div>
+                      <label className="text-sm font-medium text-gray-700">Buscar alimento</label>
                       <input
                         value={foodQuery}
-                        onChange={(e) => {
-                          const v = e.target.value;
-                          setFoodQuery(v);
-                          setFoodSelected(null);
-                          setCustomDesc(v);
-                        }}
+                        onChange={(e) => setFoodQuery(e.target.value)}
                         placeholder="Digite para buscar (ex: banana, arroz, frango...)"
                         className="mt-1 w-full border border-gray-200 rounded-xl px-3 py-3 text-sm outline-none focus:ring-2 focus:ring-red-200"
                       />
@@ -975,111 +1188,119 @@ export default function Alimentacao() {
 
                           {!foodSearching && foodResults.length === 0 && (foodQuery || "").trim().length >= 2 && (
                             <div className="px-3 py-2 text-xs text-gray-500">
-                              Nenhum alimento encontrado. Você pode registrar manualmente.
+                              Nenhum alimento encontrado.
+                              <br />
+                              (Em breve: “Criar alimento personalizado”)
                             </div>
                           )}
 
                           {!foodSearching &&
-                            foodResults.map((f) => (
-                              <button
-                                key={f.id}
-                                type="button"
-                                onClick={() => onSelectFood(f)}
-                                className="w-full text-left px-3 py-2 hover:bg-gray-50 flex items-center justify-between"
-                              >
-                                <div>
-                                  <div className="text-sm text-gray-900 font-medium">{f.canonical_name}</div>
-                                  <div className="text-xs text-gray-500">{Number(f.kcal_per_100g || 0)} kcal / 100g</div>
-                                </div>
+                            foodResults.map((f) => {
+                              const name = f.canonical_name || f.name;
+                              const unit = getFoodUnitType(f);
+                              const kcal100 = getFoodKcalPer100(f);
 
-                                <span
-                                  className={`text-[11px] px-2 py-1 rounded-full border ${
-                                    f.is_healthy
-                                      ? "bg-emerald-50 border-emerald-200 text-emerald-700"
-                                      : "bg-red-50 border-red-200 text-red-700"
-                                  }`}
+                              return (
+                                <button
+                                  key={f.id}
+                                  type="button"
+                                  onClick={() => addFoodToCart(f)}
+                                  className="w-full text-left px-3 py-2 hover:bg-gray-50 flex items-center justify-between"
                                 >
-                                  {f.is_healthy ? "Saudável" : "Não saudável"}
-                                </span>
-                              </button>
-                            ))}
-                        </div>
-                      )}
+                                  <div>
+                                    <div className="text-sm text-gray-900 font-medium">{name}</div>
+                                    <div className="text-xs text-gray-500">
+                                      {kcal100} kcal / 100{unit === "ml" ? "ml" : "g"}
+                                    </div>
+                                  </div>
 
-                      {foodSelected && (
-                        <div className="mt-2 text-xs text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-xl px-3 py-2">
-                          Selecionado da base ✅ (calorias e saudável preenchidos automaticamente)
+                                  <span
+                                    className={`text-[11px] px-2 py-1 rounded-full border ${
+                                      f.is_healthy
+                                        ? "bg-emerald-50 border-emerald-200 text-emerald-700"
+                                        : "bg-red-50 border-red-200 text-red-700"
+                                    }`}
+                                  >
+                                    {f.is_healthy ? "Saudável" : "Não saudável"}
+                                  </span>
+                                </button>
+                              );
+                            })}
                         </div>
                       )}
                     </div>
 
-                    {/* Porção (g) */}
-                    <div>
-                      <label className="text-sm font-medium text-gray-700">Porção (g)</label>
-                      <input
-                        value={portionGrams}
-                        onChange={(e) => {
-                          const v = e.target.value.replace(/[^\d]/g, "");
-                          setPortionGrams(v);
-
-                          if (foodSelected) {
-                            const cals = calcCaloriesFromFood(foodSelected, v);
-                            if (cals !== "") setCustomCalories(cals);
-                          }
-                        }}
-                        placeholder="Ex: 100"
-                        className="mt-1 w-full border border-gray-200 rounded-xl px-3 py-3 text-sm outline-none focus:ring-2 focus:ring-red-200"
-                        inputMode="numeric"
-                      />
-                      <div className="mt-1 text-xs text-gray-500">
-                        Se você escolher um alimento da lista, as calorias são calculadas por 100g automaticamente.
+                    {/* Carrinho */}
+                    <div className="rounded-2xl border border-gray-200 p-3">
+                      <div className="flex items-center justify-between mb-2">
+                        <div className="text-sm font-semibold text-gray-900">Itens da refeição</div>
+                        <div className="text-sm font-bold text-orange-600">{cartTotalKcal} kcal</div>
                       </div>
+
+                      {cartItems.length === 0 ? (
+                        <div className="text-xs text-gray-500">
+                          Adicione pelo menos 1 alimento.
+                        </div>
+                      ) : (
+                        <div className="space-y-2">
+                          {cartItems.map((it) => (
+                            <div key={it.key} className="flex items-center gap-2">
+                              <div className="flex-1 min-w-0">
+                                <div className="text-sm font-medium text-gray-900 truncate">{it.name}</div>
+                                <div className="text-xs text-gray-500">
+                                  {it.is_healthy === true ? "Saudável ✅" : it.is_healthy === false ? "Não saudável ⚠️" : "N/A"}
+                                </div>
+                              </div>
+
+                              <div className="w-28">
+                                <input
+                                  value={String(it.quantity)}
+                                  onChange={(e) => updateCartQty(it.key, e.target.value)}
+                                  className="w-full border border-gray-200 rounded-xl px-2 py-2 text-sm outline-none focus:ring-2 focus:ring-red-200"
+                                  inputMode="decimal"
+                                />
+                                <div className="text-[10px] text-gray-500 text-center mt-0.5">
+                                  {it.unit_type === "ml" ? "ml" : it.unit_type === "g" ? "g" : "un"}
+                                </div>
+                              </div>
+
+                              <div className="w-16 text-right">
+                                <div className="text-sm font-semibold text-gray-900">
+                                  {Math.round(Number(it.kcal_total || 0))}
+                                </div>
+                                <div className="text-[10px] text-gray-500">kcal</div>
+                              </div>
+
+                              <button
+                                type="button"
+                                onClick={() => removeCartItem(it.key)}
+                                className="w-9 h-9 rounded-xl border border-gray-200 flex items-center justify-center hover:bg-gray-50"
+                              >
+                                <X className="w-4 h-4 text-gray-500" />
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
                     </div>
 
-                    {/* Calorias (opcional) */}
-                    <div>
-                      <label className="text-sm font-medium text-gray-700">Calorias (opcional)</label>
-                      <input
-                        value={customCalories}
-                        onChange={(e) => {
-                          setCustomCalories(e.target.value.replace(/[^\d]/g, ""));
-                          // se editar manualmente, mantém seleção, mas você pode trocar depois se quiser
-                        }}
-                        placeholder="Ex: 450"
-                        className="mt-1 w-full border border-gray-200 rounded-xl px-3 py-3 text-sm outline-none focus:ring-2 focus:ring-red-200"
-                        inputMode="numeric"
-                      />
-                    </div>
-
-                    {/* Saudável? */}
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setCustomHealthy((v) => !v);
-                        // se usuário mexer manualmente, não faz sentido travar pelo selected
-                      }}
-                      className={`w-full rounded-xl px-4 py-3 text-sm border flex items-center justify-between ${
-                        customHealthy ? "bg-emerald-50 border-emerald-200 text-emerald-800" : "bg-gray-50 border-gray-200 text-gray-700"
-                      }`}
-                    >
-                      <span>Foi uma refeição saudável?</span>
-                      <span className="font-semibold">{customHealthy ? "Sim" : "Não"}</span>
-                    </button>
-
-                    <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-3 text-sm text-yellow-800 flex items-center justify-between">
+                    {/* XP preview */}
+                    <div className={`rounded-xl p-3 text-sm border flex items-center justify-between ${
+                      mealIsHealthy ? "bg-emerald-50 border-emerald-200 text-emerald-800" : "bg-red-50 border-red-200 text-red-800"
+                    }`}>
                       <span>XP ao registrar</span>
                       <span className="font-bold">+{customMealXpPreview} XP</span>
                     </div>
 
-                    {!customHealthy && (
-                      <div className="bg-red-50 border border-red-200 rounded-xl p-3 text-sm text-red-800">
-                        Refeições não saudáveis não geram XP. Vamos registrar apenas as calorias.
+                    {!mealIsHealthy && (
+                      <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-3 text-sm text-yellow-800">
+                        Para ganhar XP, a refeição precisa ser saudável. (O app decide automaticamente pelos alimentos selecionados.)
                       </div>
                     )}
 
                     <Button
-                      onClick={registerCustomMeal}
-                      disabled={registering || !String(customDesc || "").trim()}
+                      onClick={registerMealEntry}
+                      disabled={registering || cartItems.length === 0}
                       className="w-full bg-gradient-to-r from-red-500 to-rose-600 hover:from-red-600 hover:to-rose-700 text-white py-5 rounded-xl text-lg font-semibold disabled:opacity-70"
                     >
                       {registering ? (
@@ -1090,17 +1311,13 @@ export default function Alimentacao() {
                       ) : (
                         <span className="flex items-center gap-2">
                           <Check className="w-5 h-5" />
-                          Registrar Refeição (+{customMealXpPreview} XP)
+                          Salvar refeição (+{customMealXpPreview} XP)
                         </span>
                       )}
                     </Button>
 
                     <Button
-                      onClick={() => {
-                        setShowRegisterModal(false);
-                        setPhotoFile(null);
-                        setPhotoPreview(null);
-                      }}
+                      onClick={() => setShowRegisterModal(false)}
                       variant="ghost"
                       className="w-full text-gray-500"
                     >
