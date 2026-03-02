@@ -240,7 +240,12 @@ function buildPlan(objId) {
             duration: "25–35 min",
             intensity: "Leve/Moderada",
             desc: "Base para postura, energia e confiança.",
-            items: ["Agachamento com peso do corpo (3x12)", "Remada elástica (3x12)", "Flexão inclinada (3x8–12)", "Prancha (3x30s)"],
+            items: [
+              "Agachamento com peso do corpo (3x12)",
+              "Remada elástica (3x12)",
+              "Flexão inclinada (3x8–12)",
+              "Prancha (3x30s)",
+            ],
           },
           {
             key: "cardio_leve",
@@ -286,7 +291,7 @@ export default function Exercicios() {
   const [showCustomize, setShowCustomize] = useState(false);
   const [customizePlanKey, setCustomizePlanKey] = useState(null);
 
-  // Personalização simples (UI-only)
+  // Personalização (persistida no Supabase em profiles.exercicios_custom)
   const [custom, setCustom] = useState({
     nivel: "iniciante",
     diasSemana: 3,
@@ -309,12 +314,12 @@ export default function Exercicios() {
 
         setUserEmail(session.user.email || "");
 
-        // Lê do lugar correto: profiles.exercicios_objetivo
+        // ✅ Agora também busca exercicios_custom
         let prof = null;
         try {
           const { data, error } = await supabase
             .from("profiles")
-            .select("id, exercicios_objetivo")
+            .select("id, exercicios_objetivo, exercicios_custom")
             .eq("id", session.user.id)
             .maybeSingle();
 
@@ -324,6 +329,15 @@ export default function Exercicios() {
         }
 
         setProfileRow(prof);
+
+        // ✅ Carrega custom do Supabase (se existir)
+        const c = prof?.exercicios_custom || {};
+        if (c && typeof c === "object") {
+          setCustom((prev) => ({
+            ...prev,
+            ...c,
+          }));
+        }
 
         const existingRaw = prof?.exercicios_objetivo ?? "";
         const normalized = normalizeObjetivo(existingRaw) || "melhorar_habitos";
@@ -348,19 +362,14 @@ export default function Exercicios() {
     if (!session?.user) throw new Error("Sessão expirada. Faça login novamente.");
 
     const userId = session.user.id;
-
-    // Vou salvar como ID para evitar ambiguidade e garantir que sempre funcione:
     const valueToSave = newObjId;
 
     const { error } = await supabase
       .from("profiles")
       .upsert({ id: userId, exercicios_objetivo: valueToSave }, { onConflict: "id" });
 
-    if (error) {
-      throw new Error(error.message);
-    }
+    if (error) throw new Error(error.message);
 
-    // Atualiza estado local -> os treinos mudam na hora
     setProfileRow((p) => ({ ...(p || { id: userId }), exercicios_objetivo: valueToSave }));
   }
 
@@ -562,7 +571,7 @@ export default function Exercicios() {
           )}
         </AnimatePresence>
 
-        {/* Modal: Personalizar treino (AGORA FUNCIONA) */}
+        {/* Modal: Personalizar treino (com persistência no Supabase) */}
         <AnimatePresence>
           {showCustomize && (
             <motion.div
@@ -667,8 +676,8 @@ export default function Exercicios() {
                   <div className="rounded-2xl border border-indigo-100 bg-indigo-50 p-4">
                     <div className="text-xs text-indigo-700 font-semibold mb-1">Resumo</div>
                     <div className="text-sm text-indigo-900">
-                      {customizationSummary.dias}x/sem • {customizationSummary.tempo} min •{" "}
-                      {customizationSummary.local} • {customizationSummary.nivel}
+                      {customizationSummary.dias}x/sem • {customizationSummary.tempo} min • {customizationSummary.local} •{" "}
+                      {customizationSummary.nivel}
                     </div>
                     {custom.limitacoes?.trim() ? (
                       <div className="text-xs text-indigo-700 mt-2">
@@ -681,10 +690,37 @@ export default function Exercicios() {
                     <Button variant="outline" className="w-full rounded-xl" onClick={() => setShowCustomize(false)}>
                       Fechar
                     </Button>
+
                     <Button
                       className="w-full rounded-xl bg-gradient-to-r from-indigo-600 to-blue-600 hover:from-indigo-700 hover:to-blue-700"
-                      onClick={() => {
-                        // UI-only por enquanto
+                      onClick={async () => {
+                        const { data: sessionData } = await supabase.auth.getSession();
+                        const session = sessionData?.session;
+                        if (!session?.user) throw new Error("Sessão expirada. Faça login novamente.");
+
+                        const userId = session.user.id;
+
+                        const payload = {
+                          nivel: custom.nivel,
+                          diasSemana: Number(customizationSummary.dias),
+                          tempoMin: Number(customizationSummary.tempo),
+                          local: custom.local,
+                          limitacoes: custom.limitacoes || "",
+                        };
+
+                        const { error } = await supabase
+                          .from("profiles")
+                          .update({ exercicios_custom: payload })
+                          .eq("id", userId);
+
+                        if (error) throw new Error(error.message);
+
+                        // Atualiza estado local também
+                        setProfileRow((p) => ({
+                          ...(p || { id: userId }),
+                          exercicios_custom: payload,
+                        }));
+
                         setShowCustomize(false);
                       }}
                     >
