@@ -349,7 +349,6 @@ export default function Exercicios() {
 
     const userId = session.user.id;
 
-    // Você pode salvar como ID (mais limpo) OU label.
     // Vou salvar como ID para evitar ambiguidade e garantir que sempre funcione:
     const valueToSave = newObjId;
 
@@ -358,7 +357,6 @@ export default function Exercicios() {
       .upsert({ id: userId, exercicios_objetivo: valueToSave }, { onConflict: "id" });
 
     if (error) {
-      // Não escondemos o erro: isso ajuda a debugar se houver RLS/policy
       throw new Error(error.message);
     }
 
@@ -556,6 +554,141 @@ export default function Exercicios() {
                       }}
                     >
                       Salvar objetivo
+                    </Button>
+                  </div>
+                </div>
+              </motion.div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* Modal: Personalizar treino (AGORA FUNCIONA) */}
+        <AnimatePresence>
+          {showCustomize && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4"
+              onClick={() => setShowCustomize(false)}
+            >
+              <motion.div
+                initial={{ scale: 0.95, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                exit={{ scale: 0.95, opacity: 0 }}
+                onClick={(e) => e.stopPropagation()}
+                className="bg-white rounded-3xl w-full max-w-lg overflow-hidden"
+              >
+                <div className="p-6 border-b border-gray-100 flex items-center justify-between">
+                  <div>
+                    <div className="text-lg font-bold text-gray-900">Personalizar treino</div>
+                    <div className="text-sm text-gray-500">
+                      Ajuste o plano conforme sua realidade (dias, tempo, local e limitações).
+                    </div>
+                  </div>
+                  <button
+                    className="w-10 h-10 rounded-xl border border-gray-200 flex items-center justify-center"
+                    onClick={() => setShowCustomize(false)}
+                  >
+                    <X className="w-5 h-5 text-gray-500" />
+                  </button>
+                </div>
+
+                <div className="p-6 space-y-4">
+                  <div className="rounded-2xl border border-gray-200 bg-slate-50 p-4">
+                    <div className="text-xs text-gray-500">Você está personalizando:</div>
+                    <div className="font-semibold text-gray-900">
+                      {plan?.cards?.find((c) => c.key === customizePlanKey)?.title ?? "Treino"}
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <div className="text-xs font-medium text-gray-600 mb-1">Nível</div>
+                      <select
+                        className="w-full h-10 rounded-xl border border-gray-200 px-3 text-sm"
+                        value={custom.nivel}
+                        onChange={(e) => setCustom((c) => ({ ...c, nivel: e.target.value }))}
+                      >
+                        <option value="iniciante">Iniciante</option>
+                        <option value="intermediario">Intermediário</option>
+                        <option value="avancado">Avançado</option>
+                      </select>
+                    </div>
+
+                    <div>
+                      <div className="text-xs font-medium text-gray-600 mb-1">Local</div>
+                      <select
+                        className="w-full h-10 rounded-xl border border-gray-200 px-3 text-sm"
+                        value={custom.local}
+                        onChange={(e) => setCustom((c) => ({ ...c, local: e.target.value }))}
+                      >
+                        <option value="casa">Casa</option>
+                        <option value="academia">Academia</option>
+                        <option value="ar_livre">Ar livre</option>
+                      </select>
+                    </div>
+
+                    <div>
+                      <div className="text-xs font-medium text-gray-600 mb-1">Dias/semana</div>
+                      <Input
+                        type="number"
+                        min={1}
+                        max={7}
+                        value={custom.diasSemana}
+                        onChange={(e) => setCustom((c) => ({ ...c, diasSemana: e.target.value }))}
+                        className="rounded-xl"
+                      />
+                    </div>
+
+                    <div>
+                      <div className="text-xs font-medium text-gray-600 mb-1">Tempo (min)</div>
+                      <Input
+                        type="number"
+                        min={10}
+                        max={120}
+                        value={custom.tempoMin}
+                        onChange={(e) => setCustom((c) => ({ ...c, tempoMin: e.target.value }))}
+                        className="rounded-xl"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <div className="text-xs font-medium text-gray-600 mb-1">Limitações / Observações</div>
+                    <Input
+                      placeholder="Ex: dor no joelho, sem halteres, só caminhada..."
+                      value={custom.limitacoes}
+                      onChange={(e) => setCustom((c) => ({ ...c, limitacoes: e.target.value }))}
+                      className="rounded-xl"
+                    />
+                  </div>
+
+                  <div className="rounded-2xl border border-indigo-100 bg-indigo-50 p-4">
+                    <div className="text-xs text-indigo-700 font-semibold mb-1">Resumo</div>
+                    <div className="text-sm text-indigo-900">
+                      {customizationSummary.dias}x/sem • {customizationSummary.tempo} min •{" "}
+                      {customizationSummary.local} • {customizationSummary.nivel}
+                    </div>
+                    {custom.limitacoes?.trim() ? (
+                      <div className="text-xs text-indigo-700 mt-2">
+                        <span className="font-semibold">Limitações:</span> {custom.limitacoes}
+                      </div>
+                    ) : null}
+                  </div>
+
+                  <div className="flex gap-3 pt-2">
+                    <Button variant="outline" className="w-full rounded-xl" onClick={() => setShowCustomize(false)}>
+                      Fechar
+                    </Button>
+                    <Button
+                      className="w-full rounded-xl bg-gradient-to-r from-indigo-600 to-blue-600 hover:from-indigo-700 hover:to-blue-700"
+                      onClick={() => {
+                        // UI-only por enquanto
+                        setShowCustomize(false);
+                      }}
+                    >
+                      Salvar personalização
                     </Button>
                   </div>
                 </div>
