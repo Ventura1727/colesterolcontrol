@@ -13,6 +13,9 @@ import {
   ChevronRight,
   X,
   Info,
+  Plus,
+  Trash2,
+  Wand2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -35,17 +38,14 @@ function normalizeObjetivo(raw) {
   const s = (raw || "").toString().trim().toLowerCase();
   if (!s) return null;
 
-  // Se já for um id válido
   if (OBJETIVOS.some((o) => o.id === s)) return s;
 
-  // Se for label/texto
   if (s.includes("perder") || s.includes("emag")) return "perder_peso";
   if (s.includes("hipertrof") || s.includes("massa")) return "hipertrofia";
   if (s.includes("condicion") || s.includes("fôlego") || s.includes("cardio")) return "condicionamento";
   if (s.includes("mobil") || s.includes("along")) return "mobilidade";
   if (s.includes("hábito") || s.includes("habito") || s.includes("rotina")) return "melhorar_habitos";
 
-  // fallback: tenta match por label exato
   const found = OBJETIVOS.find((o) => o.label.toLowerCase() === s);
   return found?.id ?? "melhorar_habitos";
 }
@@ -54,11 +54,26 @@ function objetivoLabel(objId) {
   return OBJETIVOS.find((o) => o.id === objId)?.label ?? "Não definido";
 }
 
+function safeObj(v) {
+  return v && typeof v === "object" && !Array.isArray(v) ? v : {};
+}
+function safeArr(v) {
+  return Array.isArray(v) ? v : [];
+}
+
+function toNumberOrNull(v) {
+  if (v == null) return null;
+  const s = String(v).trim().replace(",", ".");
+  if (!s) return null;
+  const n = Number(s);
+  return Number.isFinite(n) ? n : null;
+}
+
 /**
- * Planos baseados em boas práticas gerais (educativo, não médico)
- * Cada objetivo gera 3 cards principais + recomendação semanal.
+ * Plano base (sugestões do app) - continua existindo,
+ * mas deixa de ser o principal quando o usuário personaliza.
  */
-function buildPlan(objId) {
+function buildSuggestedPlan(objId) {
   const common = {
     disclaimer:
       "Essas sugestões são educativas e baseadas em práticas comuns de treino. Se você tiver restrições médicas, adapte com um profissional.",
@@ -68,7 +83,7 @@ function buildPlan(objId) {
     case "perder_peso":
       return {
         ...common,
-        headline: "Plano focado em Perder Peso",
+        headline: "Plano sugerido focado em Perder Peso",
         cards: [
           {
             key: "treino_a",
@@ -110,7 +125,7 @@ function buildPlan(objId) {
     case "hipertrofia":
       return {
         ...common,
-        headline: "Plano focado em Hipertrofia",
+        headline: "Plano sugerido focado em Hipertrofia",
         cards: [
           {
             key: "treino_a",
@@ -158,7 +173,7 @@ function buildPlan(objId) {
     case "condicionamento":
       return {
         ...common,
-        headline: "Plano focado em Condicionamento",
+        headline: "Plano sugerido focado em Condicionamento",
         cards: [
           {
             key: "intervalado",
@@ -194,7 +209,7 @@ function buildPlan(objId) {
     case "mobilidade":
       return {
         ...common,
-        headline: "Plano focado em Mobilidade",
+        headline: "Plano sugerido focado em Mobilidade",
         cards: [
           {
             key: "rotina_mob",
@@ -231,7 +246,7 @@ function buildPlan(objId) {
     default:
       return {
         ...common,
-        headline: "Plano focado em Melhorar Hábitos",
+        headline: "Plano sugerido focado em Melhorar Hábitos",
         cards: [
           {
             key: "forca_base",
@@ -240,12 +255,7 @@ function buildPlan(objId) {
             duration: "25–35 min",
             intensity: "Leve/Moderada",
             desc: "Base para postura, energia e confiança.",
-            items: [
-              "Agachamento com peso do corpo (3x12)",
-              "Remada elástica (3x12)",
-              "Flexão inclinada (3x8–12)",
-              "Prancha (3x30s)",
-            ],
+            items: ["Agachamento com peso do corpo (3x12)", "Remada elástica (3x12)", "Flexão inclinada (3x8–12)", "Prancha (3x30s)"],
           },
           {
             key: "cardio_leve",
@@ -271,12 +281,56 @@ function buildPlan(objId) {
   }
 }
 
-function toNumberOrNull(v) {
-  if (v == null) return null;
-  const s = String(v).trim().replace(",", ".");
-  if (!s) return null;
-  const n = Number(s);
-  return Number.isFinite(n) ? n : null;
+/**
+ * Sugestões automáticas em cima do treino do usuário (MVP).
+ * Não muda o treino do usuário, apenas recomenda melhorias.
+ */
+function generateImprovements(customPlan = [], meta = {}) {
+  const plan = safeArr(customPlan);
+  const allExercises = plan.flatMap((w) => safeArr(w.exercises));
+  const names = allExercises.map((e) => (e?.name || "").toLowerCase());
+  const limit = (meta?.limitacoes || "").toLowerCase();
+
+  const suggestions = [];
+
+  if (plan.length === 0) {
+    suggestions.push("Você ainda não criou nenhum treino. Crie pelo menos 1 treino (ex: Treino A) e adicione exercícios.");
+    return suggestions;
+  }
+
+  if (allExercises.length < 4) {
+    suggestions.push("Seu plano tem poucos exercícios. Para ser mais completo, tente ter pelo menos 4–8 exercícios no total (somando todos os treinos).");
+  }
+
+  const hasWarmup = names.some((n) => n.includes("aquec") || n.includes("caminh") || n.includes("bike") || n.includes("esteira"));
+  if (!hasWarmup) suggestions.push("Sugestão: inclua um aquecimento leve (5–10 min) em pelo menos 2 dias/semana.");
+
+  const hasMobility = names.some((n) => n.includes("along") || n.includes("mobil") || n.includes("respira"));
+  if (!hasMobility) suggestions.push("Sugestão: inclua 8–12 min de mobilidade/alongamento em 2–3 dias/semana.");
+
+  const hasLeg = names.some((n) => n.includes("agach") || n.includes("leg") || n.includes("afundo") || n.includes("terra") || n.includes("passada"));
+  const hasBack = names.some((n) => n.includes("remad") || n.includes("pux") || n.includes("costas"));
+  const hasChest = names.some((n) => n.includes("supino") || n.includes("flex") || n.includes("peito"));
+
+  if (!hasLeg) suggestions.push("Seu plano está sem pernas. Sugestão: inclua 1 exercício de pernas (ex: agachamento, passada, leg press).");
+  if (!hasBack) suggestions.push("Seu plano está sem costas. Sugestão: inclua 1 exercício de puxada/remada.");
+  if (!hasChest) suggestions.push("Seu plano está sem peito. Sugestão: inclua flexão ou supino.");
+
+  if (limit.includes("lombar")) {
+    suggestions.push("Observação (lombar): prefira exercícios com controle e menos carga axial. Evite exagero em levantamento terra pesado sem orientação.");
+  }
+
+  if (meta?.diasSemana >= 6) {
+    suggestions.push("Você marcou muitos dias/semana. Para manter consistência, considere 4–5 dias bem feitos antes de subir para 6–7.");
+  }
+
+  if (meta?.tempoMin >= 75) {
+    suggestions.push("Se seu treino estiver muito longo, uma ideia é dividir em A/B ou reduzir volume para não desistir por cansaço.");
+  }
+
+  suggestions.push("Dica de progresso: quando ficar fácil, aumente 1 variável por vez (repetições OU série OU carga), não tudo junto.");
+
+  return suggestions;
 }
 
 export default function Exercicios() {
@@ -289,15 +343,30 @@ export default function Exercicios() {
   const [goalDraft, setGoalDraft] = useState("melhorar_habitos");
 
   const [showCustomize, setShowCustomize] = useState(false);
-  const [customizePlanKey, setCustomizePlanKey] = useState(null);
+  const [showSuggestions, setShowSuggestions] = useState(false);
 
-  // Personalização (persistida no Supabase em profiles.exercicios_custom)
+  // Tudo fica em profiles.exercicios_custom (JSONB)
   const [custom, setCustom] = useState({
+    // metas “de ambiente”
     nivel: "iniciante",
     diasSemana: 3,
     tempoMin: 30,
     local: "casa",
     limitacoes: "",
+
+    // controle
+    useCustomPlan: true,
+
+    // plano livre do usuário
+    customPlan: [
+      {
+        id: crypto?.randomUUID?.() || String(Date.now()),
+        name: "Treino A",
+        exercises: [
+          { id: crypto?.randomUUID?.() || String(Date.now() + 1), name: "Caminhada", sets: "", reps: "20 min", notes: "" },
+        ],
+      },
+    ],
   });
 
   useEffect(() => {
@@ -314,7 +383,6 @@ export default function Exercicios() {
 
         setUserEmail(session.user.email || "");
 
-        // ✅ Agora também busca exercicios_custom
         let prof = null;
         try {
           const { data, error } = await supabase
@@ -330,12 +398,24 @@ export default function Exercicios() {
 
         setProfileRow(prof);
 
-        // ✅ Carrega custom do Supabase (se existir)
-        const c = prof?.exercicios_custom || {};
-        if (c && typeof c === "object") {
+        // carrega custom do Supabase
+        const dbCustom = safeObj(prof?.exercicios_custom);
+        if (Object.keys(dbCustom).length > 0) {
           setCustom((prev) => ({
             ...prev,
-            ...c,
+            ...dbCustom,
+            // garantir formatos corretos
+            customPlan: safeArr(dbCustom.customPlan).map((w) => ({
+              id: w?.id || crypto?.randomUUID?.() || String(Date.now()),
+              name: w?.name || "Treino",
+              exercises: safeArr(w?.exercises).map((e) => ({
+                id: e?.id || crypto?.randomUUID?.() || String(Date.now()),
+                name: e?.name || "",
+                sets: e?.sets ?? "",
+                reps: e?.reps ?? "",
+                notes: e?.notes ?? "",
+              })),
+            })),
           }));
         }
 
@@ -354,7 +434,66 @@ export default function Exercicios() {
   }, [profileRow]);
 
   const objetivoAtualLabel = objetivoLabel(objetivoId);
-  const plan = useMemo(() => buildPlan(objetivoId || "melhorar_habitos"), [objetivoId]);
+  const suggestedPlan = useMemo(() => buildSuggestedPlan(objetivoId || "melhorar_habitos"), [objetivoId]);
+
+  const metaSummary = useMemo(() => {
+    const dias = Math.min(Math.max(toNumberOrNull(custom.diasSemana) || 3, 1), 7);
+    const tempo = Math.min(Math.max(toNumberOrNull(custom.tempoMin) || 30, 10), 120);
+    const nivel = (custom.nivel || "iniciante").toLowerCase();
+    const local = (custom.local || "casa").toLowerCase();
+    return { dias, tempo, nivel, local };
+  }, [custom]);
+
+  const hasCustomPlan = useMemo(() => safeArr(custom.customPlan).length > 0, [custom]);
+
+  const mainPlanCards = useMemo(() => {
+    // Plano principal = plano do usuário se estiver ativo e existir
+    if (custom.useCustomPlan && hasCustomPlan) {
+      return safeArr(custom.customPlan).map((w) => ({
+        key: w.id,
+        icon: Dumbbell,
+        title: w.name || "Treino",
+        duration: `${metaSummary.tempo} min`,
+        intensity: metaSummary.nivel === "avancado" ? "Moderada/Alta" : metaSummary.nivel === "intermediario" ? "Moderada" : "Leve/Moderada",
+        desc: `Plano do usuário • ${metaSummary.dias}x/sem • ${metaSummary.local}`,
+        items: safeArr(w.exercises).map((e) => {
+          const sets = (e.sets || "").trim();
+          const reps = (e.reps || "").trim();
+          const notes = (e.notes || "").trim();
+          const right = [sets ? `${sets}` : "", reps ? `${reps}` : ""].filter(Boolean).join(" • ");
+          const base = `${(e.name || "").trim() || "Exercício"}`;
+          const extra = right ? ` (${right})` : "";
+          const obs = notes ? ` — ${notes}` : "";
+          return `${base}${extra}${obs}`;
+        }),
+      }));
+    }
+    // Senão, principal = sugerido
+    return suggestedPlan.cards;
+  }, [custom.useCustomPlan, hasCustomPlan, custom.customPlan, metaSummary, suggestedPlan.cards]);
+
+  const mainHeadline = useMemo(() => {
+    if (custom.useCustomPlan && hasCustomPlan) return "Seu plano personalizado";
+    return suggestedPlan.headline;
+  }, [custom.useCustomPlan, hasCustomPlan, suggestedPlan.headline]);
+
+  const mainWeekly = useMemo(() => {
+    if (custom.useCustomPlan && hasCustomPlan) {
+      return [
+        `${metaSummary.dias} sessões/semana (definido por você)`,
+        `Meta: consistência primeiro. Depois evolua 1% por semana (tempo, repetições ou carga).`,
+      ];
+    }
+    return suggestedPlan.weekly;
+  }, [custom.useCustomPlan, hasCustomPlan, metaSummary, suggestedPlan.weekly]);
+
+  const improvementList = useMemo(() => {
+    return generateImprovements(custom.customPlan, {
+      diasSemana: metaSummary.dias,
+      tempoMin: metaSummary.tempo,
+      limitacoes: custom.limitacoes || "",
+    });
+  }, [custom.customPlan, metaSummary, custom.limitacoes]);
 
   async function saveObjetivo(newObjId) {
     const { data: sessionData } = await supabase.auth.getSession();
@@ -362,30 +501,107 @@ export default function Exercicios() {
     if (!session?.user) throw new Error("Sessão expirada. Faça login novamente.");
 
     const userId = session.user.id;
-    const valueToSave = newObjId;
 
     const { error } = await supabase
       .from("profiles")
-      .upsert({ id: userId, exercicios_objetivo: valueToSave }, { onConflict: "id" });
+      .upsert({ id: userId, exercicios_objetivo: newObjId }, { onConflict: "id" });
 
     if (error) throw new Error(error.message);
 
-    setProfileRow((p) => ({ ...(p || { id: userId }), exercicios_objetivo: valueToSave }));
+    setProfileRow((p) => ({ ...(p || { id: userId }), exercicios_objetivo: newObjId }));
   }
 
-  function openCustomize(cardKey) {
-    setCustomizePlanKey(cardKey);
-    setShowCustomize(true);
+  async function saveCustomToDb(nextCustom) {
+    const { data: sessionData } = await supabase.auth.getSession();
+    const session = sessionData?.session;
+    if (!session?.user) throw new Error("Sessão expirada. Faça login novamente.");
+    const userId = session.user.id;
+
+    const payload = {
+      ...nextCustom,
+      // garantir que customPlan seja array
+      customPlan: safeArr(nextCustom.customPlan),
+    };
+
+    const { error } = await supabase
+      .from("profiles")
+      .update({ exercicios_custom: payload })
+      .eq("id", userId);
+
+    if (error) throw new Error(error.message);
+
+    setProfileRow((p) => ({ ...(p || { id: userId }), exercicios_custom: payload }));
   }
 
-  const customizationSummary = useMemo(() => {
-    const dias = Math.min(Math.max(toNumberOrNull(custom.diasSemana) || 3, 1), 7);
-    const tempo = Math.min(Math.max(toNumberOrNull(custom.tempoMin) || 30, 10), 120);
-    const nivel = (custom.nivel || "iniciante").toLowerCase();
-    const local = (custom.local || "casa").toLowerCase();
+  function addWorkout() {
+    setCustom((prev) => {
+      const next = {
+        ...prev,
+        customPlan: [
+          ...safeArr(prev.customPlan),
+          {
+            id: crypto?.randomUUID?.() || String(Date.now()),
+            name: `Treino ${String.fromCharCode(65 + safeArr(prev.customPlan).length)}`,
+            exercises: [],
+          },
+        ],
+      };
+      return next;
+    });
+  }
 
-    return { dias, tempo, nivel, local };
-  }, [custom]);
+  function removeWorkout(workoutId) {
+    setCustom((prev) => ({
+      ...prev,
+      customPlan: safeArr(prev.customPlan).filter((w) => w.id !== workoutId),
+    }));
+  }
+
+  function updateWorkoutName(workoutId, name) {
+    setCustom((prev) => ({
+      ...prev,
+      customPlan: safeArr(prev.customPlan).map((w) => (w.id === workoutId ? { ...w, name } : w)),
+    }));
+  }
+
+  function addExercise(workoutId) {
+    setCustom((prev) => ({
+      ...prev,
+      customPlan: safeArr(prev.customPlan).map((w) => {
+        if (w.id !== workoutId) return w;
+        return {
+          ...w,
+          exercises: [
+            ...safeArr(w.exercises),
+            { id: crypto?.randomUUID?.() || String(Date.now()), name: "", sets: "", reps: "", notes: "" },
+          ],
+        };
+      }),
+    }));
+  }
+
+  function removeExercise(workoutId, exId) {
+    setCustom((prev) => ({
+      ...prev,
+      customPlan: safeArr(prev.customPlan).map((w) => {
+        if (w.id !== workoutId) return w;
+        return { ...w, exercises: safeArr(w.exercises).filter((e) => e.id !== exId) };
+      }),
+    }));
+  }
+
+  function updateExercise(workoutId, exId, patch) {
+    setCustom((prev) => ({
+      ...prev,
+      customPlan: safeArr(prev.customPlan).map((w) => {
+        if (w.id !== workoutId) return w;
+        return {
+          ...w,
+          exercises: safeArr(w.exercises).map((e) => (e.id === exId ? { ...e, ...patch } : e)),
+        };
+      }),
+    }));
+  }
 
   if (loading) {
     return (
@@ -413,14 +629,23 @@ export default function Exercicios() {
             </button>
             <div>
               <h1 className="text-xl font-bold text-gray-900">Exercícios</h1>
-              <p className="text-sm text-gray-500">Treinos coerentes com seu objetivo</p>
+              <p className="text-sm text-gray-500">Sugestões + seu plano personalizado</p>
             </div>
           </div>
 
-          <Button onClick={() => setShowGoalModal(true)} variant="outline" className="rounded-xl">
-            <RefreshCcw className="w-4 h-4 mr-2" />
-            Redefinir objetivo
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button onClick={() => setShowGoalModal(true)} variant="outline" className="rounded-xl">
+              <RefreshCcw className="w-4 h-4 mr-2" />
+              Redefinir objetivo
+            </Button>
+            <Button
+              onClick={() => setShowCustomize(true)}
+              className="rounded-xl bg-gradient-to-r from-indigo-600 to-blue-600 hover:from-indigo-700 hover:to-blue-700"
+            >
+              Personalizar treino
+              <ChevronRight className="w-4 h-4 ml-1" />
+            </Button>
+          </div>
         </div>
 
         {/* Card objetivo */}
@@ -438,56 +663,75 @@ export default function Exercicios() {
 
               <div className="mt-3 flex items-start gap-2 text-xs text-gray-500">
                 <Info className="w-4 h-4 mt-0.5" />
-                <div>{plan.disclaimer}</div>
+                <div>{suggestedPlan.disclaimer}</div>
               </div>
             </div>
 
-            <div className="bg-indigo-50 border border-indigo-100 rounded-xl p-4 min-w-[220px] hidden md:block">
-              <div className="text-xs text-indigo-700 font-semibold mb-1">Plano sugerido</div>
-              <div className="text-sm text-indigo-900">{plan.headline}</div>
-              <div className="text-xs text-indigo-700 mt-2">
-                {customizationSummary.dias}x/sem • {customizationSummary.tempo} min • {customizationSummary.local}
+            <div className="bg-indigo-50 border border-indigo-100 rounded-xl p-4 min-w-[260px] hidden md:block">
+              <div className="text-xs text-indigo-700 font-semibold mb-1">Prioridade</div>
+              <div className="text-sm text-indigo-900">
+                {custom.useCustomPlan && hasCustomPlan ? "Plano personalizado (seu)" : "Plano sugerido (app)"}
               </div>
+              <div className="text-xs text-indigo-700 mt-2">
+                {metaSummary.dias}x/sem • {metaSummary.tempo} min • {metaSummary.local}
+              </div>
+              {custom.limitacoes?.trim() ? (
+                <div className="text-xs text-indigo-700 mt-2">
+                  <span className="font-semibold">Limitações:</span> {custom.limitacoes}
+                </div>
+              ) : null}
             </div>
           </div>
         </div>
 
-        {/* Cards do plano */}
-        <div className="grid lg:grid-cols-3 gap-4 mb-6">
-          {plan.cards.map((c) => {
-            const Icon = c.icon;
-            return (
-              <div key={c.key} className="bg-white rounded-2xl p-5 border border-gray-100 shadow-sm">
-                <div className="flex items-center justify-between mb-3">
-                  <div className="flex items-center gap-2">
-                    <Icon className="w-5 h-5 text-indigo-700" />
-                    <div className="font-semibold text-gray-900">{c.title}</div>
+        {/* Plano PRINCIPAL (usuário ou sugerido) */}
+        <div className="bg-white rounded-2xl p-5 border border-gray-100 shadow-sm mb-4">
+          <div className="flex items-center justify-between gap-3 mb-3">
+            <div>
+              <div className="text-sm text-gray-500">Plano principal</div>
+              <div className="text-lg font-bold text-gray-900">{mainHeadline}</div>
+            </div>
+
+            {custom.useCustomPlan && hasCustomPlan ? (
+              <Button variant="outline" className="rounded-xl" onClick={() => setShowSuggestions(true)}>
+                <Wand2 className="w-4 h-4 mr-2" />
+                Sugestões do app
+              </Button>
+            ) : null}
+          </div>
+
+          <div className="grid lg:grid-cols-3 gap-4">
+            {mainPlanCards.map((c) => {
+              const Icon = c.icon;
+              return (
+                <div key={c.key} className="bg-white rounded-2xl p-5 border border-gray-100 shadow-sm">
+                  <div className="flex items-center justify-between mb-3">
+                    <div className="flex items-center gap-2">
+                      <Icon className="w-5 h-5 text-indigo-700" />
+                      <div className="font-semibold text-gray-900">{c.title}</div>
+                    </div>
+                    <div className="text-xs text-gray-500">{c.duration}</div>
                   </div>
-                  <div className="text-xs text-gray-500">{c.duration}</div>
+
+                  <div className="text-sm text-gray-600 mb-3">{c.desc}</div>
+
+                  <div className="inline-flex items-center gap-2 text-xs px-2 py-1 rounded-full border bg-slate-50 text-slate-700 mb-3">
+                    <HeartPulse className="w-3 h-3" />
+                    Intensidade: {c.intensity}
+                  </div>
+
+                  <ul className="space-y-2 text-sm">
+                    {safeArr(c.items).map((it, idx) => (
+                      <li key={idx} className="flex items-start gap-2 text-gray-700">
+                        <CheckCircle2 className="w-4 h-4 text-emerald-600 mt-0.5" />
+                        <span>{it}</span>
+                      </li>
+                    ))}
+                  </ul>
                 </div>
-
-                <div className="text-sm text-gray-600 mb-3">{c.desc}</div>
-
-                <div className="inline-flex items-center gap-2 text-xs px-2 py-1 rounded-full border bg-slate-50 text-slate-700 mb-3">
-                  <HeartPulse className="w-3 h-3" />
-                  Intensidade: {c.intensity}
-                </div>
-
-                <ul className="space-y-2 text-sm">
-                  {c.items.map((it, idx) => (
-                    <li key={idx} className="flex items-start gap-2 text-gray-700">
-                      <CheckCircle2 className="w-4 h-4 text-emerald-600 mt-0.5" />
-                      <span>{it}</span>
-                    </li>
-                  ))}
-                </ul>
-
-                <Button onClick={() => openCustomize(c.key)} variant="outline" className="mt-4 w-full">
-                  Personalizar treino <ChevronRight className="w-4 h-4 ml-1" />
-                </Button>
-              </div>
-            );
-          })}
+              );
+            })}
+          </div>
         </div>
 
         {/* Recomendação semanal */}
@@ -498,12 +742,49 @@ export default function Exercicios() {
           </div>
 
           <div className="grid md:grid-cols-2 gap-3">
-            <div className="bg-slate-50 border border-slate-100 rounded-xl p-4 text-sm text-gray-700">
-              {plan.weekly[0]}
+            <div className="bg-slate-50 border border-slate-100 rounded-xl p-4 text-sm text-gray-700">{mainWeekly[0]}</div>
+            <div className="bg-slate-50 border border-slate-100 rounded-xl p-4 text-sm text-gray-700">{mainWeekly[1]}</div>
+          </div>
+        </div>
+
+        {/* Sugestões do app (secundário) */}
+        <div className="mt-6 bg-white rounded-2xl p-5 border border-gray-100 shadow-sm">
+          <div className="flex items-center justify-between gap-3 mb-3">
+            <div>
+              <div className="text-sm text-gray-500">Sugestões do app</div>
+              <div className="font-semibold text-gray-900">{suggestedPlan.headline}</div>
+              <div className="text-xs text-gray-500 mt-1">
+                Se você personalizou, isso aqui serve como referência — o plano principal é o seu.
+              </div>
             </div>
-            <div className="bg-slate-50 border border-slate-100 rounded-xl p-4 text-sm text-gray-700">
-              {plan.weekly[1]}
-            </div>
+          </div>
+
+          <div className="grid lg:grid-cols-3 gap-4">
+            {suggestedPlan.cards.map((c) => {
+              const Icon = c.icon;
+              return (
+                <div key={c.key} className="bg-slate-50 rounded-2xl p-5 border border-slate-100">
+                  <div className="flex items-center justify-between mb-3">
+                    <div className="flex items-center gap-2">
+                      <Icon className="w-5 h-5 text-indigo-700" />
+                      <div className="font-semibold text-gray-900">{c.title}</div>
+                    </div>
+                    <div className="text-xs text-gray-500">{c.duration}</div>
+                  </div>
+
+                  <div className="text-sm text-gray-600 mb-3">{c.desc}</div>
+
+                  <ul className="space-y-2 text-sm">
+                    {c.items.map((it, idx) => (
+                      <li key={idx} className="flex items-start gap-2 text-gray-700">
+                        <CheckCircle2 className="w-4 h-4 text-emerald-600 mt-0.5" />
+                        <span>{it}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              );
+            })}
           </div>
         </div>
 
@@ -527,7 +808,7 @@ export default function Exercicios() {
                 <div className="p-6 border-b border-gray-100 flex items-center justify-between">
                   <div>
                     <div className="text-lg font-bold text-gray-900">Redefinir objetivo</div>
-                    <div className="text-sm text-gray-500">Isso muda as sugestões de treino automaticamente.</div>
+                    <div className="text-sm text-gray-500">Isso muda as sugestões do app automaticamente.</div>
                   </div>
                   <button
                     className="w-10 h-10 rounded-xl border border-gray-200 flex items-center justify-center"
@@ -558,8 +839,13 @@ export default function Exercicios() {
                     <Button
                       className="w-full rounded-xl bg-gradient-to-r from-indigo-600 to-blue-600 hover:from-indigo-700 hover:to-blue-700"
                       onClick={async () => {
-                        await saveObjetivo(goalDraft);
-                        setShowGoalModal(false);
+                        try {
+                          await saveObjetivo(goalDraft);
+                          setShowGoalModal(false);
+                        } catch (e) {
+                          console.error(e);
+                          alert(`Erro ao salvar objetivo: ${e?.message || e}`);
+                        }
                       }}
                     >
                       Salvar objetivo
@@ -571,7 +857,55 @@ export default function Exercicios() {
           )}
         </AnimatePresence>
 
-        {/* Modal: Personalizar treino (com persistência no Supabase) */}
+        {/* Modal: Sugestões do app (em cima do plano do usuário) */}
+        <AnimatePresence>
+          {showSuggestions && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4"
+              onClick={() => setShowSuggestions(false)}
+            >
+              <motion.div
+                initial={{ scale: 0.95, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                exit={{ scale: 0.95, opacity: 0 }}
+                onClick={(e) => e.stopPropagation()}
+                className="bg-white rounded-3xl w-full max-w-lg overflow-hidden"
+              >
+                <div className="p-6 border-b border-gray-100 flex items-center justify-between">
+                  <div>
+                    <div className="text-lg font-bold text-gray-900">Sugestões do app</div>
+                    <div className="text-sm text-gray-500">Melhorias opcionais em cima do seu treino (sem te obrigar).</div>
+                  </div>
+                  <button
+                    className="w-10 h-10 rounded-xl border border-gray-200 flex items-center justify-center"
+                    onClick={() => setShowSuggestions(false)}
+                  >
+                    <X className="w-5 h-5 text-gray-500" />
+                  </button>
+                </div>
+
+                <div className="p-6 space-y-3">
+                  {improvementList.map((s, idx) => (
+                    <div key={idx} className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm text-gray-700">
+                      {s}
+                    </div>
+                  ))}
+
+                  <div className="pt-2">
+                    <Button variant="outline" className="w-full rounded-xl" onClick={() => setShowSuggestions(false)}>
+                      Fechar
+                    </Button>
+                  </div>
+                </div>
+              </motion.div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* Modal: Personalizar treino (EDITOR COMPLETO) */}
         <AnimatePresence>
           {showCustomize && (
             <motion.div
@@ -586,13 +920,13 @@ export default function Exercicios() {
                 animate={{ scale: 1, opacity: 1 }}
                 exit={{ scale: 0.95, opacity: 0 }}
                 onClick={(e) => e.stopPropagation()}
-                className="bg-white rounded-3xl w-full max-w-lg overflow-hidden"
+                className="bg-white rounded-3xl w-full max-w-3xl overflow-hidden"
               >
                 <div className="p-6 border-b border-gray-100 flex items-center justify-between">
                   <div>
                     <div className="text-lg font-bold text-gray-900">Personalizar treino</div>
                     <div className="text-sm text-gray-500">
-                      Ajuste o plano conforme sua realidade (dias, tempo, local e limitações).
+                      Crie treinos do seu jeito. O app vai priorizar o plano personalizado.
                     </div>
                   </div>
                   <button
@@ -603,125 +937,230 @@ export default function Exercicios() {
                   </button>
                 </div>
 
-                <div className="p-6 space-y-4">
+                <div className="p-6 space-y-5">
+                  {/* Prioridade / Meta */}
                   <div className="rounded-2xl border border-gray-200 bg-slate-50 p-4">
-                    <div className="text-xs text-gray-500">Você está personalizando:</div>
-                    <div className="font-semibold text-gray-900">
-                      {plan?.cards?.find((c) => c.key === customizePlanKey)?.title ?? "Treino"}
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <div className="text-xs font-medium text-gray-600 mb-1">Nível</div>
-                      <select
-                        className="w-full h-10 rounded-xl border border-gray-200 px-3 text-sm"
-                        value={custom.nivel}
-                        onChange={(e) => setCustom((c) => ({ ...c, nivel: e.target.value }))}
-                      >
-                        <option value="iniciante">Iniciante</option>
-                        <option value="intermediario">Intermediário</option>
-                        <option value="avancado">Avançado</option>
-                      </select>
-                    </div>
-
-                    <div>
-                      <div className="text-xs font-medium text-gray-600 mb-1">Local</div>
-                      <select
-                        className="w-full h-10 rounded-xl border border-gray-200 px-3 text-sm"
-                        value={custom.local}
-                        onChange={(e) => setCustom((c) => ({ ...c, local: e.target.value }))}
-                      >
-                        <option value="casa">Casa</option>
-                        <option value="academia">Academia</option>
-                        <option value="ar_livre">Ar livre</option>
-                      </select>
-                    </div>
-
-                    <div>
-                      <div className="text-xs font-medium text-gray-600 mb-1">Dias/semana</div>
-                      <Input
-                        type="number"
-                        min={1}
-                        max={7}
-                        value={custom.diasSemana}
-                        onChange={(e) => setCustom((c) => ({ ...c, diasSemana: e.target.value }))}
-                        className="rounded-xl"
-                      />
-                    </div>
-
-                    <div>
-                      <div className="text-xs font-medium text-gray-600 mb-1">Tempo (min)</div>
-                      <Input
-                        type="number"
-                        min={10}
-                        max={120}
-                        value={custom.tempoMin}
-                        onChange={(e) => setCustom((c) => ({ ...c, tempoMin: e.target.value }))}
-                        className="rounded-xl"
-                      />
-                    </div>
-                  </div>
-
-                  <div>
-                    <div className="text-xs font-medium text-gray-600 mb-1">Limitações / Observações</div>
-                    <Input
-                      placeholder="Ex: dor no joelho, sem halteres, só caminhada..."
-                      value={custom.limitacoes}
-                      onChange={(e) => setCustom((c) => ({ ...c, limitacoes: e.target.value }))}
-                      className="rounded-xl"
-                    />
-                  </div>
-
-                  <div className="rounded-2xl border border-indigo-100 bg-indigo-50 p-4">
-                    <div className="text-xs text-indigo-700 font-semibold mb-1">Resumo</div>
-                    <div className="text-sm text-indigo-900">
-                      {customizationSummary.dias}x/sem • {customizationSummary.tempo} min • {customizationSummary.local} •{" "}
-                      {customizationSummary.nivel}
-                    </div>
-                    {custom.limitacoes?.trim() ? (
-                      <div className="text-xs text-indigo-700 mt-2">
-                        <span className="font-semibold">Limitações:</span> {custom.limitacoes}
+                    <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+                      <div>
+                        <div className="text-sm font-semibold text-gray-900">Plano principal</div>
+                        <div className="text-xs text-gray-500">
+                          Se ativado, o seu plano substitui o plano sugerido na tela principal.
+                        </div>
                       </div>
-                    ) : null}
+
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="checkbox"
+                          checked={!!custom.useCustomPlan}
+                          onChange={(e) => setCustom((c) => ({ ...c, useCustomPlan: e.target.checked }))}
+                        />
+                        <span className="text-sm text-gray-700">Usar plano personalizado como principal</span>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-4">
+                      <div>
+                        <div className="text-xs font-medium text-gray-600 mb-1">Nível</div>
+                        <select
+                          className="w-full h-10 rounded-xl border border-gray-200 px-3 text-sm bg-white"
+                          value={custom.nivel}
+                          onChange={(e) => setCustom((c) => ({ ...c, nivel: e.target.value }))}
+                        >
+                          <option value="iniciante">Iniciante</option>
+                          <option value="intermediario">Intermediário</option>
+                          <option value="avancado">Avançado</option>
+                        </select>
+                      </div>
+
+                      <div>
+                        <div className="text-xs font-medium text-gray-600 mb-1">Local</div>
+                        <select
+                          className="w-full h-10 rounded-xl border border-gray-200 px-3 text-sm bg-white"
+                          value={custom.local}
+                          onChange={(e) => setCustom((c) => ({ ...c, local: e.target.value }))}
+                        >
+                          <option value="casa">Casa</option>
+                          <option value="academia">Academia</option>
+                          <option value="ar_livre">Ar livre</option>
+                        </select>
+                      </div>
+
+                      <div>
+                        <div className="text-xs font-medium text-gray-600 mb-1">Dias/semana</div>
+                        <Input
+                          type="number"
+                          min={1}
+                          max={7}
+                          value={custom.diasSemana}
+                          onChange={(e) => setCustom((c) => ({ ...c, diasSemana: e.target.value }))}
+                          className="rounded-xl bg-white"
+                        />
+                      </div>
+
+                      <div>
+                        <div className="text-xs font-medium text-gray-600 mb-1">Tempo (min)</div>
+                        <Input
+                          type="number"
+                          min={10}
+                          max={120}
+                          value={custom.tempoMin}
+                          onChange={(e) => setCustom((c) => ({ ...c, tempoMin: e.target.value }))}
+                          className="rounded-xl bg-white"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="mt-3">
+                      <div className="text-xs font-medium text-gray-600 mb-1">Limitações / Observações</div>
+                      <Input
+                        placeholder="Ex: dor na lombar, joelho, sem halteres..."
+                        value={custom.limitacoes}
+                        onChange={(e) => setCustom((c) => ({ ...c, limitacoes: e.target.value }))}
+                        className="rounded-xl bg-white"
+                      />
+                    </div>
                   </div>
 
-                  <div className="flex gap-3 pt-2">
+                  {/* Editor do plano */}
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <div className="text-base font-semibold text-gray-900">Seu plano (livre)</div>
+                      <div className="text-xs text-gray-500">Crie quantos treinos quiser. Ex: A/B/C ou “Seg/Qua/Sex”.</div>
+                    </div>
+
+                    <Button variant="outline" className="rounded-xl" onClick={addWorkout}>
+                      <Plus className="w-4 h-4 mr-2" />
+                      Adicionar treino
+                    </Button>
+                  </div>
+
+                  <div className="space-y-4">
+                    {safeArr(custom.customPlan).map((w) => (
+                      <div key={w.id} className="rounded-2xl border border-gray-200 p-4 bg-white">
+                        <div className="flex items-center justify-between gap-3">
+                          <div className="flex-1">
+                            <div className="text-xs text-gray-500 mb-1">Nome do treino</div>
+                            <Input
+                              value={w.name}
+                              onChange={(e) => updateWorkoutName(w.id, e.target.value)}
+                              className="rounded-xl"
+                              placeholder="Ex: Treino A (Peito/Tríceps)"
+                            />
+                          </div>
+
+                          <Button variant="outline" className="rounded-xl" onClick={() => removeWorkout(w.id)}>
+                            <Trash2 className="w-4 h-4 mr-2" />
+                            Remover
+                          </Button>
+                        </div>
+
+                        <div className="mt-4 flex items-center justify-between">
+                          <div className="text-sm font-semibold text-gray-900">Exercícios</div>
+                          <Button variant="outline" className="rounded-xl" onClick={() => addExercise(w.id)}>
+                            <Plus className="w-4 h-4 mr-2" />
+                            Adicionar exercício
+                          </Button>
+                        </div>
+
+                        {safeArr(w.exercises).length === 0 ? (
+                          <div className="mt-3 text-sm text-gray-500">Nenhum exercício ainda. Clique em “Adicionar exercício”.</div>
+                        ) : (
+                          <div className="mt-3 space-y-3">
+                            {safeArr(w.exercises).map((e) => (
+                              <div key={e.id} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                                <div className="grid md:grid-cols-4 gap-3">
+                                  <div className="md:col-span-2">
+                                    <div className="text-xs text-gray-500 mb-1">Exercício</div>
+                                    <Input
+                                      value={e.name}
+                                      onChange={(ev) => updateExercise(w.id, e.id, { name: ev.target.value })}
+                                      className="rounded-xl bg-white"
+                                      placeholder="Ex: Supino reto / Caminhada / Agachamento"
+                                    />
+                                  </div>
+
+                                  <div>
+                                    <div className="text-xs text-gray-500 mb-1">Séries</div>
+                                    <Input
+                                      value={e.sets}
+                                      onChange={(ev) => updateExercise(w.id, e.id, { sets: ev.target.value })}
+                                      className="rounded-xl bg-white"
+                                      placeholder="Ex: 3"
+                                    />
+                                  </div>
+
+                                  <div>
+                                    <div className="text-xs text-gray-500 mb-1">Reps / Tempo</div>
+                                    <Input
+                                      value={e.reps}
+                                      onChange={(ev) => updateExercise(w.id, e.id, { reps: ev.target.value })}
+                                      className="rounded-xl bg-white"
+                                      placeholder="Ex: 10–12 ou 20 min"
+                                    />
+                                  </div>
+                                </div>
+
+                                <div className="mt-3 flex items-center gap-3">
+                                  <div className="flex-1">
+                                    <div className="text-xs text-gray-500 mb-1">Observações (opcional)</div>
+                                    <Input
+                                      value={e.notes}
+                                      onChange={(ev) => updateExercise(w.id, e.id, { notes: ev.target.value })}
+                                      className="rounded-xl bg-white"
+                                      placeholder="Ex: manter lombar neutra / RPE 7 / descanso 60s"
+                                    />
+                                  </div>
+
+                                  <Button variant="outline" className="rounded-xl" onClick={() => removeExercise(w.id, e.id)}>
+                                    <Trash2 className="w-4 h-4 mr-2" />
+                                    Remover
+                                  </Button>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Ações */}
+                  <div className="flex flex-col md:flex-row gap-3 pt-2">
                     <Button variant="outline" className="w-full rounded-xl" onClick={() => setShowCustomize(false)}>
                       Fechar
                     </Button>
 
                     <Button
+                      variant="outline"
+                      className="w-full rounded-xl"
+                      onClick={() => {
+                        // abre sugestões com base no plano atual (antes de salvar)
+                        setShowSuggestions(true);
+                      }}
+                    >
+                      <Wand2 className="w-4 h-4 mr-2" />
+                      Gerar sugestões do app
+                    </Button>
+
+                    <Button
                       className="w-full rounded-xl bg-gradient-to-r from-indigo-600 to-blue-600 hover:from-indigo-700 hover:to-blue-700"
                       onClick={async () => {
-                        const { data: sessionData } = await supabase.auth.getSession();
-                        const session = sessionData?.session;
-                        if (!session?.user) throw new Error("Sessão expirada. Faça login novamente.");
+                        try {
+                          const next = {
+                            ...custom,
+                            // garantir arrays
+                            customPlan: safeArr(custom.customPlan),
+                          };
 
-                        const userId = session.user.id;
+                          await saveCustomToDb(next);
+                          alert("Plano personalizado salvo ✅");
 
-                        const payload = {
-                          nivel: custom.nivel,
-                          diasSemana: Number(customizationSummary.dias),
-                          tempoMin: Number(customizationSummary.tempo),
-                          local: custom.local,
-                          limitacoes: custom.limitacoes || "",
-                        };
-
-                        const { error } = await supabase
-                          .from("profiles")
-                          .update({ exercicios_custom: payload })
-                          .eq("id", userId);
-
-                        if (error) throw new Error(error.message);
-
-                        // Atualiza estado local também
-                        setProfileRow((p) => ({
-                          ...(p || { id: userId }),
-                          exercicios_custom: payload,
-                        }));
-
-                        setShowCustomize(false);
+                          // fecha modal; o plano principal muda automaticamente na tela
+                          setShowCustomize(false);
+                        } catch (e) {
+                          console.error(e);
+                          alert(`Erro ao salvar: ${e?.message || e}`);
+                        }
                       }}
                     >
                       Salvar personalização
