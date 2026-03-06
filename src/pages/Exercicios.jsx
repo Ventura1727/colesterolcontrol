@@ -18,6 +18,11 @@ import {
   Wand2,
   Trophy,
   Flame,
+  Medal,
+  Sparkles,
+  RotateCcw,
+  CalendarDays,
+  Star,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -25,8 +30,9 @@ import { supabase } from "@/lib/supabaseClient";
 import { createPageUrl } from "@/utils";
 
 /**
- * Objetivos suportados.
- * Vamos salvar no Supabase em: profiles.exercicios_objetivo
+ * =========================================================
+ * OBJETIVOS
+ * =========================================================
  */
 const OBJETIVOS = [
   { id: "melhorar_habitos", label: "Melhorar hábitos", hint: "Consistência + leve/moderado" },
@@ -36,6 +42,11 @@ const OBJETIVOS = [
   { id: "mobilidade", label: "Mobilidade", hint: "Alongamento e amplitude" },
 ];
 
+/**
+ * =========================================================
+ * HELPERS
+ * =========================================================
+ */
 function normalizeObjetivo(raw) {
   const s = (raw || "").toString().trim().toLowerCase();
   if (!s) return null;
@@ -85,8 +96,148 @@ function getTodayKey() {
   }
 }
 
+function formatDateBR(isoDate) {
+  try {
+    const [y, m, d] = String(isoDate).split("-");
+    if (!y || !m || !d) return isoDate;
+    return `${d}/${m}/${y}`;
+  } catch {
+    return isoDate;
+  }
+}
+
+function parseISODateLocal(isoDate) {
+  if (!isoDate) return null;
+  const [y, m, d] = String(isoDate).split("-").map(Number);
+  if (!y || !m || !d) return null;
+  return new Date(y, m - 1, d);
+}
+
+function diffDays(a, b) {
+  const ms = 24 * 60 * 60 * 1000;
+  const utcA = Date.UTC(a.getFullYear(), a.getMonth(), a.getDate());
+  const utcB = Date.UTC(b.getFullYear(), b.getMonth(), b.getDate());
+  return Math.round((utcA - utcB) / ms);
+}
+
+function buildProgressEntry(prev = {}) {
+  return {
+    completedExerciseIds: safeArr(prev.completedExerciseIds),
+    completedWorkoutIds: safeArr(prev.completedWorkoutIds),
+    points: Number(prev.points) || 0,
+    updatedAt: prev.updatedAt || new Date().toISOString(),
+  };
+}
+
+function calcCurrentStreak(progressMap) {
+  const entries = Object.entries(safeObj(progressMap))
+    .filter(([, value]) => {
+      const v = safeObj(value);
+      return (Number(v.points) || 0) > 0 || safeArr(v.completedExerciseIds).length > 0;
+    })
+    .map(([date]) => date)
+    .sort((a, b) => b.localeCompare(a));
+
+  if (entries.length === 0) return 0;
+
+  let streak = 0;
+  let cursor = parseISODateLocal(getTodayKey());
+  if (!cursor) return 0;
+
+  const entrySet = new Set(entries);
+
+  while (cursor) {
+    const y = cursor.getFullYear();
+    const m = String(cursor.getMonth() + 1).padStart(2, "0");
+    const d = String(cursor.getDate()).padStart(2, "0");
+    const key = `${y}-${m}-${d}`;
+
+    if (entrySet.has(key)) {
+      streak += 1;
+      cursor.setDate(cursor.getDate() - 1);
+      continue;
+    }
+
+    break;
+  }
+
+  return streak;
+}
+
+function calcTotalPoints(progressMap) {
+  return Object.values(safeObj(progressMap)).reduce((sum, entry) => sum + (Number(entry?.points) || 0), 0);
+}
+
+function calcWorkoutDays(progressMap) {
+  return Object.values(safeObj(progressMap)).filter((entry) => {
+    return (Number(entry?.points) || 0) > 0 || safeArr(entry?.completedExerciseIds).length > 0;
+  }).length;
+}
+
+function getBadges({ totalPoints, streak, totalWorkoutDays, totalExercisesCompleted }) {
+  const badges = [];
+
+  if (totalExercisesCompleted >= 1) {
+    badges.push({
+      id: "primeiro_passo",
+      title: "Primeiro passo",
+      desc: "Concluiu o primeiro exercício",
+      icon: Star,
+    });
+  }
+
+  if (totalWorkoutDays >= 3) {
+    badges.push({
+      id: "consistencia_3",
+      title: "Consistência 3x",
+      desc: "Treinou em 3 dias",
+      icon: Medal,
+    });
+  }
+
+  if (streak >= 3) {
+    badges.push({
+      id: "streak_3",
+      title: "Streak 3 dias",
+      desc: "3 dias seguidos em ação",
+      icon: Flame,
+    });
+  }
+
+  if (streak >= 7) {
+    badges.push({
+      id: "streak_7",
+      title: "Streak 7 dias",
+      desc: "Uma semana de consistência",
+      icon: Trophy,
+    });
+  }
+
+  if (totalPoints >= 100) {
+    badges.push({
+      id: "pontos_100",
+      title: "100 pontos",
+      desc: "Acumulou 100 pontos",
+      icon: Trophy,
+    });
+  }
+
+  if (totalPoints >= 300) {
+    badges.push({
+      id: "pontos_300",
+      title: "300 pontos",
+      desc: "Evolução forte",
+      icon: Sparkles,
+    });
+  }
+
+  return badges;
+}
+
 /**
- * Plano base (sugestões do app)
+ * =========================================================
+ * PLANO SUGERIDO
+ * =========================================================
  */
 function buildSuggestedPlan(objId) {
   const common = {
@@ -297,7 +448,9 @@ function buildSuggestedPlan(objId) {
 }
 
 /**
- * Sugestões automáticas em cima do treino do usuário
+ * =========================================================
+ * SUGESTÕES DO APP EM CIMA DO TREINO DO USUÁRIO
+ * =========================================================
  */
 function generateImprovements(customPlan = [], meta = {}) {
   const plan = safeArr(customPlan);
@@ -347,6 +500,11 @@ function generateImprovements(customPlan = [], meta = {}) {
   return suggestions;
 }
 
+/**
+ * =========================================================
+ * COMPONENTE PRINCIPAL
+ * =========================================================
+ */
 export default function Exercicios() {
   const [loading, setLoading] = useState(true);
   const [savingProgress, setSavingProgress] = useState(false);
@@ -360,26 +518,28 @@ export default function Exercicios() {
   const [showCustomize, setShowCustomize] = useState(false);
   const [showSuggestions, setShowSuggestions] = useState(false);
 
-  // Tudo fica em profiles.exercicios_custom (JSONB)
   const [custom, setCustom] = useState({
     nivel: "iniciante",
     diasSemana: 3,
     tempoMin: 30,
     local: "casa",
     limitacoes: "",
-
     useCustomPlan: true,
-
     customPlan: [
       {
         id: crypto?.randomUUID?.() || String(Date.now()),
         name: "Treino A",
         exercises: [
-          { id: crypto?.randomUUID?.() || String(Date.now() + 1), name: "Caminhada", sets: "", reps: "20 min", notes: "" },
+          {
+            id: crypto?.randomUUID?.() || String(Date.now() + 1),
+            name: "Caminhada",
+            sets: "",
+            reps: "20 min",
+            notes: "",
+          },
         ],
       },
     ],
-
     progress: {},
   });
 
@@ -443,8 +603,10 @@ export default function Exercicios() {
   }, []);
 
   const todayKey = useMemo(() => getTodayKey(), []);
-  const todayProgress = useMemo(() => safeObj(custom.progress?.[todayKey]), [custom.progress, todayKey]);
+  const todayProgress = useMemo(() => buildProgressEntry(custom.progress?.[todayKey]), [custom.progress, todayKey]);
+
   const completedExerciseIds = useMemo(() => new Set(safeArr(todayProgress.completedExerciseIds)), [todayProgress]);
+  const completedWorkoutIds = useMemo(() => new Set(safeArr(todayProgress.completedWorkoutIds)), [todayProgress]);
 
   const objetivoId = useMemo(() => {
     const raw = profileRow?.exercicios_objetivo ?? "";
@@ -528,19 +690,48 @@ export default function Exercicios() {
     });
   }, [custom.customPlan, metaSummary, custom.limitacoes]);
 
-  const completedExercisesCount = useMemo(() => {
-    return completedExerciseIds.size;
-  }, [completedExerciseIds]);
+  const completedExercisesCount = useMemo(() => completedExerciseIds.size, [completedExerciseIds]);
+  const completedWorkoutsCountToday = useMemo(() => completedWorkoutIds.size, [completedWorkoutIds]);
+  const totalExercisesCountToday = useMemo(() => mainPlanCards.flatMap((c) => safeArr(c.items)).length, [mainPlanCards]);
+  const overallProgressPercent = useMemo(() => {
+    if (!totalExercisesCountToday) return 0;
+    return Math.round((completedExercisesCount / totalExercisesCountToday) * 100);
+  }, [completedExercisesCount, totalExercisesCountToday]);
 
-  const completedWorkoutsCount = useMemo(() => {
-    return mainPlanCards.filter((card) => {
-      const ids = safeArr(card.items).map((item) => item.id);
-      return ids.length > 0 && ids.every((id) => completedExerciseIds.has(id));
-    }).length;
-  }, [mainPlanCards, completedExerciseIds]);
+  const todayPoints = useMemo(() => Number(todayProgress.points) || 0, [todayProgress]);
 
-  const todayPoints = useMemo(() => completedExercisesCount * 10, [completedExercisesCount]);
+  const progressStats = useMemo(() => {
+    const progressMap = safeObj(custom.progress);
 
+    const totalPoints = calcTotalPoints(progressMap);
+    const totalWorkoutDays = calcWorkoutDays(progressMap);
+
+    const totalExercisesCompleted = Object.values(progressMap).reduce((sum, entry) => {
+      return sum + safeArr(entry?.completedExerciseIds).length;
+    }, 0);
+
+    const streak = calcCurrentStreak(progressMap);
+    const badges = getBadges({
+      totalPoints,
+      streak,
+      totalWorkoutDays,
+      totalExercisesCompleted,
+    });
+
+    return {
+      totalPoints,
+      totalWorkoutDays,
+      totalExercisesCompleted,
+      streak,
+      badges,
+    };
+  }, [custom.progress]);
+
+  /**
+   * =========================================================
+   * DB
+   * =========================================================
+   */
   async function saveObjetivo(newObjId) {
     const { data: sessionData } = await supabase.auth.getSession();
     const session = sessionData?.session;
@@ -561,6 +752,7 @@ export default function Exercicios() {
     const { data: sessionData } = await supabase.auth.getSession();
     const session = sessionData?.session;
     if (!session?.user) throw new Error("Sessão expirada. Faça login novamente.");
+
     const userId = session.user.id;
 
     const payload = {
@@ -581,33 +773,61 @@ export default function Exercicios() {
   async function commitCustomUpdate(nextCustom) {
     const previous = custom;
     setCustom(nextCustom);
+
     try {
       setSavingProgress(true);
       await saveCustomToDb(nextCustom);
     } catch (e) {
       console.error(e);
       setCustom(previous);
-      alert(`Erro ao salvar progresso: ${e?.message || e}`);
+      alert(`Erro ao salvar: ${e?.message || e}`);
     } finally {
       setSavingProgress(false);
     }
   }
 
-  async function toggleExerciseComplete(exerciseId) {
-    const currentIds = new Set(safeArr(custom.progress?.[todayKey]?.completedExerciseIds));
+  /**
+   * =========================================================
+   * GAMIFICAÇÃO
+   * =========================================================
+   */
+  async function toggleExerciseComplete(exerciseId, workoutId) {
+    const currentEntry = buildProgressEntry(custom.progress?.[todayKey]);
+    const exerciseSet = new Set(safeArr(currentEntry.completedExerciseIds));
+    const workoutSet = new Set(safeArr(currentEntry.completedWorkoutIds));
 
-    if (currentIds.has(exerciseId)) {
-      currentIds.delete(exerciseId);
+    const wasCompleted = exerciseSet.has(exerciseId);
+
+    if (wasCompleted) {
+      exerciseSet.delete(exerciseId);
     } else {
-      currentIds.add(exerciseId);
+      exerciseSet.add(exerciseId);
     }
+
+    // recalcula workout concluído automaticamente
+    const targetWorkout = mainPlanCards.find((card) => card.key === workoutId);
+    if (targetWorkout) {
+      const allIds = safeArr(targetWorkout.items).map((item) => item.id);
+      const allDone = allIds.length > 0 && allIds.every((id) => exerciseSet.has(id));
+
+      if (allDone) {
+        workoutSet.add(workoutId);
+      } else {
+        workoutSet.delete(workoutId);
+      }
+    }
+
+    const points = exerciseSet.size * 10 + workoutSet.size * 20;
 
     const next = {
       ...custom,
       progress: {
         ...safeObj(custom.progress),
         [todayKey]: {
-          completedExerciseIds: Array.from(currentIds),
+          completedExerciseIds: Array.from(exerciseSet),
+          completedWorkoutIds: Array.from(workoutSet),
+          points,
+          updatedAt: new Date().toISOString(),
         },
       },
     };
@@ -616,18 +836,24 @@ export default function Exercicios() {
   }
 
   async function completeWorkout(card) {
-    const ids = safeArr(card.items).map((item) => item.id);
-    if (ids.length === 0) return;
+    const currentEntry = buildProgressEntry(custom.progress?.[todayKey]);
+    const exerciseSet = new Set(safeArr(currentEntry.completedExerciseIds));
+    const workoutSet = new Set(safeArr(currentEntry.completedWorkoutIds));
 
-    const currentIds = new Set(safeArr(custom.progress?.[todayKey]?.completedExerciseIds));
-    ids.forEach((id) => currentIds.add(id));
+    safeArr(card.items).forEach((item) => exerciseSet.add(item.id));
+    workoutSet.add(card.key);
+
+    const points = exerciseSet.size * 10 + workoutSet.size * 20;
 
     const next = {
       ...custom,
       progress: {
         ...safeObj(custom.progress),
         [todayKey]: {
-          completedExerciseIds: Array.from(currentIds),
+          completedExerciseIds: Array.from(exerciseSet),
+          completedWorkoutIds: Array.from(workoutSet),
+          points,
+          updatedAt: new Date().toISOString(),
         },
       },
     };
@@ -635,6 +861,26 @@ export default function Exercicios() {
     await commitCustomUpdate(next);
   }
 
+  async function resetTodayProgress() {
+    const ok = window.confirm("Deseja limpar o progresso de hoje?");
+    if (!ok) return;
+
+    const nextProgress = { ...safeObj(custom.progress) };
+    delete nextProgress[todayKey];
+
+    const next = {
+      ...custom,
+      progress: nextProgress,
+    };
+
+    await commitCustomUpdate(next);
+  }
+
+  /**
+   * =========================================================
+   * EDITOR PLANO
+   * =========================================================
+   */
   function addWorkout() {
     setCustom((prev) => ({
       ...prev,
@@ -672,7 +918,13 @@ export default function Exercicios() {
           ...w,
           exercises: [
             ...safeArr(w.exercises),
-            { id: crypto?.randomUUID?.() || String(Date.now()), name: "", sets: "", reps: "", notes: "" },
+            {
+              id: crypto?.randomUUID?.() || String(Date.now()),
+              name: "",
+              sets: "",
+              reps: "",
+              notes: "",
+            },
           ],
         };
       }),
@@ -684,7 +936,10 @@ export default function Exercicios() {
       ...prev,
       customPlan: safeArr(prev.customPlan).map((w) => {
         if (w.id !== workoutId) return w;
-        return { ...w, exercises: safeArr(w.exercises).filter((e) => e.id !== exId) };
+        return {
+          ...w,
+          exercises: safeArr(w.exercises).filter((e) => e.id !== exId),
+        };
       }),
     }));
   }
@@ -702,6 +957,11 @@ export default function Exercicios() {
     }));
   }
 
+  /**
+   * =========================================================
+   * LOADING
+   * =========================================================
+   */
   if (loading) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-indigo-50 flex items-center justify-center">
@@ -726,9 +986,10 @@ export default function Exercicios() {
             >
               <ArrowLeft className="w-5 h-5 text-gray-600" />
             </button>
+
             <div>
               <h1 className="text-xl font-bold text-gray-900">Exercícios</h1>
-              <p className="text-sm text-gray-500">Seu plano principal + progresso do dia</p>
+              <p className="text-sm text-gray-500">Plano principal, progresso e gamificação</p>
             </div>
           </div>
 
@@ -756,9 +1017,13 @@ export default function Exercicios() {
                 <Target className="w-4 h-4" />
                 Objetivo atual
               </div>
+
               <div className="text-2xl font-bold text-gray-900 mt-1">{objetivoAtualLabel}</div>
+
               <div className="text-sm text-gray-600 mt-1">
-                {objetivoId ? OBJETIVOS.find((o) => o.id === objetivoId)?.hint : "Não definido — recomendamos escolher um objetivo."}
+                {objetivoId
+                  ? OBJETIVOS.find((o) => o.id === objetivoId)?.hint
+                  : "Não definido — recomendamos escolher um objetivo."}
               </div>
 
               <div className="mt-3 flex items-start gap-2 text-xs text-gray-500">
@@ -768,13 +1033,14 @@ export default function Exercicios() {
             </div>
 
             <div className="bg-indigo-50 border border-indigo-100 rounded-xl p-4 min-w-[260px] hidden md:block">
-              <div className="text-xs text-indigo-700 font-semibold mb-1">Prioridade</div>
+              <div className="text-xs text-indigo-700 font-semibold mb-1">Plano em uso</div>
               <div className="text-sm text-indigo-900">
                 {custom.useCustomPlan && hasCustomPlan ? "Plano personalizado (seu)" : "Plano sugerido (app)"}
               </div>
               <div className="text-xs text-indigo-700 mt-2">
                 {metaSummary.dias}x/sem • {metaSummary.tempo} min • {metaSummary.local}
               </div>
+
               {custom.limitacoes?.trim() ? (
                 <div className="text-xs text-indigo-700 mt-2">
                   <span className="font-semibold">Limitações:</span> {custom.limitacoes}
@@ -784,81 +1050,173 @@ export default function Exercicios() {
           </div>
         </div>
 
-        {/* Gamificação / progresso do dia */}
-        <div className="grid md:grid-cols-3 gap-4 mb-5">
+        {/* Dashboard gamificado */}
+        <div className="grid md:grid-cols-4 gap-4 mb-5">
           <div className="bg-white rounded-2xl p-5 border border-gray-100 shadow-sm">
             <div className="flex items-center gap-2 text-sm text-gray-500 mb-2">
               <Trophy className="w-4 h-4 text-amber-500" />
               Pontos de hoje
             </div>
             <div className="text-3xl font-bold text-gray-900">{todayPoints}</div>
-            <div className="text-xs text-gray-500 mt-1">+10 pontos por exercício concluído</div>
+            <div className="text-xs text-gray-500 mt-1">+10 por exercício • +20 por treino completo</div>
           </div>
 
           <div className="bg-white rounded-2xl p-5 border border-gray-100 shadow-sm">
             <div className="flex items-center gap-2 text-sm text-gray-500 mb-2">
               <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-              Exercícios concluídos
+              Exercícios
             </div>
             <div className="text-3xl font-bold text-gray-900">{completedExercisesCount}</div>
-            <div className="text-xs text-gray-500 mt-1">Marque cada exercício quando terminar</div>
+            <div className="text-xs text-gray-500 mt-1">Concluídos hoje</div>
           </div>
 
           <div className="bg-white rounded-2xl p-5 border border-gray-100 shadow-sm">
             <div className="flex items-center gap-2 text-sm text-gray-500 mb-2">
               <Flame className="w-4 h-4 text-rose-500" />
-              Treinos completos
+              Streak
             </div>
-            <div className="text-3xl font-bold text-gray-900">{completedWorkoutsCount}</div>
-            <div className="text-xs text-gray-500 mt-1">Treino completo = todos os exercícios concluídos</div>
+            <div className="text-3xl font-bold text-gray-900">{progressStats.streak}</div>
+            <div className="text-xs text-gray-500 mt-1">Dias seguidos</div>
           </div>
+
+          <div className="bg-white rounded-2xl p-5 border border-gray-100 shadow-sm">
+            <div className="flex items-center gap-2 text-sm text-gray-500 mb-2">
+              <CalendarDays className="w-4 h-4 text-indigo-600" />
+              Dias ativos
+            </div>
+            <div className="text-3xl font-bold text-gray-900">{progressStats.totalWorkoutDays}</div>
+            <div className="text-xs text-gray-500 mt-1">Desde o início</div>
+          </div>
+        </div>
+
+        {/* Resumo forte */}
+        <div className="grid lg:grid-cols-3 gap-4 mb-5">
+          <div className="lg:col-span-2 bg-white rounded-2xl p-5 border border-gray-100 shadow-sm">
+            <div className="flex items-center justify-between gap-3 mb-3">
+              <div>
+                <div className="text-sm text-gray-500">Progresso de hoje</div>
+                <div className="text-lg font-bold text-gray-900">
+                  {overallProgressPercent}% concluído • {formatDateBR(todayKey)}
+                </div>
+              </div>
+
+              <Button variant="outline" className="rounded-xl" onClick={resetTodayProgress} disabled={savingProgress}>
+                <RotateCcw className="w-4 h-4 mr-2" />
+                Limpar hoje
+              </Button>
+            </div>
+
+            <div className="w-full h-3 rounded-full bg-slate-100 overflow-hidden">
+              <div
+                className="h-full rounded-full bg-gradient-to-r from-indigo-600 via-blue-600 to-emerald-500 transition-all duration-500"
+                style={{ width: `${overallProgressPercent}%` }}
+              />
+            </div>
+
+            <div className="mt-3 flex flex-wrap gap-3 text-xs text-gray-500">
+              <div>{completedExercisesCount}/{totalExercisesCountToday} exercícios</div>
+              <div>{completedWorkoutsCountToday} treino(s) completo(s) hoje</div>
+              {savingProgress ? <div>Salvando...</div> : <div>Salvo automaticamente</div>}
+            </div>
+          </div>
+
+          <div className="bg-white rounded-2xl p-5 border border-gray-100 shadow-sm">
+            <div className="text-sm text-gray-500">Resumo acumulado</div>
+            <div className="text-lg font-bold text-gray-900 mt-1">Seu desempenho</div>
+
+            <div className="mt-4 space-y-3 text-sm text-gray-700">
+              <div className="flex items-center justify-between">
+                <span>Pontos totais</span>
+                <span className="font-semibold">{progressStats.totalPoints}</span>
+              </div>
+
+              <div className="flex items-center justify-between">
+                <span>Exercícios concluídos</span>
+                <span className="font-semibold">{progressStats.totalExercisesCompleted}</span>
+              </div>
+
+              <div className="flex items-center justify-between">
+                <span>Melhor streak</span>
+                <span className="font-semibold">{progressStats.streak} dias atuais</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Badges */}
+        <div className="bg-white rounded-2xl p-5 border border-gray-100 shadow-sm mb-5">
+          <div className="flex items-center gap-2 mb-4">
+            <Medal className="w-5 h-5 text-amber-500" />
+            <div className="font-semibold text-gray-900">Badges e conquistas</div>
+          </div>
+
+          {progressStats.badges.length === 0 ? (
+            <div className="text-sm text-gray-500">
+              Conclua seus primeiros exercícios para desbloquear badges.
+            </div>
+          ) : (
+            <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-3">
+              {progressStats.badges.map((badge) => {
+                const Icon = badge.icon;
+                return (
+                  <div
+                    key={badge.id}
+                    className="rounded-2xl border border-amber-100 bg-gradient-to-br from-amber-50 to-yellow-50 p-4"
+                  >
+                    <div className="flex items-center gap-2 mb-2">
+                      <Icon className="w-5 h-5 text-amber-600" />
+                      <div className="font-semibold text-gray-900">{badge.title}</div>
+                    </div>
+                    <div className="text-sm text-gray-600">{badge.desc}</div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
 
         {/* Plano PRINCIPAL */}
         <div className="bg-white rounded-2xl p-5 border border-gray-100 shadow-sm mb-4">
-          <div className="flex items-center justify-between gap-3 mb-3">
+          <div className="flex items-center justify-between gap-3 mb-4">
             <div>
               <div className="text-sm text-gray-500">Plano principal</div>
               <div className="text-lg font-bold text-gray-900">{mainHeadline}</div>
             </div>
 
-            <div className="flex items-center gap-2">
-              {custom.useCustomPlan && hasCustomPlan ? (
-                <Button variant="outline" className="rounded-xl" onClick={() => setShowSuggestions(true)}>
-                  <Wand2 className="w-4 h-4 mr-2" />
-                  Sugestões do app
-                </Button>
-              ) : null}
-
-              {savingProgress ? (
-                <div className="text-xs text-gray-500">Salvando progresso...</div>
-              ) : null}
-            </div>
+            {custom.useCustomPlan && hasCustomPlan ? (
+              <Button variant="outline" className="rounded-xl" onClick={() => setShowSuggestions(true)}>
+                <Wand2 className="w-4 h-4 mr-2" />
+                Sugestões do app
+              </Button>
+            ) : null}
           </div>
 
           <div className="grid lg:grid-cols-3 gap-4">
-            {mainPlanCards.map((c) => {
-              const Icon = c.icon;
-              const itemIds = safeArr(c.items).map((item) => item.id);
-              const allDone = itemIds.length > 0 && itemIds.every((id) => completedExerciseIds.has(id));
-              const pendingCount = itemIds.filter((id) => !completedExerciseIds.has(id)).length;
+            {mainPlanCards.map((card) => {
+              const Icon = card.icon;
+              const itemIds = safeArr(card.items).map((item) => item.id);
+              const completedItems = itemIds.filter((id) => completedExerciseIds.has(id)).length;
+              const totalItems = itemIds.length;
+              const allDone = totalItems > 0 && completedItems === totalItems;
+              const progress = totalItems > 0 ? Math.round((completedItems / totalItems) * 100) : 0;
+              const isWorkoutDone = completedWorkoutIds.has(card.key);
 
               return (
-                <div key={c.key} className="bg-white rounded-2xl p-5 border border-gray-100 shadow-sm">
+                <div key={card.key} className="bg-white rounded-2xl p-5 border border-gray-100 shadow-sm">
                   <div className="flex items-center justify-between mb-3">
                     <div className="flex items-center gap-2">
                       <Icon className="w-5 h-5 text-indigo-700" />
-                      <div className="font-semibold text-gray-900">{c.title}</div>
+                      <div className="font-semibold text-gray-900">{card.title}</div>
                     </div>
-                    <div className="text-xs text-gray-500">{c.duration}</div>
+                    <div className="text-xs text-gray-500">{card.duration}</div>
                   </div>
 
-                  <div className="text-sm text-gray-600 mb-3">{c.desc}</div>
+                  <div className="text-sm text-gray-600 mb-3">{card.desc}</div>
 
                   <div className="flex items-center justify-between gap-3 mb-3">
                     <div className="inline-flex items-center gap-2 text-xs px-2 py-1 rounded-full border bg-slate-50 text-slate-700">
                       <HeartPulse className="w-3 h-3" />
-                      Intensidade: {c.intensity}
+                      Intensidade: {card.intensity}
                     </div>
 
                     <div
@@ -868,17 +1226,27 @@ export default function Exercicios() {
                           : "bg-amber-50 text-amber-700 border-amber-200"
                       }`}
                     >
-                      {allDone ? "Treino concluído" : `${pendingCount} pendente(s)`}
+                      {allDone ? "Concluído" : `${completedItems}/${totalItems}`}
                     </div>
                   </div>
 
+                  <div className="mb-4">
+                    <div className="w-full h-2 rounded-full bg-slate-100 overflow-hidden">
+                      <div
+                        className="h-full rounded-full bg-gradient-to-r from-indigo-600 to-emerald-500 transition-all duration-500"
+                        style={{ width: `${progress}%` }}
+                      />
+                    </div>
+                    <div className="text-xs text-gray-500 mt-1">{progress}% do treino concluído</div>
+                  </div>
+
                   <div className="space-y-3">
-                    {safeArr(c.items).map((it) => {
-                      const done = completedExerciseIds.has(it.id);
+                    {safeArr(card.items).map((item) => {
+                      const done = completedExerciseIds.has(item.id);
 
                       return (
                         <div
-                          key={it.id}
+                          key={item.id}
                           className={`rounded-xl border p-3 transition ${
                             done ? "border-emerald-200 bg-emerald-50" : "border-slate-200 bg-slate-50"
                           }`}
@@ -889,7 +1257,7 @@ export default function Exercicios() {
                                 className={`w-4 h-4 mt-0.5 ${done ? "text-emerald-600" : "text-gray-400"}`}
                               />
                               <span className={done ? "text-emerald-900 line-through" : "text-gray-700"}>
-                                {it.label}
+                                {item.label}
                               </span>
                             </div>
 
@@ -899,10 +1267,10 @@ export default function Exercicios() {
                               className={`rounded-xl shrink-0 ${
                                 done ? "" : "bg-emerald-600 hover:bg-emerald-700 text-white"
                               }`}
-                              onClick={() => toggleExerciseComplete(it.id)}
+                              onClick={() => toggleExerciseComplete(item.id, card.key)}
                               disabled={savingProgress}
                             >
-                              {done ? "Concluído" : "Concluir"}
+                              {done ? "Feito" : "Concluir"}
                             </Button>
                           </div>
                         </div>
@@ -912,15 +1280,15 @@ export default function Exercicios() {
 
                   <div className="mt-4">
                     <Button
-                      onClick={() => completeWorkout(c)}
-                      disabled={allDone || savingProgress || itemIds.length === 0}
+                      onClick={() => completeWorkout(card)}
+                      disabled={savingProgress || isWorkoutDone || totalItems === 0}
                       className={`w-full rounded-xl ${
-                        allDone
+                        isWorkoutDone
                           ? "bg-emerald-100 text-emerald-800 hover:bg-emerald-100"
                           : "bg-gradient-to-r from-indigo-600 to-blue-600 hover:from-indigo-700 hover:to-blue-700"
                       }`}
                     >
-                      {allDone ? "Treino concluído ✅" : `Concluir treino (+${pendingCount * 10} pts)`}
+                      {isWorkoutDone ? "Treino concluído ✅" : "Concluir treino completo"}
                     </Button>
                   </div>
                 </div>
@@ -930,7 +1298,7 @@ export default function Exercicios() {
         </div>
 
         {/* Recomendação semanal */}
-        <div className="bg-white rounded-2xl p-5 border border-gray-100 shadow-sm">
+        <div className="bg-white rounded-2xl p-5 border border-gray-100 shadow-sm mb-5">
           <div className="flex items-center gap-2 mb-3">
             <HeartPulse className="w-5 h-5 text-rose-600" />
             <div className="font-semibold text-gray-900">Recomendação semanal</div>
@@ -942,7 +1310,7 @@ export default function Exercicios() {
           </div>
         </div>
 
-        {/* Modal: Redefinir objetivo */}
+        {/* Modal: objetivo */}
         <AnimatePresence>
           {showGoalModal && (
             <motion.div
@@ -964,6 +1332,7 @@ export default function Exercicios() {
                     <div className="text-lg font-bold text-gray-900">Redefinir objetivo</div>
                     <div className="text-sm text-gray-500">Isso muda as sugestões do app automaticamente.</div>
                   </div>
+
                   <button
                     className="w-10 h-10 rounded-xl border border-gray-200 flex items-center justify-center"
                     onClick={() => setShowGoalModal(false)}
@@ -990,6 +1359,7 @@ export default function Exercicios() {
                     <Button variant="outline" className="w-full rounded-xl" onClick={() => setShowGoalModal(false)}>
                       Cancelar
                     </Button>
+
                     <Button
                       className="w-full rounded-xl bg-gradient-to-r from-indigo-600 to-blue-600 hover:from-indigo-700 hover:to-blue-700"
                       onClick={async () => {
@@ -1011,7 +1381,7 @@ export default function Exercicios() {
           )}
         </AnimatePresence>
 
-        {/* Modal: Sugestões do app */}
+        {/* Modal: sugestões */}
         <AnimatePresence>
           {showSuggestions && (
             <motion.div
@@ -1033,6 +1403,7 @@ export default function Exercicios() {
                     <div className="text-lg font-bold text-gray-900">Sugestões do app</div>
                     <div className="text-sm text-gray-500">Melhorias opcionais em cima do seu treino.</div>
                   </div>
+
                   <button
                     className="w-10 h-10 rounded-xl border border-gray-200 flex items-center justify-center"
                     onClick={() => setShowSuggestions(false)}
@@ -1059,7 +1430,7 @@ export default function Exercicios() {
           )}
         </AnimatePresence>
 
-        {/* Modal: Personalizar treino */}
+        {/* Modal: personalizar */}
         <AnimatePresence>
           {showCustomize && (
             <motion.div
@@ -1083,6 +1454,7 @@ export default function Exercicios() {
                       Crie treinos do seu jeito. O app vai priorizar o plano personalizado.
                     </div>
                   </div>
+
                   <button
                     className="w-10 h-10 rounded-xl border border-gray-200 flex items-center justify-center"
                     onClick={() => setShowCustomize(false)}
@@ -1092,7 +1464,6 @@ export default function Exercicios() {
                 </div>
 
                 <div className="p-6 space-y-5">
-                  {/* Prioridade / Meta */}
                   <div className="rounded-2xl border border-gray-200 bg-slate-50 p-4">
                     <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
                       <div>
@@ -1175,11 +1546,10 @@ export default function Exercicios() {
                     </div>
                   </div>
 
-                  {/* Editor do plano */}
                   <div className="flex items-center justify-between gap-3">
                     <div>
                       <div className="text-base font-semibold text-gray-900">Seu plano (livre)</div>
-                      <div className="text-xs text-gray-500">Crie quantos treinos quiser. Ex: A/B/C ou “Seg/Qua/Sex”.</div>
+                      <div className="text-xs text-gray-500">Crie quantos treinos quiser. Ex: A/B/C ou Seg/Qua/Sex.</div>
                     </div>
 
                     <Button variant="outline" className="rounded-xl" onClick={addWorkout}>
@@ -1210,6 +1580,7 @@ export default function Exercicios() {
 
                         <div className="mt-4 flex items-center justify-between">
                           <div className="text-sm font-semibold text-gray-900">Exercícios</div>
+
                           <Button variant="outline" className="rounded-xl" onClick={() => addExercise(w.id)}>
                             <Plus className="w-4 h-4 mr-2" />
                             Adicionar exercício
@@ -1278,7 +1649,6 @@ export default function Exercicios() {
                     ))}
                   </div>
 
-                  {/* Ações */}
                   <div className="flex flex-col md:flex-row gap-3 pt-2">
                     <Button variant="outline" className="w-full rounded-xl" onClick={() => setShowCustomize(false)}>
                       Fechar
@@ -1287,9 +1657,7 @@ export default function Exercicios() {
                     <Button
                       variant="outline"
                       className="w-full rounded-xl"
-                      onClick={() => {
-                        setShowSuggestions(true);
-                      }}
+                      onClick={() => setShowSuggestions(true)}
                     >
                       <Wand2 className="w-4 h-4 mr-2" />
                       Gerar sugestões do app
