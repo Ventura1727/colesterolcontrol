@@ -16,6 +16,8 @@ import {
   Plus,
   Trash2,
   Wand2,
+  Trophy,
+  Flame,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -57,6 +59,7 @@ function objetivoLabel(objId) {
 function safeObj(v) {
   return v && typeof v === "object" && !Array.isArray(v) ? v : {};
 }
+
 function safeArr(v) {
   return Array.isArray(v) ? v : [];
 }
@@ -69,9 +72,21 @@ function toNumberOrNull(v) {
   return Number.isFinite(n) ? n : null;
 }
 
+function getTodayKey() {
+  try {
+    return new Intl.DateTimeFormat("en-CA", {
+      timeZone: "America/Sao_Paulo",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).format(new Date());
+  } catch {
+    return new Date().toISOString().slice(0, 10);
+  }
+}
+
 /**
- * Plano base (sugestões do app) - continua existindo,
- * mas deixa de ser o principal quando o usuário personaliza.
+ * Plano base (sugestões do app)
  */
 function buildSuggestedPlan(objId) {
   const common = {
@@ -282,8 +297,7 @@ function buildSuggestedPlan(objId) {
 }
 
 /**
- * Sugestões automáticas em cima do treino do usuário (MVP).
- * Não muda o treino do usuário, apenas recomenda melhorias.
+ * Sugestões automáticas em cima do treino do usuário
  */
 function generateImprovements(customPlan = [], meta = {}) {
   const plan = safeArr(customPlan);
@@ -335,9 +349,10 @@ function generateImprovements(customPlan = [], meta = {}) {
 
 export default function Exercicios() {
   const [loading, setLoading] = useState(true);
+  const [savingProgress, setSavingProgress] = useState(false);
 
   const [userEmail, setUserEmail] = useState("");
-  const [profileRow, setProfileRow] = useState(null); // public.profiles
+  const [profileRow, setProfileRow] = useState(null);
 
   const [showGoalModal, setShowGoalModal] = useState(false);
   const [goalDraft, setGoalDraft] = useState("melhorar_habitos");
@@ -347,17 +362,14 @@ export default function Exercicios() {
 
   // Tudo fica em profiles.exercicios_custom (JSONB)
   const [custom, setCustom] = useState({
-    // metas “de ambiente”
     nivel: "iniciante",
     diasSemana: 3,
     tempoMin: 30,
     local: "casa",
     limitacoes: "",
 
-    // controle
     useCustomPlan: true,
 
-    // plano livre do usuário
     customPlan: [
       {
         id: crypto?.randomUUID?.() || String(Date.now()),
@@ -367,6 +379,8 @@ export default function Exercicios() {
         ],
       },
     ],
+
+    progress: {},
   });
 
   useEffect(() => {
@@ -376,6 +390,7 @@ export default function Exercicios() {
 
         const { data: sessionData } = await supabase.auth.getSession();
         const session = sessionData?.session;
+
         if (!session?.user) {
           window.location.href = `/login?next=${encodeURIComponent("/exercicios")}`;
           return;
@@ -398,13 +413,11 @@ export default function Exercicios() {
 
         setProfileRow(prof);
 
-        // carrega custom do Supabase
         const dbCustom = safeObj(prof?.exercicios_custom);
         if (Object.keys(dbCustom).length > 0) {
           setCustom((prev) => ({
             ...prev,
             ...dbCustom,
-            // garantir formatos corretos
             customPlan: safeArr(dbCustom.customPlan).map((w) => ({
               id: w?.id || crypto?.randomUUID?.() || String(Date.now()),
               name: w?.name || "Treino",
@@ -416,6 +429,7 @@ export default function Exercicios() {
                 notes: e?.notes ?? "",
               })),
             })),
+            progress: safeObj(dbCustom.progress),
           }));
         }
 
@@ -427,6 +441,10 @@ export default function Exercicios() {
       }
     })();
   }, []);
+
+  const todayKey = useMemo(() => getTodayKey(), []);
+  const todayProgress = useMemo(() => safeObj(custom.progress?.[todayKey]), [custom.progress, todayKey]);
+  const completedExerciseIds = useMemo(() => new Set(safeArr(todayProgress.completedExerciseIds)), [todayProgress]);
 
   const objetivoId = useMemo(() => {
     const raw = profileRow?.exercicios_objetivo ?? "";
@@ -447,29 +465,44 @@ export default function Exercicios() {
   const hasCustomPlan = useMemo(() => safeArr(custom.customPlan).length > 0, [custom]);
 
   const mainPlanCards = useMemo(() => {
-    // Plano principal = plano do usuário se estiver ativo e existir
     if (custom.useCustomPlan && hasCustomPlan) {
       return safeArr(custom.customPlan).map((w) => ({
         key: w.id,
         icon: Dumbbell,
         title: w.name || "Treino",
         duration: `${metaSummary.tempo} min`,
-        intensity: metaSummary.nivel === "avancado" ? "Moderada/Alta" : metaSummary.nivel === "intermediario" ? "Moderada" : "Leve/Moderada",
+        intensity:
+          metaSummary.nivel === "avancado"
+            ? "Moderada/Alta"
+            : metaSummary.nivel === "intermediario"
+            ? "Moderada"
+            : "Leve/Moderada",
         desc: `Plano do usuário • ${metaSummary.dias}x/sem • ${metaSummary.local}`,
-        items: safeArr(w.exercises).map((e) => {
+        isCustom: true,
+        items: safeArr(w.exercises).map((e, idx) => {
           const sets = (e.sets || "").trim();
           const reps = (e.reps || "").trim();
           const notes = (e.notes || "").trim();
-          const right = [sets ? `${sets}` : "", reps ? `${reps}` : ""].filter(Boolean).join(" • ");
-          const base = `${(e.name || "").trim() || "Exercício"}`;
+          const right = [sets ? `${sets} séries` : "", reps ? `${reps}` : ""].filter(Boolean).join(" • ");
+          const base = `${(e.name || "").trim() || `Exercício ${idx + 1}`}`;
           const extra = right ? ` (${right})` : "";
           const obs = notes ? ` — ${notes}` : "";
-          return `${base}${extra}${obs}`;
+          return {
+            id: e.id,
+            label: `${base}${extra}${obs}`,
+          };
         }),
       }));
     }
-    // Senão, principal = sugerido
-    return suggestedPlan.cards;
+
+    return safeArr(suggestedPlan.cards).map((c) => ({
+      ...c,
+      isCustom: false,
+      items: safeArr(c.items).map((it, idx) => ({
+        id: `${c.key}_${idx}`,
+        label: it,
+      })),
+    }));
   }, [custom.useCustomPlan, hasCustomPlan, custom.customPlan, metaSummary, suggestedPlan.cards]);
 
   const mainHeadline = useMemo(() => {
@@ -481,7 +514,7 @@ export default function Exercicios() {
     if (custom.useCustomPlan && hasCustomPlan) {
       return [
         `${metaSummary.dias} sessões/semana (definido por você)`,
-        `Meta: consistência primeiro. Depois evolua 1% por semana (tempo, repetições ou carga).`,
+        "Meta: consistência primeiro. Depois evolua 1% por semana (tempo, repetições ou carga).",
       ];
     }
     return suggestedPlan.weekly;
@@ -494,6 +527,19 @@ export default function Exercicios() {
       limitacoes: custom.limitacoes || "",
     });
   }, [custom.customPlan, metaSummary, custom.limitacoes]);
+
+  const completedExercisesCount = useMemo(() => {
+    return completedExerciseIds.size;
+  }, [completedExerciseIds]);
+
+  const completedWorkoutsCount = useMemo(() => {
+    return mainPlanCards.filter((card) => {
+      const ids = safeArr(card.items).map((item) => item.id);
+      return ids.length > 0 && ids.every((id) => completedExerciseIds.has(id));
+    }).length;
+  }, [mainPlanCards, completedExerciseIds]);
+
+  const todayPoints = useMemo(() => completedExercisesCount * 10, [completedExercisesCount]);
 
   async function saveObjetivo(newObjId) {
     const { data: sessionData } = await supabase.auth.getSession();
@@ -519,35 +565,88 @@ export default function Exercicios() {
 
     const payload = {
       ...nextCustom,
-      // garantir que customPlan seja array
       customPlan: safeArr(nextCustom.customPlan),
+      progress: safeObj(nextCustom.progress),
     };
 
     const { error } = await supabase
       .from("profiles")
-      .update({ exercicios_custom: payload })
-      .eq("id", userId);
+      .upsert({ id: userId, exercicios_custom: payload }, { onConflict: "id" });
 
     if (error) throw new Error(error.message);
 
     setProfileRow((p) => ({ ...(p || { id: userId }), exercicios_custom: payload }));
   }
 
+  async function commitCustomUpdate(nextCustom) {
+    const previous = custom;
+    setCustom(nextCustom);
+    try {
+      setSavingProgress(true);
+      await saveCustomToDb(nextCustom);
+    } catch (e) {
+      console.error(e);
+      setCustom(previous);
+      alert(`Erro ao salvar progresso: ${e?.message || e}`);
+    } finally {
+      setSavingProgress(false);
+    }
+  }
+
+  async function toggleExerciseComplete(exerciseId) {
+    const currentIds = new Set(safeArr(custom.progress?.[todayKey]?.completedExerciseIds));
+
+    if (currentIds.has(exerciseId)) {
+      currentIds.delete(exerciseId);
+    } else {
+      currentIds.add(exerciseId);
+    }
+
+    const next = {
+      ...custom,
+      progress: {
+        ...safeObj(custom.progress),
+        [todayKey]: {
+          completedExerciseIds: Array.from(currentIds),
+        },
+      },
+    };
+
+    await commitCustomUpdate(next);
+  }
+
+  async function completeWorkout(card) {
+    const ids = safeArr(card.items).map((item) => item.id);
+    if (ids.length === 0) return;
+
+    const currentIds = new Set(safeArr(custom.progress?.[todayKey]?.completedExerciseIds));
+    ids.forEach((id) => currentIds.add(id));
+
+    const next = {
+      ...custom,
+      progress: {
+        ...safeObj(custom.progress),
+        [todayKey]: {
+          completedExerciseIds: Array.from(currentIds),
+        },
+      },
+    };
+
+    await commitCustomUpdate(next);
+  }
+
   function addWorkout() {
-    setCustom((prev) => {
-      const next = {
-        ...prev,
-        customPlan: [
-          ...safeArr(prev.customPlan),
-          {
-            id: crypto?.randomUUID?.() || String(Date.now()),
-            name: `Treino ${String.fromCharCode(65 + safeArr(prev.customPlan).length)}`,
-            exercises: [],
-          },
-        ],
-      };
-      return next;
-    });
+    setCustom((prev) => ({
+      ...prev,
+      customPlan: [
+        ...safeArr(prev.customPlan),
+        {
+          id: crypto?.randomUUID?.() || String(Date.now()),
+          name: `Treino ${String.fromCharCode(65 + safeArr(prev.customPlan).length)}`,
+          exercises: [],
+        },
+      ],
+    }));
   }
 
   function removeWorkout(workoutId) {
@@ -629,7 +728,7 @@ export default function Exercicios() {
             </button>
             <div>
               <h1 className="text-xl font-bold text-gray-900">Exercícios</h1>
-              <p className="text-sm text-gray-500">Sugestões + seu plano personalizado</p>
+              <p className="text-sm text-gray-500">Seu plano principal + progresso do dia</p>
             </div>
           </div>
 
@@ -638,6 +737,7 @@ export default function Exercicios() {
               <RefreshCcw className="w-4 h-4 mr-2" />
               Redefinir objetivo
             </Button>
+
             <Button
               onClick={() => setShowCustomize(true)}
               className="rounded-xl bg-gradient-to-r from-indigo-600 to-blue-600 hover:from-indigo-700 hover:to-blue-700"
@@ -684,7 +784,37 @@ export default function Exercicios() {
           </div>
         </div>
 
-        {/* Plano PRINCIPAL (usuário ou sugerido) */}
+        {/* Gamificação / progresso do dia */}
+        <div className="grid md:grid-cols-3 gap-4 mb-5">
+          <div className="bg-white rounded-2xl p-5 border border-gray-100 shadow-sm">
+            <div className="flex items-center gap-2 text-sm text-gray-500 mb-2">
+              <Trophy className="w-4 h-4 text-amber-500" />
+              Pontos de hoje
+            </div>
+            <div className="text-3xl font-bold text-gray-900">{todayPoints}</div>
+            <div className="text-xs text-gray-500 mt-1">+10 pontos por exercício concluído</div>
+          </div>
+
+          <div className="bg-white rounded-2xl p-5 border border-gray-100 shadow-sm">
+            <div className="flex items-center gap-2 text-sm text-gray-500 mb-2">
+              <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+              Exercícios concluídos
+            </div>
+            <div className="text-3xl font-bold text-gray-900">{completedExercisesCount}</div>
+            <div className="text-xs text-gray-500 mt-1">Marque cada exercício quando terminar</div>
+          </div>
+
+          <div className="bg-white rounded-2xl p-5 border border-gray-100 shadow-sm">
+            <div className="flex items-center gap-2 text-sm text-gray-500 mb-2">
+              <Flame className="w-4 h-4 text-rose-500" />
+              Treinos completos
+            </div>
+            <div className="text-3xl font-bold text-gray-900">{completedWorkoutsCount}</div>
+            <div className="text-xs text-gray-500 mt-1">Treino completo = todos os exercícios concluídos</div>
+          </div>
+        </div>
+
+        {/* Plano PRINCIPAL */}
         <div className="bg-white rounded-2xl p-5 border border-gray-100 shadow-sm mb-4">
           <div className="flex items-center justify-between gap-3 mb-3">
             <div>
@@ -692,17 +822,27 @@ export default function Exercicios() {
               <div className="text-lg font-bold text-gray-900">{mainHeadline}</div>
             </div>
 
-            {custom.useCustomPlan && hasCustomPlan ? (
-              <Button variant="outline" className="rounded-xl" onClick={() => setShowSuggestions(true)}>
-                <Wand2 className="w-4 h-4 mr-2" />
-                Sugestões do app
-              </Button>
-            ) : null}
+            <div className="flex items-center gap-2">
+              {custom.useCustomPlan && hasCustomPlan ? (
+                <Button variant="outline" className="rounded-xl" onClick={() => setShowSuggestions(true)}>
+                  <Wand2 className="w-4 h-4 mr-2" />
+                  Sugestões do app
+                </Button>
+              ) : null}
+
+              {savingProgress ? (
+                <div className="text-xs text-gray-500">Salvando progresso...</div>
+              ) : null}
+            </div>
           </div>
 
           <div className="grid lg:grid-cols-3 gap-4">
             {mainPlanCards.map((c) => {
               const Icon = c.icon;
+              const itemIds = safeArr(c.items).map((item) => item.id);
+              const allDone = itemIds.length > 0 && itemIds.every((id) => completedExerciseIds.has(id));
+              const pendingCount = itemIds.filter((id) => !completedExerciseIds.has(id)).length;
+
               return (
                 <div key={c.key} className="bg-white rounded-2xl p-5 border border-gray-100 shadow-sm">
                   <div className="flex items-center justify-between mb-3">
@@ -715,19 +855,74 @@ export default function Exercicios() {
 
                   <div className="text-sm text-gray-600 mb-3">{c.desc}</div>
 
-                  <div className="inline-flex items-center gap-2 text-xs px-2 py-1 rounded-full border bg-slate-50 text-slate-700 mb-3">
-                    <HeartPulse className="w-3 h-3" />
-                    Intensidade: {c.intensity}
+                  <div className="flex items-center justify-between gap-3 mb-3">
+                    <div className="inline-flex items-center gap-2 text-xs px-2 py-1 rounded-full border bg-slate-50 text-slate-700">
+                      <HeartPulse className="w-3 h-3" />
+                      Intensidade: {c.intensity}
+                    </div>
+
+                    <div
+                      className={`text-xs px-2 py-1 rounded-full border ${
+                        allDone
+                          ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+                          : "bg-amber-50 text-amber-700 border-amber-200"
+                      }`}
+                    >
+                      {allDone ? "Treino concluído" : `${pendingCount} pendente(s)`}
+                    </div>
                   </div>
 
-                  <ul className="space-y-2 text-sm">
-                    {safeArr(c.items).map((it, idx) => (
-                      <li key={idx} className="flex items-start gap-2 text-gray-700">
-                        <CheckCircle2 className="w-4 h-4 text-emerald-600 mt-0.5" />
-                        <span>{it}</span>
-                      </li>
-                    ))}
-                  </ul>
+                  <div className="space-y-3">
+                    {safeArr(c.items).map((it) => {
+                      const done = completedExerciseIds.has(it.id);
+
+                      return (
+                        <div
+                          key={it.id}
+                          className={`rounded-xl border p-3 transition ${
+                            done ? "border-emerald-200 bg-emerald-50" : "border-slate-200 bg-slate-50"
+                          }`}
+                        >
+                          <div className="flex items-start gap-3 justify-between">
+                            <div className="flex items-start gap-2 text-sm flex-1">
+                              <CheckCircle2
+                                className={`w-4 h-4 mt-0.5 ${done ? "text-emerald-600" : "text-gray-400"}`}
+                              />
+                              <span className={done ? "text-emerald-900 line-through" : "text-gray-700"}>
+                                {it.label}
+                              </span>
+                            </div>
+
+                            <Button
+                              size="sm"
+                              variant={done ? "outline" : "default"}
+                              className={`rounded-xl shrink-0 ${
+                                done ? "" : "bg-emerald-600 hover:bg-emerald-700 text-white"
+                              }`}
+                              onClick={() => toggleExerciseComplete(it.id)}
+                              disabled={savingProgress}
+                            >
+                              {done ? "Concluído" : "Concluir"}
+                            </Button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  <div className="mt-4">
+                    <Button
+                      onClick={() => completeWorkout(c)}
+                      disabled={allDone || savingProgress || itemIds.length === 0}
+                      className={`w-full rounded-xl ${
+                        allDone
+                          ? "bg-emerald-100 text-emerald-800 hover:bg-emerald-100"
+                          : "bg-gradient-to-r from-indigo-600 to-blue-600 hover:from-indigo-700 hover:to-blue-700"
+                      }`}
+                    >
+                      {allDone ? "Treino concluído ✅" : `Concluir treino (+${pendingCount * 10} pts)`}
+                    </Button>
+                  </div>
                 </div>
               );
             })}
@@ -744,47 +939,6 @@ export default function Exercicios() {
           <div className="grid md:grid-cols-2 gap-3">
             <div className="bg-slate-50 border border-slate-100 rounded-xl p-4 text-sm text-gray-700">{mainWeekly[0]}</div>
             <div className="bg-slate-50 border border-slate-100 rounded-xl p-4 text-sm text-gray-700">{mainWeekly[1]}</div>
-          </div>
-        </div>
-
-        {/* Sugestões do app (secundário) */}
-        <div className="mt-6 bg-white rounded-2xl p-5 border border-gray-100 shadow-sm">
-          <div className="flex items-center justify-between gap-3 mb-3">
-            <div>
-              <div className="text-sm text-gray-500">Sugestões do app</div>
-              <div className="font-semibold text-gray-900">{suggestedPlan.headline}</div>
-              <div className="text-xs text-gray-500 mt-1">
-                Se você personalizou, isso aqui serve como referência — o plano principal é o seu.
-              </div>
-            </div>
-          </div>
-
-          <div className="grid lg:grid-cols-3 gap-4">
-            {suggestedPlan.cards.map((c) => {
-              const Icon = c.icon;
-              return (
-                <div key={c.key} className="bg-slate-50 rounded-2xl p-5 border border-slate-100">
-                  <div className="flex items-center justify-between mb-3">
-                    <div className="flex items-center gap-2">
-                      <Icon className="w-5 h-5 text-indigo-700" />
-                      <div className="font-semibold text-gray-900">{c.title}</div>
-                    </div>
-                    <div className="text-xs text-gray-500">{c.duration}</div>
-                  </div>
-
-                  <div className="text-sm text-gray-600 mb-3">{c.desc}</div>
-
-                  <ul className="space-y-2 text-sm">
-                    {c.items.map((it, idx) => (
-                      <li key={idx} className="flex items-start gap-2 text-gray-700">
-                        <CheckCircle2 className="w-4 h-4 text-emerald-600 mt-0.5" />
-                        <span>{it}</span>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              );
-            })}
           </div>
         </div>
 
@@ -857,7 +1011,7 @@ export default function Exercicios() {
           )}
         </AnimatePresence>
 
-        {/* Modal: Sugestões do app (em cima do plano do usuário) */}
+        {/* Modal: Sugestões do app */}
         <AnimatePresence>
           {showSuggestions && (
             <motion.div
@@ -877,7 +1031,7 @@ export default function Exercicios() {
                 <div className="p-6 border-b border-gray-100 flex items-center justify-between">
                   <div>
                     <div className="text-lg font-bold text-gray-900">Sugestões do app</div>
-                    <div className="text-sm text-gray-500">Melhorias opcionais em cima do seu treino (sem te obrigar).</div>
+                    <div className="text-sm text-gray-500">Melhorias opcionais em cima do seu treino.</div>
                   </div>
                   <button
                     className="w-10 h-10 rounded-xl border border-gray-200 flex items-center justify-center"
@@ -905,7 +1059,7 @@ export default function Exercicios() {
           )}
         </AnimatePresence>
 
-        {/* Modal: Personalizar treino (EDITOR COMPLETO) */}
+        {/* Modal: Personalizar treino */}
         <AnimatePresence>
           {showCustomize && (
             <motion.div
@@ -1134,7 +1288,6 @@ export default function Exercicios() {
                       variant="outline"
                       className="w-full rounded-xl"
                       onClick={() => {
-                        // abre sugestões com base no plano atual (antes de salvar)
                         setShowSuggestions(true);
                       }}
                     >
@@ -1148,14 +1301,12 @@ export default function Exercicios() {
                         try {
                           const next = {
                             ...custom,
-                            // garantir arrays
                             customPlan: safeArr(custom.customPlan),
+                            progress: safeObj(custom.progress),
                           };
 
                           await saveCustomToDb(next);
                           alert("Plano personalizado salvo ✅");
-
-                          // fecha modal; o plano principal muda automaticamente na tela
                           setShowCustomize(false);
                         } catch (e) {
                           console.error(e);
