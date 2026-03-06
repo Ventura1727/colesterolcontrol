@@ -20,6 +20,9 @@ import {
   Plus,
   PencilLine,
   Info,
+  ScanSearch,
+  Sparkles,
+  Apple,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { createPageUrl } from "@/utils";
@@ -27,8 +30,6 @@ import CaloriesChart from "@/components/analytics/CaloriesChart";
 import AIInsights from "@/components/analytics/AIInsights";
 import CaloriesDashboard from "@/components/nutrition/CaloriesDashboard";
 import { supabase } from "@/lib/supabaseClient";
-
-// ✅ catálogo/busca/criação
 import { loadFoodCatalog, searchFoodsHybrid, createUserCustomFood } from "@/lib/foodCatalog";
 
 const receitas = [
@@ -149,7 +150,6 @@ function computeRankFromXp(xp) {
   return "Iniciante";
 }
 
-// Lê tabelas sem quebrar caso não existam ainda
 async function safeSelect(table, queryBuilderFn) {
   try {
     const q = queryBuilderFn(supabase.from(table).select("*"));
@@ -187,11 +187,9 @@ function writeLocalDoneSet(day, set) {
 
 function sameDay(isoDatetimeOrDate, dayYYYYMMDD) {
   if (!isoDatetimeOrDate) return false;
-  const s = String(isoDatetimeOrDate);
-  return s.slice(0, 10) === dayYYYYMMDD;
+  return String(isoDatetimeOrDate).slice(0, 10) === dayYYYYMMDD;
 }
 
-// ✅ XP padrão para refeição registrada (somente se saudável)
 function computeCustomMealXp({ isHealthy, calories, targetCalories }) {
   if (!isHealthy) return 0;
 
@@ -207,9 +205,6 @@ function computeCustomMealXp({ isHealthy, calories, targetCalories }) {
   return 5;
 }
 
-/**
- * ✅ Melhor tentativa de abrir câmera
- */
 function openImagePicker({ source, onFile }) {
   const input = document.createElement("input");
   input.type = "file";
@@ -222,47 +217,116 @@ function openImagePicker({ source, onFile }) {
   input.click();
 }
 
+function calcCaloriesFromKcalPer100(kcalPer100, portion) {
+  const p = Number(portion || 0);
+  const k100 = Number(kcalPer100 || 0);
+  if (!Number.isFinite(p) || p <= 0) return 0;
+  if (!Number.isFinite(k100) || k100 <= 0) return 0;
+  return Math.round((k100 * p) / 100);
+}
+
+function buildPhotoFoodFallback(fileName = "") {
+  const raw = String(fileName || "")
+    .replace(/\.[^/.]+$/, "")
+    .replace(/[_-]+/g, " ")
+    .trim();
+
+  return {
+    guessedName: raw || "",
+    confidence: 0,
+    source: "fallback",
+  };
+}
+
+async function fileToBase64(file) {
+  return new Promise((resolve, reject) => {
+    try {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const result = String(reader.result || "");
+        const base64 = result.includes(",") ? result.split(",")[1] : result;
+        resolve(base64);
+      };
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    } catch (e) {
+      reject(e);
+    }
+  });
+}
+
+async function tryAnalyzeFoodPhoto(file) {
+  if (!file) return null;
+
+  try {
+    const base64 = await fileToBase64(file);
+    const { data, error } = await supabase.functions.invoke("analyze-food-photo", {
+      body: {
+        image_base64: base64,
+        mime_type: file.type || "image/jpeg",
+        file_name: file.name || "image.jpg",
+      },
+    });
+
+    if (!error && data) {
+      const guessedName =
+        data?.food_name ||
+        data?.name ||
+        data?.item ||
+        data?.description ||
+        "";
+
+      if (guessedName) {
+        return {
+          guessedName: String(guessedName).trim(),
+          confidence: Number(data?.confidence || 0),
+          source: "edge_function",
+        };
+      }
+    }
+  } catch {}
+
+  try {
+    const form = new FormData();
+    form.append("file", file);
+
+    const res = await fetch("/api/analyze-food-photo", {
+      method: "POST",
+      body: form,
+    });
+
+    if (res.ok) {
+      const data = await res.json();
+      const guessedName =
+        data?.food_name ||
+        data?.name ||
+        data?.item ||
+        data?.description ||
+        "";
+
+      if (guessedName) {
+        return {
+          guessedName: String(guessedName).trim(),
+          confidence: Number(data?.confidence || 0),
+          source: "api_route",
+        };
+      }
+    }
+  } catch {}
+
+  return buildPhotoFoodFallback(file?.name);
+}
+
 export default function Alimentacao() {
   const [profile, setProfile] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
 
-  // catálogo
   const [catalog, setCatalog] = useState(null);
   const [catalogLoading, setCatalogLoading] = useState(true);
 
   const [selectedReceita, setSelectedReceita] = useState(null);
   const [completing, setCompleting] = useState(false);
 
-  // modos separados
-  const [flowMode, setFlowMode] = useState(null); // "analyze" | "register" | null
-  const [showPickerModal, setShowPickerModal] = useState(false);
-
-  const [photoFile, setPhotoFile] = useState(null);
-  const [photoPreview, setPhotoPreview] = useState(null);
-
-  const [showAnalyzeModal, setShowAnalyzeModal] = useState(false);
-  const [analyzing, setAnalyzing] = useState(false);
-
-  const [showRegisterModal, setShowRegisterModal] = useState(false);
-  const [registering, setRegistering] = useState(false);
-
-  // ✅ registro (o usuário só precisa: nome + porção)
-  const [foodQuery, setFoodQuery] = useState("");
-  const [foodResults, setFoodResults] = useState([]);
-  const [foodSearching, setFoodSearching] = useState(false);
-  const [foodSelected, setFoodSelected] = useState(null);
-
-  // porção
-  const [portionValue, setPortionValue] = useState("100");
-  const [portionUnit, setPortionUnit] = useState("g"); // "g" | "ml"
-
-  // criação inline quando não encontra
-  const [showCreateInline, setShowCreateInline] = useState(false);
-  const [createCategoryId, setCreateCategoryId] = useState("");
-  const [showAdvancedCreate, setShowAdvancedCreate] = useState(false);
-  const [createKcalPer100, setCreateKcalPer100] = useState(""); // opcional
-
-  // log/analytics
   const [mealLogs, setMealLogs] = useState([]);
   const [activities, setActivities] = useState([]);
   const [colesterolRecords, setColesterolRecords] = useState([]);
@@ -270,6 +334,31 @@ export default function Alimentacao() {
 
   const day = useMemo(() => todayISODate(), []);
   const [localDoneSet, setLocalDoneSet] = useState(() => readLocalDoneSet(todayISODate()));
+
+  const [entrySource, setEntrySource] = useState(null); // "text" | "photo" | null
+  const [showSourceModal, setShowSourceModal] = useState(false);
+  const [showFoodModal, setShowFoodModal] = useState(false);
+
+  const [processingPhoto, setProcessingPhoto] = useState(false);
+
+  const [photoFile, setPhotoFile] = useState(null);
+  const [photoPreview, setPhotoPreview] = useState(null);
+  const [photoAnalysisSource, setPhotoAnalysisSource] = useState(null);
+
+  const [foodQuery, setFoodQuery] = useState("");
+  const [foodResults, setFoodResults] = useState([]);
+  const [foodSearching, setFoodSearching] = useState(false);
+  const [foodSelected, setFoodSelected] = useState(null);
+
+  const [portionValue, setPortionValue] = useState("100");
+  const [portionUnit, setPortionUnit] = useState("g");
+
+  const [showCreateInline, setShowCreateInline] = useState(false);
+  const [createCategoryId, setCreateCategoryId] = useState("");
+  const [showAdvancedCreate, setShowAdvancedCreate] = useState(false);
+  const [createKcalPer100, setCreateKcalPer100] = useState("");
+
+  const [submitLoading, setSubmitLoading] = useState(false);
 
   useEffect(() => {
     let mounted = true;
@@ -282,7 +371,6 @@ export default function Alimentacao() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // carregar catálogo (categories/foods/aliases)
   useEffect(() => {
     let ok = true;
     (async () => {
@@ -300,6 +388,36 @@ export default function Alimentacao() {
       ok = false;
     };
   }, []);
+
+  useEffect(() => {
+    const t = setTimeout(async () => {
+      const q = String(foodQuery || "").trim();
+      if (q.length < 2) {
+        setFoodResults([]);
+        setShowCreateInline(false);
+        return;
+      }
+
+      setFoodSearching(true);
+      try {
+        const items = await searchFoodsHybrid({
+          query: q,
+          catalog,
+          userId: profile?.id || null,
+          limit: 8,
+        });
+        setFoodResults(items || []);
+        setShowCreateInline((items || []).length === 0);
+      } catch {
+        setFoodResults([]);
+        setShowCreateInline(true);
+      } finally {
+        setFoodSearching(false);
+      }
+    }, 250);
+
+    return () => clearTimeout(t);
+  }, [foodQuery, catalog, profile?.id]);
 
   const loadData = async (mountedFlag = true) => {
     setIsLoading(true);
@@ -340,8 +458,6 @@ export default function Alimentacao() {
       }
     }
 
-    if (mountedFlag) setProfile(prof);
-
     const meals = await safeSelect("meal_logs", (q) => q.eq("user_id", user.id).order("created_at", { ascending: false }).limit(60));
     const acts = await safeSelect("activity_logs", (q) => q.eq("user_id", user.id).order("created_at", { ascending: false }).limit(60));
 
@@ -351,6 +467,7 @@ export default function Alimentacao() {
     }
 
     if (mountedFlag) {
+      setProfile(prof);
       setMealLogs(meals);
       setActivities(acts);
       setColesterolRecords(colesterol);
@@ -367,7 +484,6 @@ export default function Alimentacao() {
 
   const completedTodaySet = useMemo(() => {
     const set = new Set();
-
     const todaysMeals = Array.isArray(mealLogs) ? mealLogs.filter((m) => sameDay(m?.date || m?.created_at, day)) : [];
 
     for (const m of todaysMeals) {
@@ -380,8 +496,6 @@ export default function Alimentacao() {
     for (const id of localDoneSet) set.add(id);
     return set;
   }, [mealLogs, localDoneSet, day]);
-
-  const isCompletedToday = (receita) => completedTodaySet.has(receita.id);
 
   const sortedReceitas = useMemo(() => {
     return [...receitas].sort((a, b) => {
@@ -397,24 +511,13 @@ export default function Alimentacao() {
     });
   }, [completedTodaySet]);
 
-  // ✅ calcula calorias automaticamente pela porção, quando temos kcal_per_100
-  function calcCaloriesFromKcalPer100(kcalPer100, portion, unit) {
-    const p = Number(portion || 0);
-    const k100 = Number(kcalPer100 || 0);
-    if (!Number.isFinite(p) || p <= 0) return 0;
-    if (!Number.isFinite(k100) || k100 <= 0) return 0;
+  const todayMealsCount = useMemo(() => {
+    return Array.isArray(mealLogs) ? mealLogs.filter((m) => sameDay(m?.date || m?.created_at, day)).length : 0;
+  }, [mealLogs, day]);
 
-    // por simplicidade: g e ml são "equivalentes" aqui (ml ~ g)
-    // (pode melhorar depois quando você criar kcal_per_100ml)
-    const total = (k100 * p) / 100;
-    return Math.round(total);
-  }
-
-  // ✅ "Saudável" definido SOMENTE pelo app
   const derivedHealthy = useMemo(() => {
     if (foodSelected && typeof foodSelected.is_healthy === "boolean") return foodSelected.is_healthy;
 
-    // se está criando e escolheu categoria, usa default da categoria
     if (showCreateInline && createCategoryId && catalog?.categories?.length) {
       const cat = (catalog.categories || []).find((c) => String(c.id) === String(createCategoryId));
       if (cat && typeof cat.default_is_healthy === "boolean") return cat.default_is_healthy;
@@ -426,11 +529,9 @@ export default function Alimentacao() {
   const derivedKcalPer100 = useMemo(() => {
     if (foodSelected && Number(foodSelected.kcal_per_100g || 0) > 0) return Number(foodSelected.kcal_per_100g || 0);
 
-    // criação inline: se usuário colocou kcal (avançado), usa isso
     const advanced = Number(createKcalPer100 || 0);
     if (showCreateInline && advanced > 0) return advanced;
 
-    // senão usa default da categoria
     if (showCreateInline && createCategoryId && catalog?.categories?.length) {
       const cat = (catalog.categories || []).find((c) => String(c.id) === String(createCategoryId));
       const def = Number(cat?.default_kcal_per_100g || 0);
@@ -441,62 +542,30 @@ export default function Alimentacao() {
   }, [foodSelected, showCreateInline, createCategoryId, createKcalPer100, catalog]);
 
   const derivedCaloriesTotal = useMemo(() => {
-    return calcCaloriesFromKcalPer100(derivedKcalPer100, portionValue, portionUnit);
-  }, [derivedKcalPer100, portionValue, portionUnit]);
+    return calcCaloriesFromKcalPer100(derivedKcalPer100, portionValue);
+  }, [derivedKcalPer100, portionValue]);
 
-  // ✅ Busca híbrida com debounce
-  useEffect(() => {
-    const t = setTimeout(async () => {
-      const q = String(foodQuery || "").trim();
-      if (q.length < 2) {
-        setFoodResults([]);
-        setShowCreateInline(false);
-        return;
-      }
+  const customMealXpPreview = useMemo(() => {
+    return computeCustomMealXp({
+      isHealthy: Boolean(derivedHealthy),
+      calories: Number(derivedCaloriesTotal || 0),
+      targetCalories: Number(profile?.basal_kcal || 2000),
+    });
+  }, [derivedHealthy, derivedCaloriesTotal, profile?.basal_kcal]);
 
-      setFoodSearching(true);
-      try {
-        const items = await searchFoodsHybrid({
-          query: q,
-          catalog,
-          userId: profile?.id || null,
-          limit: 8,
-        });
-        setFoodResults(items || []);
-        setShowCreateInline((items || []).length === 0);
-      } catch {
-        setFoodResults([]);
-        setShowCreateInline(true);
-      } finally {
-        setFoodSearching(false);
-      }
-    }, 250);
-
-    return () => clearTimeout(t);
-  }, [foodQuery, catalog, profile?.id]);
-
-  function onSelectFood(item) {
-    setFoodSelected(item);
-    setFoodQuery(item?.name || "");
-    setShowCreateInline(false);
-
-    // reset criação
-    setCreateCategoryId("");
-    setShowAdvancedCreate(false);
-    setCreateKcalPer100("");
-  }
-
-  // ✅ Fluxo: avaliar ainda pede foto, registrar não precisa
-  const startFlow = (mode) => {
-    setFlowMode(mode);
+  function resetFoodFlow() {
+    setEntrySource(null);
+    setShowSourceModal(false);
+    setShowFoodModal(false);
 
     setPhotoFile(null);
     setPhotoPreview(null);
+    setPhotoAnalysisSource(null);
 
-    // reset do modal register
     setFoodQuery("");
     setFoodResults([]);
     setFoodSelected(null);
+
     setPortionValue("100");
     setPortionUnit("g");
 
@@ -505,43 +574,190 @@ export default function Alimentacao() {
     setShowAdvancedCreate(false);
     setCreateKcalPer100("");
 
-    if (mode === "register") {
-      setShowRegisterModal(true);
+    setProcessingPhoto(false);
+    setSubmitLoading(false);
+  }
+
+  function startRegisterFlow() {
+    setEntrySource(null);
+    setPhotoFile(null);
+    setPhotoPreview(null);
+    setPhotoAnalysisSource(null);
+    setFoodQuery("");
+    setFoodResults([]);
+    setFoodSelected(null);
+    setPortionValue("100");
+    setPortionUnit("g");
+    setShowCreateInline(false);
+    setCreateCategoryId("");
+    setShowAdvancedCreate(false);
+    setCreateKcalPer100("");
+    setShowSourceModal(true);
+  }
+
+  async function openRegisterBySource(source) {
+    setEntrySource(source);
+    setShowSourceModal(false);
+
+    if (source === "text") {
+      setShowFoodModal(true);
       return;
     }
 
-    setShowPickerModal(true);
-  };
+    openImagePicker({
+      source: "camera",
+      onFile: onPickedFile,
+    });
+  }
 
-  const onPickedFile = (file) => {
+  async function onPickedFile(file) {
     setPhotoFile(file);
 
     const reader = new FileReader();
     reader.onloadend = () => setPhotoPreview(reader.result);
     reader.readAsDataURL(file);
 
-    setShowPickerModal(false);
+    setProcessingPhoto(true);
 
-    if (flowMode === "analyze") {
-      setShowAnalyzeModal(true);
-    } else {
-      setShowRegisterModal(true);
-    }
-  };
-
-  const analyzeFood = async () => {
-    setAnalyzing(true);
     try {
-      alert(
-        "Nesta versão, a análise automática por foto está desativada.\n\n" +
-          "Use o registro por nome (base de alimentos) para manter gratuito e funcional."
-      );
-    } finally {
-      setAnalyzing(false);
-    }
-  };
+      const analysis = await tryAnalyzeFoodPhoto(file);
 
-  const completeReceita = async (receita) => {
+      if (analysis?.guessedName) {
+        setFoodQuery(analysis.guessedName);
+      } else {
+        setFoodQuery("");
+      }
+
+      setPhotoAnalysisSource(analysis?.source || null);
+      setShowFoodModal(true);
+    } finally {
+      setProcessingPhoto(false);
+    }
+  }
+
+  function onSelectFood(item) {
+    setFoodSelected(item);
+    setFoodQuery(item?.name || "");
+    setShowCreateInline(false);
+    setCreateCategoryId("");
+    setShowAdvancedCreate(false);
+    setCreateKcalPer100("");
+  }
+
+  async function createAndSelectFood() {
+    if (!profile?.id) return;
+
+    const name = String(foodQuery || "").trim();
+    if (!name) return;
+
+    if (!createCategoryId) {
+      alert("Selecione uma categoria para o app estimar calorias e decidir se é saudável.");
+      return;
+    }
+
+    const cat = (catalog?.categories || []).find((c) => String(c.id) === String(createCategoryId));
+    const kcalPer100 =
+      Number(createKcalPer100 || 0) > 0 ? Number(createKcalPer100 || 0) : Number(cat?.default_kcal_per_100g || 0);
+    const isHealthy = typeof cat?.default_is_healthy === "boolean" ? cat.default_is_healthy : false;
+
+    setSubmitLoading(true);
+    try {
+      const row = await createUserCustomFood({
+        userId: profile.id,
+        name,
+        kcalPer100g: kcalPer100,
+        isHealthy,
+      });
+
+      const selected = {
+        id: row?.id || `custom_${Date.now()}`,
+        name: row?.food_name || row?.name || row?.canonical_name || name,
+        kcal_per_100g: Number(row?.kcal_per_100g || kcalPer100 || 0),
+        is_healthy: typeof row?.is_healthy === "boolean" ? row.is_healthy : isHealthy,
+        source: "custom",
+      };
+
+      setFoodSelected(selected);
+      setFoodQuery(selected.name);
+      setShowCreateInline(false);
+    } catch {
+      alert("Não consegui criar esse alimento agora. Tente novamente.");
+    } finally {
+      setSubmitLoading(false);
+    }
+  }
+
+  async function registerMeal() {
+    if (!profile?.id) return;
+
+    const desc = String(foodQuery || "").trim();
+    if (!desc) return;
+
+    const caloriesNum = Number(derivedCaloriesTotal || 0);
+    const isHealthy = Boolean(derivedHealthy);
+
+    const xp = computeCustomMealXp({
+      isHealthy,
+      calories: caloriesNum,
+      targetCalories: Number(profile?.basal_kcal || 2000),
+    });
+
+    setSubmitLoading(true);
+
+    try {
+      try {
+        await supabase.from("meal_logs").insert({
+          user_id: profile.id,
+          description: desc,
+          calories: caloriesNum,
+          is_healthy: isHealthy,
+          ai_feedback: foodSelected
+            ? `Base ${foodSelected.source === "custom" ? "pessoal" : "do app"}`
+            : createCategoryId
+            ? "Estimativa por categoria"
+            : photoFile
+            ? "Registro por foto com confirmação do usuário"
+            : null,
+          date: day,
+        });
+      } catch {}
+
+      try {
+        await supabase.from("activity_logs").insert({
+          user_id: profile.id,
+          tipo: "alimentacao",
+          descricao: `Registrou refeição: ${desc}`,
+          xp_ganho: xp,
+          data: day,
+        });
+      } catch {}
+
+      const currentXp = Number(profile?.xp_total || 0);
+      const currentMetas = Number(profile?.metas_concluidas || 0);
+
+      const newXp = currentXp + xp;
+      const newMetas = currentMetas + 1;
+      const newRank = computeRankFromXp(newXp);
+
+      try {
+        await supabase
+          .from("profiles")
+          .update({ xp_total: newXp, metas_concluidas: newMetas, rank: newRank })
+          .eq("id", profile.id);
+      } catch {}
+
+      setProfile({ ...profile, xp_total: newXp, metas_concluidas: newMetas, rank: newRank });
+
+      resetFoodFlow();
+      await loadData(true);
+    } finally {
+      setSubmitLoading(false);
+    }
+  }
+
+  const isCompletedToday = (receita) => completedTodaySet.has(receita.id);
+
+  async function completeReceita(receita) {
     if (!profile?.id) return;
 
     if (isCompletedToday(receita)) {
@@ -596,142 +812,7 @@ export default function Alimentacao() {
     } finally {
       setCompleting(false);
     }
-  };
-
-  // ✅ cria alimento do usuário sem exigir kcal (usa categoria defaults)
-  const createAndSelectFood = async () => {
-    if (!profile?.id) return;
-
-    const name = String(foodQuery || "").trim();
-    if (!name) return;
-
-    if (!createCategoryId) {
-      alert("Selecione uma categoria para o app estimar calorias e decidir se é saudável.");
-      return;
-    }
-
-    const cat = (catalog?.categories || []).find((c) => String(c.id) === String(createCategoryId));
-    const kcalPer100 =
-      Number(createKcalPer100 || 0) > 0 ? Number(createKcalPer100 || 0) : Number(cat?.default_kcal_per_100g || 0);
-    const isHealthy = typeof cat?.default_is_healthy === "boolean" ? cat.default_is_healthy : false;
-
-    setRegistering(true);
-    try {
-      const row = await createUserCustomFood({
-        userId: profile.id,
-        name,
-        kcalPer100g: kcalPer100,
-        isHealthy,
-      });
-
-      // seleciona (padroniza objeto no formato da busca)
-      const selected = {
-        id: row?.id || `custom_${Date.now()}`,
-        name: row?.food_name || row?.name || row?.canonical_name || name,
-        kcal_per_100g: Number(row?.kcal_per_100g || kcalPer100 || 0),
-        is_healthy: typeof row?.is_healthy === "boolean" ? row.is_healthy : isHealthy,
-        source: "custom",
-      };
-
-      setFoodSelected(selected);
-      setFoodQuery(selected.name);
-      setShowCreateInline(false);
-    } catch (e) {
-      alert("Não consegui criar esse alimento agora. Se quiser, tente novamente.");
-    } finally {
-      setRegistering(false);
-    }
-  };
-
-  // ✅ Registro: usuário só define nome + porção; app calcula kcal e saudável automaticamente
-  const registerMeal = async () => {
-    if (!profile?.id) return;
-
-    const desc = String(foodQuery || "").trim();
-    if (!desc) return;
-
-    // só dá XP se o app classificar como saudável
-    const caloriesNum = Number(derivedCaloriesTotal || 0);
-    const isHealthy = Boolean(derivedHealthy);
-
-    const xp = computeCustomMealXp({
-      isHealthy,
-      calories: caloriesNum,
-      targetCalories: Number(profile?.basal_kcal || 2000),
-    });
-
-    setRegistering(true);
-    try {
-      // salva meal_log
-      try {
-        await supabase.from("meal_logs").insert({
-          user_id: profile.id,
-          description: desc,
-          calories: caloriesNum,
-          is_healthy: isHealthy,
-          ai_feedback: foodSelected
-            ? `Base ${foodSelected.source === "custom" ? "pessoal" : "do app"}`
-            : createCategoryId
-            ? "Estimativa por categoria"
-            : null,
-          date: day,
-        });
-      } catch {}
-
-      // activity_logs
-      try {
-        await supabase.from("activity_logs").insert({
-          user_id: profile.id,
-          tipo: "alimentacao",
-          descricao: `Registrou refeição: ${desc}`,
-          xp_ganho: xp,
-          data: day,
-        });
-      } catch {}
-
-      // profiles XP/rank
-      const currentXp = Number(profile?.xp_total || 0);
-      const currentMetas = Number(profile?.metas_concluidas || 0);
-
-      const newXp = currentXp + xp;
-      const newMetas = currentMetas + 1;
-      const newRank = computeRankFromXp(newXp);
-
-      try {
-        await supabase.from("profiles").update({ xp_total: newXp, metas_concluidas: newMetas, rank: newRank }).eq("id", profile.id);
-      } catch {}
-
-      setProfile({ ...profile, xp_total: newXp, metas_concluidas: newMetas, rank: newRank });
-
-      // fechar e reset
-      setShowRegisterModal(false);
-      setPhotoFile(null);
-      setPhotoPreview(null);
-
-      setFoodQuery("");
-      setFoodResults([]);
-      setFoodSelected(null);
-      setPortionValue("100");
-      setPortionUnit("g");
-
-      setShowCreateInline(false);
-      setCreateCategoryId("");
-      setShowAdvancedCreate(false);
-      setCreateKcalPer100("");
-
-      await loadData(true);
-    } finally {
-      setRegistering(false);
-    }
-  };
-
-  const customMealXpPreview = useMemo(() => {
-    return computeCustomMealXp({
-      isHealthy: Boolean(derivedHealthy),
-      calories: Number(derivedCaloriesTotal || 0),
-      targetCalories: Number(profile?.basal_kcal || 2000),
-    });
-  }, [derivedHealthy, derivedCaloriesTotal, profile?.basal_kcal]);
+  }
 
   if (isLoading) {
     return (
@@ -758,7 +839,7 @@ export default function Alimentacao() {
           </button>
           <div>
             <h1 className="text-xl font-bold text-gray-900">Alimentação</h1>
-            <p className="text-sm text-gray-500">Registre com nome + porção (o app calcula o resto)</p>
+            <p className="text-sm text-gray-500">Registrar alimento por texto ou foto</p>
           </div>
         </div>
 
@@ -775,35 +856,51 @@ export default function Alimentacao() {
             <div className="text-xs text-gray-500">Seu Rank</div>
           </div>
           <div className="bg-white rounded-xl p-3 border border-gray-100 text-center">
-            <Salad className="w-5 h-5 text-green-500 mx-auto mb-1" />
-            <div className="font-bold text-gray-900">{sortedReceitas.filter((r) => isUnlocked(r)).length}</div>
-            <div className="text-xs text-gray-500">Liberadas</div>
+            <Apple className="w-5 h-5 text-green-500 mx-auto mb-1" />
+            <div className="font-bold text-gray-900">{todayMealsCount}</div>
+            <div className="text-xs text-gray-500">Registros hoje</div>
           </div>
         </div>
 
-        {/* Dashboard de Calorias */}
         <CaloriesDashboard mealLogs={mealLogs} basalRate={profile?.basal_kcal || 2000} />
 
-        {/* Botões separados */}
-        <div className="grid grid-cols-2 gap-3 mb-6">
-          <Button
-            onClick={() => startFlow("analyze")}
-            className="bg-gradient-to-r from-blue-500 to-indigo-600 hover:from-blue-600 hover:to-indigo-700 text-white py-5 rounded-xl shadow-md"
-          >
-            <Camera className="w-5 h-5 mr-2" />
-            Avaliar refeição
-          </Button>
+        {/* Bloco principal único */}
+        <div className="bg-white rounded-2xl p-5 border border-red-100 shadow-sm mb-6">
+          <div className="flex items-start gap-3">
+            <div className="w-12 h-12 rounded-2xl bg-red-50 flex items-center justify-center">
+              <Plus className="w-6 h-6 text-red-600" />
+            </div>
+            <div className="flex-1">
+              <div className="font-bold text-gray-900">Registrar alimento</div>
+              <div className="text-sm text-gray-500 mt-1">
+                O app calcula calorias, classifica o alimento e soma XP quando ele for saudável.
+              </div>
+            </div>
+          </div>
 
-          <Button
-            onClick={() => startFlow("register")}
-            className="bg-gradient-to-r from-red-500 to-rose-600 hover:from-red-600 hover:to-rose-700 text-white py-5 rounded-xl shadow-md"
-          >
-            <Plus className="w-5 h-5 mr-2" />
-            Registrar (+XP)
-          </Button>
+          <div className="grid grid-cols-2 gap-3 mt-4">
+            <Button
+              onClick={() => {
+                setEntrySource("text");
+                setShowFoodModal(true);
+              }}
+              variant="outline"
+              className="rounded-xl border-2 border-red-200 hover:bg-red-50"
+            >
+              <PencilLine className="w-4 h-4 mr-2" />
+              Escrever
+            </Button>
+
+            <Button
+              onClick={startRegisterFlow}
+              className="rounded-xl bg-gradient-to-r from-red-500 to-rose-600 hover:from-red-600 hover:to-rose-700 text-white"
+            >
+              <Camera className="w-4 h-4 mr-2" />
+              Foto
+            </Button>
+          </div>
         </div>
 
-        {/* Botão análises */}
         <Button
           onClick={() => setShowAnalytics(!showAnalytics)}
           variant="outline"
@@ -814,13 +911,23 @@ export default function Alimentacao() {
         </Button>
 
         {showAnalytics && (
-          <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }} className="space-y-4 mb-6">
+          <motion.div
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: "auto" }}
+            exit={{ opacity: 0, height: 0 }}
+            className="space-y-4 mb-6"
+          >
             <CaloriesChart mealLogs={mealLogs} />
-            <AIInsights profile={profile} activities={(activities || []).filter((a) => a.tipo === "alimentacao")} colesterolRecords={colesterolRecords} mealLogs={mealLogs} />
+            <AIInsights
+              profile={profile}
+              activities={(activities || []).filter((a) => a.tipo === "alimentacao")}
+              colesterolRecords={colesterolRecords}
+              mealLogs={mealLogs}
+            />
           </motion.div>
         )}
 
-        {/* Lista de Receitas */}
+        {/* Receitas */}
         <h2 className="font-semibold text-gray-900 mb-4">Receitas Saudáveis</h2>
         <div className="space-y-3">
           {sortedReceitas.map((receita, idx) => {
@@ -828,7 +935,12 @@ export default function Alimentacao() {
             const done = isCompletedToday(receita);
 
             return (
-              <motion.div key={receita.id} initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: idx * 0.03 }}>
+              <motion.div
+                key={receita.id}
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: idx * 0.03 }}
+              >
                 <button
                   onClick={() => unlocked && setSelectedReceita(receita)}
                   disabled={!unlocked}
@@ -867,7 +979,11 @@ export default function Alimentacao() {
                       </div>
                     </div>
 
-                    {unlocked ? <ChevronRight className="w-5 h-5 text-gray-400" /> : <div className="text-xs text-gray-400 bg-gray-100 px-2 py-1 rounded-lg">{receita.rank_required}</div>}
+                    {unlocked ? (
+                      <ChevronRight className="w-5 h-5 text-gray-400" />
+                    ) : (
+                      <div className="text-xs text-gray-400 bg-gray-100 px-2 py-1 rounded-lg">{receita.rank_required}</div>
+                    )}
                   </div>
                 </button>
               </motion.div>
@@ -875,40 +991,57 @@ export default function Alimentacao() {
           })}
         </div>
 
-        {/* Modal: escolha câmera/galeria (somente avaliação) */}
+        {/* modal: escolher origem da foto */}
         <AnimatePresence>
-          {showPickerModal && (
-            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4" onClick={() => setShowPickerModal(false)}>
-              <motion.div initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.95, opacity: 0 }} onClick={(e) => e.stopPropagation()} className="bg-white rounded-3xl w-full max-w-sm p-6">
-                <h3 className="text-xl font-bold text-gray-900 mb-2 text-center">Avaliar Refeição</h3>
-                <p className="text-sm text-gray-500 mb-6 text-center">Escolha a origem da imagem</p>
+          {showSourceModal && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4"
+              onClick={() => setShowSourceModal(false)}
+            >
+              <motion.div
+                initial={{ scale: 0.95, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                exit={{ scale: 0.95, opacity: 0 }}
+                onClick={(e) => e.stopPropagation()}
+                className="bg-white rounded-3xl w-full max-w-sm p-6"
+              >
+                <h3 className="text-xl font-bold text-gray-900 mb-2 text-center">Registrar alimento</h3>
+                <p className="text-sm text-gray-500 mb-6 text-center">Escolha como deseja enviar a foto</p>
 
                 <div className="space-y-3">
                   <Button
-                    onClick={() => openImagePicker({ source: "camera", onFile: onPickedFile })}
-                    className="w-full bg-gradient-to-r from-blue-500 to-indigo-600 hover:from-blue-600 hover:to-indigo-700 text-white py-5 rounded-xl flex items-center justify-center gap-3"
+                    onClick={() => openRegisterBySource("photo")}
+                    className="w-full bg-gradient-to-r from-red-500 to-rose-600 hover:from-red-600 hover:to-rose-700 text-white py-5 rounded-xl flex items-center justify-center gap-3"
                   >
                     <Camera className="w-6 h-6" />
                     <div className="text-left">
-                      <div className="font-semibold">Tirar Foto Agora</div>
-                      <div className="text-xs opacity-90">Abrir câmera</div>
+                      <div className="font-semibold">Tirar foto</div>
+                      <div className="text-xs opacity-90">Abrir câmera do celular</div>
                     </div>
                   </Button>
 
                   <Button
-                    onClick={() => openImagePicker({ source: "gallery", onFile: onPickedFile })}
+                    onClick={() =>
+                      openImagePicker({
+                        source: "gallery",
+                        onFile: onPickedFile,
+                      })
+                    }
                     variant="outline"
                     className="w-full border-2 border-gray-200 hover:bg-gray-50 py-5 rounded-xl flex items-center justify-center gap-3"
                   >
                     <Upload className="w-6 h-6" />
                     <div className="text-left">
-                      <div className="font-semibold">Escolher da Galeria</div>
-                      <div className="text-xs text-gray-500">Selecionar foto existente</div>
+                      <div className="font-semibold">Escolher da galeria</div>
+                      <div className="text-xs text-gray-500">Usar foto existente</div>
                     </div>
                   </Button>
                 </div>
 
-                <Button onClick={() => setShowPickerModal(false)} variant="ghost" className="w-full mt-4 text-gray-500">
+                <Button onClick={() => setShowSourceModal(false)} variant="ghost" className="w-full mt-4 text-gray-500">
                   Cancelar
                 </Button>
               </motion.div>
@@ -916,84 +1049,55 @@ export default function Alimentacao() {
           )}
         </AnimatePresence>
 
-        {/* Modal: Avaliar (sem XP) */}
+        {/* processamento da foto */}
         <AnimatePresence>
-          {showAnalyzeModal && (
-            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4" onClick={() => !analyzing && setShowAnalyzeModal(false)}>
-              <motion.div initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.95, opacity: 0 }} onClick={(e) => e.stopPropagation()} className="bg-white rounded-3xl w-full max-w-md overflow-hidden">
-                <div className="p-6">
-                  <div className="flex items-center justify-between mb-4">
-                    <h3 className="text-lg font-bold text-gray-900">Avaliar Refeição</h3>
-                    {!analyzing && (
-                      <button onClick={() => setShowAnalyzeModal(false)} className="text-gray-400 hover:text-gray-600">
-                        <X className="w-6 h-6" />
-                      </button>
-                    )}
-                  </div>
-
-                  {photoPreview && (
-                    <div className="mb-4 rounded-xl overflow-hidden">
-                      <img src={photoPreview} alt="Prévia" className="w-full h-64 object-cover" />
-                    </div>
-                  )}
-
-                  <div className="bg-blue-50 rounded-xl p-4 mb-4">
-                    <div className="flex items-start gap-2 text-sm text-blue-700">
-                      <Heart className="w-5 h-5 flex-shrink-0 mt-0.5" />
-                      <p>
-                        Aqui é só para tirar dúvida. Não ganha XP.
-                        <br />
-                        (Na versão atual, a IA por foto está desativada.)
-                      </p>
-                    </div>
-                  </div>
-
-                  <div className="space-y-3">
-                    <Button
-                      onClick={analyzeFood}
-                      disabled={analyzing}
-                      className="w-full bg-gradient-to-r from-blue-500 to-indigo-600 hover:from-blue-600 hover:to-indigo-700 text-white py-5 rounded-xl text-lg font-semibold"
-                    >
-                      {analyzing ? (
-                        <span className="flex items-center gap-2">
-                          <Loader2 className="w-5 h-5 animate-spin" />
-                          Analisando...
-                        </span>
-                      ) : (
-                        <span className="flex items-center gap-2">
-                          <Zap className="w-5 h-5" />
-                          Avaliar Agora
-                        </span>
-                      )}
-                    </Button>
-
-                    <Button
-                      onClick={() => {
-                        setShowAnalyzeModal(false);
-                        setShowRegisterModal(true);
-                      }}
-                      variant="outline"
-                      className="w-full border-2 border-red-200 hover:bg-red-50 py-5 rounded-xl"
-                    >
-                      Registrar como refeição (+XP)
-                    </Button>
-                  </div>
+          {processingPhoto && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4"
+            >
+              <div className="bg-white rounded-3xl w-full max-w-sm p-6 text-center">
+                <Loader2 className="w-8 h-8 animate-spin mx-auto text-red-500 mb-3" />
+                <div className="font-bold text-gray-900">Analisando foto</div>
+                <div className="text-sm text-gray-500 mt-1">
+                  Tentando sugerir o nome do alimento antes da sua confirmação.
                 </div>
-              </motion.div>
+              </div>
             </motion.div>
           )}
         </AnimatePresence>
 
-        {/* ✅ Modal: Registrar refeição (o app calcula kcal/saudável) */}
+        {/* modal único de registro */}
         <AnimatePresence>
-          {showRegisterModal && (
-            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4" onClick={() => !registering && setShowRegisterModal(false)}>
-              <motion.div initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.95, opacity: 0 }} onClick={(e) => e.stopPropagation()} className="bg-white rounded-3xl w-full max-w-md overflow-hidden">
+          {showFoodModal && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4"
+              onClick={() => !submitLoading && setShowFoodModal(false)}
+            >
+              <motion.div
+                initial={{ scale: 0.95, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                exit={{ scale: 0.95, opacity: 0 }}
+                onClick={(e) => e.stopPropagation()}
+                className="bg-white rounded-3xl w-full max-w-md overflow-hidden"
+              >
                 <div className="p-6">
                   <div className="flex items-center justify-between mb-4">
-                    <h3 className="text-lg font-bold text-gray-900">Registrar Alimentação</h3>
-                    {!registering && (
-                      <button onClick={() => setShowRegisterModal(false)} className="text-gray-400 hover:text-gray-600">
+                    <h3 className="text-lg font-bold text-gray-900">Registrar alimento</h3>
+
+                    {!submitLoading && (
+                      <button
+                        onClick={() => {
+                          setShowFoodModal(false);
+                          resetFoodFlow();
+                        }}
+                        className="text-gray-400 hover:text-gray-600"
+                      >
                         <X className="w-6 h-6" />
                       </button>
                     )}
@@ -1006,10 +1110,29 @@ export default function Alimentacao() {
                     </div>
                   )}
 
+                  {photoPreview && (
+                    <div className="mb-4 rounded-2xl overflow-hidden border border-gray-200">
+                      <img src={photoPreview} alt="Prévia" className="w-full h-48 object-cover" />
+                    </div>
+                  )}
+
+                  {entrySource === "photo" ? (
+                    <div className="mb-4 rounded-xl border border-blue-200 bg-blue-50 p-3 text-sm text-blue-800">
+                      <div className="flex items-start gap-2">
+                        <ScanSearch className="w-4 h-4 mt-0.5" />
+                        <div>
+                          O app tentou sugerir o nome do alimento pela foto, mas o registro só será salvo depois que você confirmar ou corrigir o nome.
+                          {photoAnalysisSource ? (
+                            <div className="text-xs mt-1 opacity-80">Origem da tentativa: {photoAnalysisSource}</div>
+                          ) : null}
+                        </div>
+                      </div>
+                    </div>
+                  ) : null}
+
                   <div className="space-y-3">
-                    {/* Busca */}
                     <div>
-                      <label className="text-sm font-medium text-gray-700">Buscar alimento</label>
+                      <label className="text-sm font-medium text-gray-700">Alimento</label>
                       <input
                         value={foodQuery}
                         onChange={(e) => {
@@ -1017,7 +1140,7 @@ export default function Alimentacao() {
                           setFoodQuery(v);
                           setFoodSelected(null);
                         }}
-                        placeholder="Ex: manga, aveia, frango, arroz..."
+                        placeholder="Ex: banana, arroz, frango, aveia..."
                         className="mt-1 w-full border border-gray-200 rounded-xl px-3 py-3 text-sm outline-none focus:ring-2 focus:ring-red-200"
                       />
 
@@ -1049,7 +1172,9 @@ export default function Alimentacao() {
 
                                 <span
                                   className={`text-[11px] px-2 py-1 rounded-full border ${
-                                    f.is_healthy ? "bg-emerald-50 border-emerald-200 text-emerald-700" : "bg-red-50 border-red-200 text-red-700"
+                                    f.is_healthy
+                                      ? "bg-emerald-50 border-emerald-200 text-emerald-700"
+                                      : "bg-red-50 border-red-200 text-red-700"
                                   }`}
                                 >
                                   {f.is_healthy ? "Saudável" : "Não saudável"}
@@ -1061,11 +1186,10 @@ export default function Alimentacao() {
 
                       {foodSelected && (
                         <div className="mt-2 text-xs text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-xl px-3 py-2">
-                          Selecionado ✅ O app vai calcular calorias e decidir saudável automaticamente.
+                          Selecionado ✅ O app vai calcular calorias e classificar automaticamente.
                         </div>
                       )}
 
-                      {/* ✅ Criar inline (sem obrigar kcal) */}
                       {showCreateInline && (foodQuery || "").trim().length >= 2 && (
                         <div className="mt-3 rounded-2xl border border-gray-200 bg-gray-50 p-4">
                           <div className="flex items-center gap-2 text-sm font-semibold text-gray-900">
@@ -1074,7 +1198,7 @@ export default function Alimentacao() {
                           </div>
 
                           <div className="mt-3">
-                            <label className="text-xs font-medium text-gray-600">Categoria (o app estima kcal e saudável)</label>
+                            <label className="text-xs font-medium text-gray-600">Categoria</label>
                             <select
                               value={createCategoryId}
                               onChange={(e) => setCreateCategoryId(e.target.value)}
@@ -1093,12 +1217,22 @@ export default function Alimentacao() {
                                 <Info className="w-4 h-4 mt-0.5 text-gray-400" />
                                 <div>
                                   <div>
-                                    Estimativa: <b>{Number((catalog?.categories || []).find((c) => String(c.id) === String(createCategoryId))?.default_kcal_per_100g || 0)} kcal / 100g</b>
+                                    Estimativa:{" "}
+                                    <b>
+                                      {Number(
+                                        (catalog?.categories || []).find((c) => String(c.id) === String(createCategoryId))
+                                          ?.default_kcal_per_100g || 0
+                                      )}{" "}
+                                      kcal / 100g
+                                    </b>
                                   </div>
                                   <div>
                                     Classificação:{" "}
                                     <b>
-                                      {(catalog?.categories || []).find((c) => String(c.id) === String(createCategoryId))?.default_is_healthy ? "Saudável" : "Não saudável"}
+                                      {(catalog?.categories || []).find((c) => String(c.id) === String(createCategoryId))
+                                        ?.default_is_healthy
+                                        ? "Saudável"
+                                        : "Não saudável"}
                                     </b>
                                   </div>
                                 </div>
@@ -1124,16 +1258,15 @@ export default function Alimentacao() {
                                   className="mt-1 w-full border border-gray-200 rounded-xl px-3 py-3 text-sm bg-white outline-none focus:ring-2 focus:ring-red-200"
                                   inputMode="numeric"
                                 />
-                                <div className="mt-1 text-[11px] text-gray-500">Se deixar em branco, o app usa a estimativa da categoria.</div>
                               </div>
                             )}
 
                             <Button
                               onClick={createAndSelectFood}
-                              disabled={registering || !String(foodQuery || "").trim() || !createCategoryId}
+                              disabled={submitLoading || !String(foodQuery || "").trim() || !createCategoryId}
                               className="w-full mt-3 bg-gradient-to-r from-red-500 to-rose-600 hover:from-red-600 hover:to-rose-700 text-white py-5 rounded-xl font-semibold disabled:opacity-70"
                             >
-                              {registering ? (
+                              {submitLoading ? (
                                 <span className="flex items-center gap-2">
                                   <Loader2 className="w-5 h-5 animate-spin" />
                                   Criando…
@@ -1145,27 +1278,23 @@ export default function Alimentacao() {
                                 </span>
                               )}
                             </Button>
-
-                            <div className="mt-2 text-[11px] text-gray-500">
-                              Isso deixa o registro do dia a dia muito mais rápido (você não precisa cadastrar tudo de novo).
-                            </div>
                           </div>
                         </div>
                       )}
                     </div>
 
-                    {/* Porção */}
                     <div className="grid grid-cols-2 gap-3">
                       <div>
                         <label className="text-sm font-medium text-gray-700">Porção</label>
                         <input
                           value={portionValue}
                           onChange={(e) => setPortionValue(e.target.value.replace(/[^\d]/g, ""))}
-                          placeholder="Ex: 150"
+                          placeholder="Ex: 100"
                           className="mt-1 w-full border border-gray-200 rounded-xl px-3 py-3 text-sm outline-none focus:ring-2 focus:ring-red-200"
                           inputMode="numeric"
                         />
                       </div>
+
                       <div>
                         <label className="text-sm font-medium text-gray-700">Unid.</label>
                         <select
@@ -1179,13 +1308,11 @@ export default function Alimentacao() {
                       </div>
                     </div>
 
-                    {/* Calorias calculadas */}
                     <div className="bg-white border border-gray-200 rounded-xl p-3 text-sm flex items-center justify-between">
-                      <span className="text-gray-700">Calorias</span>
+                      <span className="text-gray-700">Calorias estimadas</span>
                       <span className="font-bold text-gray-900">{derivedCaloriesTotal || 0} kcal</span>
                     </div>
 
-                    {/* Saudável (somente leitura) */}
                     <div
                       className={`rounded-xl px-4 py-3 text-sm border flex items-center justify-between ${
                         derivedHealthy ? "bg-emerald-50 border-emerald-200 text-emerald-800" : "bg-red-50 border-red-200 text-red-800"
@@ -1195,7 +1322,6 @@ export default function Alimentacao() {
                       <span className="font-semibold">{derivedHealthy ? "Saudável" : "Não saudável"}</span>
                     </div>
 
-                    {/* XP preview */}
                     <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-3 text-sm text-yellow-800 flex items-center justify-between">
                       <span>XP ao registrar</span>
                       <span className="font-bold">+{customMealXpPreview} XP</span>
@@ -1203,23 +1329,23 @@ export default function Alimentacao() {
 
                     {!derivedHealthy && (
                       <div className="bg-red-50 border border-red-200 rounded-xl p-3 text-sm text-red-800">
-                        Refeições não saudáveis não geram XP. (Mas continuam contando nas calorias do dia.)
+                        Refeições não saudáveis não geram XP. Mas continuam contando nas calorias do dia.
                       </div>
                     )}
 
                     <Button
                       onClick={registerMeal}
-                      disabled={registering || !String(foodQuery || "").trim() || !portionValue}
-                      className="w-full bg-gradient-to-r from-red-500 to-rose-600 hover:from-red-600 hover:to-rose-700 text-white py-5 rounded-xl text-lg font-semibold disabled:opacity-70"
+                      disabled={submitLoading || !String(foodQuery || "").trim() || !portionValue}
+                      className="w-full py-5 rounded-xl text-lg font-semibold bg-gradient-to-r from-red-500 to-rose-600 hover:from-red-600 hover:to-rose-700 text-white"
                     >
-                      {registering ? (
+                      {submitLoading ? (
                         <span className="flex items-center gap-2">
                           <Loader2 className="w-5 h-5 animate-spin" />
-                          Salvando...
+                          Processando...
                         </span>
                       ) : (
                         <span className="flex items-center gap-2">
-                          <Check className="w-5 h-5" />
+                          <Sparkles className="w-5 h-5" />
                           Salvar refeição (+{customMealXpPreview} XP)
                         </span>
                       )}
@@ -1227,9 +1353,8 @@ export default function Alimentacao() {
 
                     <Button
                       onClick={() => {
-                        setShowRegisterModal(false);
-                        setPhotoFile(null);
-                        setPhotoPreview(null);
+                        setShowFoodModal(false);
+                        resetFoodFlow();
                       }}
                       variant="ghost"
                       className="w-full text-gray-500"
@@ -1243,11 +1368,23 @@ export default function Alimentacao() {
           )}
         </AnimatePresence>
 
-        {/* Modal da Receita */}
+        {/* Modal receita */}
         <AnimatePresence>
           {selectedReceita && (
-            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 bg-black/60 flex items-end justify-center z-50 p-4" onClick={() => setSelectedReceita(null)}>
-              <motion.div initial={{ y: "100%" }} animate={{ y: 0 }} exit={{ y: "100%" }} onClick={(e) => e.stopPropagation()} className="bg-white rounded-t-3xl w-full max-w-lg max-h-[85vh] overflow-auto">
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 bg-black/60 flex items-end justify-center z-50 p-4"
+              onClick={() => setSelectedReceita(null)}
+            >
+              <motion.div
+                initial={{ y: "100%" }}
+                animate={{ y: 0 }}
+                exit={{ y: "100%" }}
+                onClick={(e) => e.stopPropagation()}
+                className="bg-white rounded-t-3xl w-full max-w-lg max-h-[85vh] overflow-auto"
+              >
                 <div className="p-6">
                   <div className="w-12 h-1 bg-gray-300 rounded-full mx-auto mb-6" />
 
@@ -1296,7 +1433,9 @@ export default function Alimentacao() {
                   <div className="space-y-3 mb-6">
                     {selectedReceita.steps.map((step, idx) => (
                       <div key={idx} className="flex items-start gap-3">
-                        <div className="w-6 h-6 rounded-full bg-emerald-500 text-white flex items-center justify-center font-bold text-xs flex-shrink-0">{idx + 1}</div>
+                        <div className="w-6 h-6 rounded-full bg-emerald-500 text-white flex items-center justify-center font-bold text-xs flex-shrink-0">
+                          {idx + 1}
+                        </div>
                         <p className="text-sm text-gray-700">{step}</p>
                       </div>
                     ))}
@@ -1306,11 +1445,17 @@ export default function Alimentacao() {
                     onClick={() => completeReceita(selectedReceita)}
                     disabled={completing || isCompletedToday(selectedReceita)}
                     className={`w-full py-6 rounded-xl text-lg font-semibold ${
-                      isCompletedToday(selectedReceita) ? "bg-gray-200 text-gray-500 hover:bg-gray-200 cursor-not-allowed" : "bg-gradient-to-r from-red-500 to-rose-600 hover:from-red-600 hover:to-rose-700 text-white"
+                      isCompletedToday(selectedReceita)
+                        ? "bg-gray-200 text-gray-500 hover:bg-gray-200 cursor-not-allowed"
+                        : "bg-gradient-to-r from-red-500 to-rose-600 hover:from-red-600 hover:to-rose-700 text-white"
                     }`}
                   >
                     {completing ? (
-                      <motion.div animate={{ rotate: 360 }} transition={{ repeat: Infinity, duration: 1, ease: "linear" }} className="w-6 h-6 border-2 border-white border-t-transparent rounded-full" />
+                      <motion.div
+                        animate={{ rotate: 360 }}
+                        transition={{ repeat: Infinity, duration: 1, ease: "linear" }}
+                        className="w-6 h-6 border-2 border-white border-t-transparent rounded-full"
+                      />
                     ) : isCompletedToday(selectedReceita) ? (
                       <>
                         <Check className="w-5 h-5 mr-2" />
