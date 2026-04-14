@@ -165,14 +165,38 @@ export default function Alimentacao() {
   useEffect(() => {
     const t = setTimeout(async () => {
       const q = foodQuery.trim();
-      if (q.length < 2) { setFoodResults([]); setShowCreateInline(false); return; }
+      if (q.length < 2) {
+        setFoodResults([]);
+        setShowCreateInline(false);
+        return;
+      }
+
       setFoodSearching(true);
       try {
         const items = await searchFoodsHybrid({ query: q, catalog, userId: profile?.id, limit: 8 });
+        
+        const found = items && items.length > 0;
         setFoodResults(items || []);
-        setShowCreateInline(items.length === 0);
-      } finally { setFoodSearching(false); }
-    }, 250);
+        setShowCreateInline(!found);
+
+        // --- LÓGICA DE APRENDIZADO (Ponto Crítico #3) ---
+        // Se não encontrou nada, registra na tabela unknown_foods
+        if (!found && q.length >= 3) {
+          await supabase.from("unknown_foods").insert([
+            { 
+              user_id: profile?.id, 
+              raw_text: q, 
+              normalized_text: q.toLowerCase().trim() 
+            }
+          ]);
+        }
+        // -----------------------------------------------
+
+      } finally {
+        setFoodSearching(false);
+      }
+    }, 500); // Aumentei um pouco o tempo para não salvar "picado" enquanto o usuário digita
+
     return () => clearTimeout(t);
   }, [foodQuery, catalog, profile?.id]);
 
