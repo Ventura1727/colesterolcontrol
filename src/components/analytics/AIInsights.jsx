@@ -1,193 +1,222 @@
 import React, { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
-import { Sparkles, TrendingUp, AlertCircle, CheckCircle, Loader2, Brain } from 'lucide-react';
+import { Sparkles, TrendingUp, AlertCircle, CheckCircle, Loader2, Brain, Activity, HeartPulse } from 'lucide-react';
 
 export default function AIInsights({ profile, activities, colesterolRecords, mealLogs }) {
   const [insights, setInsights] = useState(null);
   const [isLoading, setIsLoading] = useState(false);
 
   useEffect(() => {
-    generateInsights();
+    if ((colesterolRecords?.length > 0 || mealLogs?.length > 0) && !insights) {
+      generateInsights();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activities, colesterolRecords, mealLogs]);
 
   const generateInsights = async () => {
     setIsLoading(true);
     try {
-      // Preparar dados para análise
+      // 1. Cálculos de Inteligência Local (Propriedade Intelectual do App)
+      const peso = Number(profile?.peso || 80);
+      const altura = Number(profile?.altura || 1.70);
+      const imc = (peso / (altura * altura)).toFixed(1);
+      
+      let statusImc = "";
+      if (imc < 18.5) statusImc = "Abaixo do peso";
+      else if (imc < 25) statusImc = "Peso ideal";
+      else if (imc < 30) statusImc = "Sobrepeso";
+      else statusImc = "Obesidade";
+
+      // 2. Preparação de Dados Clínicos
       const colesterolData = colesterolRecords?.slice(0, 5).map(r => ({
-        data: r.data_exame,
+        data: r.data_exame || r.record_date,
         ldl: r.ldl,
         hdl: r.hdl,
+        triglicerideos: r.triglicerideos || r.triglycerides,
         total: r.total
       })) || [];
 
-      const activityData = activities?.slice(0, 20).map(a => ({
-        tipo: a.tipo,
-        descricao: a.descricao,
-        data: a.data,
-        xp: a.xp_ganho
-      })) || [];
-
-      const mealData = mealLogs?.slice(0, 10).map(m => ({
+      const mealData = mealLogs?.slice(0, 15).map(m => ({
         descricao: m.description,
         calorias: m.calories,
         saudavel: m.is_healthy,
         data: m.date
       })) || [];
 
-      // Montar prompt completo
+      // 3. REFINAMENTO DO PROMPT (Nível HealthTech Profissional)
       const prompt = `
-Você é um especialista em saúde cardiovascular. Analise os dados históricos do usuário e forneça insights personalizados e preditivos.
+        Aja como um Especialista em Cardiologia e Nutrição de Precisão. Analise os dados para o app Heartbalance.
+        
+        PERFIL DO PACIENTE:
+        - Objetivo: ${profile?.objetivo || 'Controle de Colesterol'}
+        - IMC Atual: ${imc} (${statusImc})
+        
+        DADOS CLÍNICOS (Histórico de Exames):
+        ${JSON.stringify(colesterolData, null, 2)}
+        
+        HÁBITOS ALIMENTARES RECENTES:
+        ${JSON.stringify(mealData, null, 2)}
 
-Dados do perfil:
-- Objetivo: ${profile?.objetivo || 'Reduzir colesterol'}
-- Rank atual: ${profile?.rank || 'Iniciante'}
-- XP total: ${profile?.xp_total || 0}
+        SUA TAREFA:
+        1. Gere um "HeartScore" de 0 a 100 baseado na proximidade das metas de LDL (<100mg/dL) e qualidade das refeições.
+        2. Identifique Tendências: O LDL está subindo? As refeições não saudáveis coincidem com picos de peso?
+        3. Identifique Correlações: Ex: "Seu consumo de frituras/doces reportado impactou seus triglicerídeos em X%".
+        4. Previsão: Baseado no ritmo atual, em quanto tempo ele atingirá a meta de colesterol?
 
-Histórico de Colesterol:
-${JSON.stringify(colesterolData, null, 2)}
+        RETORNE OBRIGATORIAMENTE UM JSON COM ESTA ESTRUTURA:
+        {
+          "score_saude": 85,
+          "alerta_critico": "string ou null",
+          "tendencias": ["frase 1", "frase 2"],
+          "correlacoes": ["frase 1"],
+          "previsoes": { "colesterol": "string", "peso": "string", "energia": "string" },
+          "recomendacoes": ["item 1", "item 2"]
+        }
+      `;
 
-Atividades recentes (últimas 20):
-${JSON.stringify(activityData, null, 2)}
-
-Refeições registradas (últimas 10):
-${JSON.stringify(mealData, null, 2)}
-
-Com base nesses dados, forneça:
-1. Tendências identificadas (ex: "Seu LDL tende a subir quando você...")
-2. Correlações importantes (ex: "Você tem mais energia nos dias que...")
-3. Previsão de impacto (ex: "Se manter a rotina atual, seu colesterol pode melhorar X% em Y meses")
-4. Recomendações específicas e acionáveis
-
-Seja específico, motivador e baseie-se nos dados reais fornecidos.
-`;
-
-      // Chamada única para API
       const response = await fetch('/api/invoke-llm', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompt, profile, colesterolData, activityData, mealData })
+        body: JSON.stringify({ prompt, imc, statusImc })
       });
 
       const { analysis } = await response.json();
-      setInsights(analysis);
+      
+      // Se a resposta vier como string, tenta converter para JSON
+      const parsedAnalysis = typeof analysis === 'string' ? JSON.parse(analysis) : analysis;
+      setInsights(parsedAnalysis);
+
     } catch (error) {
-      console.error("Erro ao gerar insights:", error);
+      console.error("Erro ao gerar insights clínicos:", error);
     }
     setIsLoading(false);
   };
 
   if (isLoading) {
     return (
-      <div className="bg-gradient-to-br from-purple-50 to-pink-50 rounded-2xl p-6 border border-purple-100">
-        <div className="flex items-center gap-3 text-purple-700">
-          <Loader2 className="w-5 h-5 animate-spin" />
-          <span className="font-medium">IA analisando seus dados...</span>
-        </div>
+      <div className="bg-white rounded-3xl p-8 border-2 border-purple-50 shadow-sm text-center">
+        <Loader2 className="w-10 h-10 animate-spin text-purple-600 mx-auto mb-4" />
+        <h3 className="font-bold text-gray-900">Analisando Bioindicadores</h3>
+        <p className="text-sm text-gray-500 mt-1">Cruzando seus exames com sua alimentação...</p>
       </div>
     );
   }
 
-  if (!insights) {
-    return null;
-  }
+  if (!insights) return null;
 
   return (
-    <motion.div
-      initial={{ opacity: 0, y: 20 }}
-      animate={{ opacity: 1, y: 0 }}
-      className="space-y-4"
+    <motion.div 
+      initial={{ opacity: 0, y: 20 }} 
+      animate={{ opacity: 1, y: 0 }} 
+      className="space-y-6"
     >
-      {/* Header */}
-      <div className="flex items-center gap-2 text-purple-700">
-        <Brain className="w-5 h-5" />
-        <h3 className="font-semibold">Insights da IA</h3>
-        <Sparkles className="w-4 h-4" />
+      {/* CARD PRINCIPAL: HEARTSCORE */}
+      <div className="bg-gradient-to-br from-purple-600 to-indigo-700 rounded-[32px] p-8 text-white shadow-xl relative overflow-hidden">
+        <div className="relative z-10">
+          <div className="flex justify-between items-start">
+            <div>
+              <p className="text-purple-100 text-xs font-bold uppercase tracking-widest mb-1">Status Cardiovascular</p>
+              <h3 className="text-2xl font-black">HeartScore</h3>
+            </div>
+            <HeartPulse className="w-8 h-8 text-purple-200 opacity-50" />
+          </div>
+          
+          <div className="mt-6 flex items-baseline gap-2">
+            <span className="text-7xl font-black tracking-tighter">{insights.score_saude || '--'}</span>
+            <span className="text-xl font-bold text-purple-200">/100</span>
+          </div>
+          
+          <p className="text-sm text-purple-100 mt-4 leading-relaxed opacity-90">
+            {insights.alerta_critico || "Seus dados indicam uma evolução consistente. Mantenha o foco nas gorduras boas."}
+          </p>
+        </div>
+        {/* Decorativo ao fundo */}
+        <div className="absolute -right-10 -bottom-10 w-40 h-40 bg-white/10 rounded-full blur-3xl" />
       </div>
 
-      {/* Tendências */}
-      {insights.tendencias && insights.tendencias.length > 0 && (
-        <div className="bg-blue-50 rounded-xl p-4 border border-blue-100">
-          <div className="flex items-center gap-2 mb-2">
-            <TrendingUp className="w-5 h-5 text-blue-600" />
-            <h4 className="font-medium text-blue-900">Tendências Identificadas</h4>
-          </div>
-          <ul className="space-y-2">
-            {insights.tendencias.map((tendencia, idx) => (
-              <li key={idx} className="text-sm text-blue-800 flex items-start gap-2">
-                <span className="text-blue-400 mt-1">•</span>
-                <span>{tendencia}</span>
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
-
-      {/* Correlações */}
-      {insights.correlacoes && insights.correlacoes.length > 0 && (
-        <div className="bg-emerald-50 rounded-xl p-4 border border-emerald-100">
-          <div className="flex items-center gap-2 mb-2">
-            <CheckCircle className="w-5 h-5 text-emerald-600" />
-            <h4 className="font-medium text-emerald-900">Correlações Importantes</h4>
-          </div>
-          <ul className="space-y-2">
-            {insights.correlacoes.map((correlacao, idx) => (
-              <li key={idx} className="text-sm text-emerald-800 flex items-start gap-2">
-                <span className="text-emerald-400 mt-1">•</span>
-                <span>{correlacao}</span>
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
-
-      {/* Previsões */}
-      {insights.previsoes && (
-        <div className="bg-purple-50 rounded-xl p-4 border border-purple-100">
-          <div className="flex items-center gap-2 mb-3">
-            <Sparkles className="w-5 h-5 text-purple-600" />
-            <h4 className="font-medium text-purple-900">Previsões Personalizadas</h4>
-          </div>
-          <div className="space-y-3">
-            {insights.previsoes.colesterol && (
-              <div className="bg-white rounded-lg p-3">
-                <div className="text-xs text-purple-600 font-medium mb-1">🩺 Colesterol</div>
-                <div className="text-sm text-gray-700">{insights.previsoes.colesterol}</div>
-              </div>
-            )}
-            {insights.previsoes.peso && (
-              <div className="bg-white rounded-lg p-3">
-                <div className="text-xs text-purple-600 font-medium mb-1">⚖️ Peso</div>
-                <div className="text-sm text-gray-700">{insights.previsoes.peso}</div>
-              </div>
-            )}
-            {insights.previsoes.energia && (
-              <div className="bg-white rounded-lg p-3">
-                <div className="text-xs text-purple-600 font-medium mb-1">⚡ Energia</div>
-                <div className="text-sm text-gray-700">{insights.previsoes.energia}</div>
-              </div>
-            )}
+      {/* ALERTAS CRÍTICOS (Se existirem) */}
+      {insights.alerta_critico && (
+        <div className="bg-red-50 border-2 border-red-100 rounded-2xl p-4 flex gap-3 items-start">
+          <AlertCircle className="w-5 h-5 text-red-600 mt-0.5" />
+          <div>
+            <p className="text-sm font-bold text-red-900">Alerta de Saúde</p>
+            <p className="text-xs text-red-800 opacity-90">{insights.alerta_critico}</p>
           </div>
         </div>
       )}
 
-      {/* Recomendações */}
-      {insights.recomendacoes && insights.recomendacoes.length > 0 && (
-        <div className="bg-amber-50 rounded-xl p-4 border border-amber-100">
-          <div className="flex items-center gap-2 mb-2">
-            <AlertCircle className="w-5 h-5 text-amber-600" />
-            <h4 className="font-medium text-amber-900">Recomendações para Você</h4>
+      {/* GRID DE INSIGHTS */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        {/* Tendências */}
+        <div className="bg-white rounded-2xl p-5 border border-gray-100 shadow-sm">
+          <div className="flex items-center gap-2 mb-4">
+            <TrendingUp className="w-5 h-5 text-blue-500" />
+            <h4 className="font-bold text-gray-800 text-sm uppercase">Tendências</h4>
           </div>
-          <ul className="space-y-2">
-            {insights.recomendacoes.map((rec, idx) => (
-              <li key={idx} className="text-sm text-amber-800 flex items-start gap-2">
-                <span className="text-amber-400 mt-1">✓</span>
-                <span>{rec}</span>
+          <ul className="space-y-3">
+            {insights.tendencias?.map((t, i) => (
+              <li key={i} className="text-sm text-gray-600 flex gap-2">
+                <span className="w-1.5 h-1.5 rounded-full bg-blue-400 mt-1.5 shrink-0" />
+                {t}
               </li>
             ))}
           </ul>
         </div>
-      )}
+
+        {/* Correlações */}
+        <div className="bg-white rounded-2xl p-5 border border-gray-100 shadow-sm">
+          <div className="flex items-center gap-2 mb-4">
+            <Activity className="w-5 h-5 text-emerald-500" />
+            <h4 className="font-bold text-gray-800 text-sm uppercase">Correlações</h4>
+          </div>
+          <ul className="space-y-3">
+            {insights.correlacoes?.map((c, i) => (
+              <li key={i} className="text-sm text-gray-600 flex gap-2">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 mt-1.5 shrink-0" />
+                {c}
+              </li>
+            ))}
+          </ul>
+        </div>
+      </div>
+
+      {/* PREVISÕES PREDITIVAS */}
+      <div className="bg-purple-50 rounded-3xl p-6 border border-purple-100">
+        <div className="flex items-center gap-2 mb-4">
+          <Sparkles className="w-5 h-5 text-purple-600" />
+          <h4 className="font-bold text-purple-900">Previsões de Impacto</h4>
+        </div>
+        <div className="grid grid-cols-1 gap-3">
+          {insights.previsoes?.colesterol && (
+            <div className="bg-white/60 rounded-xl p-3 flex gap-3">
+              <span className="text-xl">🩺</span>
+              <p className="text-sm text-purple-900 font-medium">{insights.previsoes.colesterol}</p>
+            </div>
+          )}
+          {insights.previsoes?.peso && (
+            <div className="bg-white/60 rounded-xl p-3 flex gap-3">
+              <span className="text-xl">⚖️</span>
+              <p className="text-sm text-purple-900 font-medium">{insights.previsoes.peso}</p>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* RECOMENDAÇÕES FINAIS */}
+      <div className="bg-amber-50 rounded-3xl p-6 border border-amber-100">
+        <div className="flex items-center gap-2 mb-4">
+          <CheckCircle className="w-5 h-5 text-amber-600" />
+          <h4 className="font-bold text-amber-900 uppercase text-xs tracking-widest">Plano de Ação</h4>
+        </div>
+        <div className="space-y-2">
+          {insights.recomendacoes?.map((r, i) => (
+            <div key={i} className="bg-white rounded-xl p-3 text-sm text-amber-900 font-bold flex items-center gap-3">
+              <div className="w-6 h-6 rounded-full bg-amber-100 flex items-center justify-center text-[10px]">{i+1}</div>
+              {r}
+            </div>
+          ))}
+        </div>
+      </div>
     </motion.div>
   );
 }
