@@ -9,6 +9,14 @@ import RankCard from "@/components/dashboard/RankCard";
 import ColesterolTracker from "@/components/dashboard/ColesterolTracker";
 import { supabase } from "@/lib/supabaseClient";
 
+// 1. DEFINIÇÃO DAS FEATURES (Isso faltava e causava a tela branca)
+const dashboardFeatures = [
+  { id: "diet", title: "Alimentação", desc: "Controle o que você come", icon: Salad, page: "Alimentacao", premium: false },
+  { id: "exercise", title: "Exercícios", desc: "Treinos e atividades", icon: Dumbbell, page: "Exercicios", premium: false },
+  { id: "ai", title: "Insights IA", desc: "Análise inteligente", icon: Bot, page: "IAInsights", premium: true },
+  { id: "guide", title: "Guia Saúde", desc: "Dicas de colesterol", icon: BookOpen, page: "Guia", premium: false }
+];
+
 function isPremiumByUntil(premiumUntil) {
   if (!premiumUntil) return false;
   const d = new Date(premiumUntil);
@@ -31,19 +39,22 @@ export default function Dashboard() {
         const { data: { session } } = await supabase.auth.getSession();
         if (!session) { window.location.href = createPageUrl("Login"); return; }
 
-        const [subRes, profRes, userProfRes] = await Promise.all([
+        // REMOVIDO user_profiles que causava o erro 404
+        const [subRes, profRes] = await Promise.all([
           supabase.from("subscriptions").select("*").eq("user_id", session.user.id).maybeSingle(),
-          supabase.from("profiles").select("*").eq("id", session.user.id).maybeSingle(),
-          supabase.from("user_profiles").select("*").eq("id", session.user.id).maybeSingle()
+          supabase.from("profiles").select("*").eq("id", session.user.id).maybeSingle()
         ]);
 
         if (!mounted) return;
-        const merged = { ...(userProfRes.data || {}), ...(profRes.data || {}) };
-        setProfile(merged);
+        
+        // Agora usamos apenas os dados da tabela profiles
+        const profileData = profRes.data || {};
+        setProfile(profileData);
+        
         setAccess({
-          sub_is_premium: subRes.data?.is_premium || profRes.data?.is_premium || false,
-          premium_until: subRes.data?.premium_until || profRes.data?.premium_until || null,
-          role: profRes.data?.role || null
+          sub_is_premium: subRes.data?.is_premium || profileData?.is_premium || false,
+          premium_until: subRes.data?.premium_until || profileData?.premium_until || null,
+          role: profileData?.role || null
         });
 
         const { data: recs } = await supabase.from("cholesterol_records").select("*").eq("user_id", session.user.id).order("record_date", { ascending: false }).limit(10);
@@ -72,7 +83,6 @@ export default function Dashboard() {
   return (
     <div className="min-h-screen bg-slate-50 p-4 pb-24">
       <div className="max-w-lg mx-auto pt-6">
-        {/* Header Unificado */}
         <div className="flex items-center justify-between mb-8">
           <div className="flex items-center gap-4">
             <div className="w-12 h-12 bg-red-600 rounded-2xl flex items-center justify-center shadow-lg shadow-red-200">
@@ -95,7 +105,6 @@ export default function Dashboard() {
         
         {isPremium && <ColesterolTracker records={colesterolRecords} onRecordAdded={() => window.location.reload()} />}
 
-        {/* Card Hidratação - Mesmo estilo do Progresso */}
         <div className="bg-white rounded-[2rem] p-6 mb-6 border border-slate-100 shadow-sm">
           <div className="flex items-center justify-between mb-4">
             <h2 className="font-bold text-slate-900 flex items-center gap-2 text-sm"><Droplets className="text-blue-500 w-4 h-4" /> Hidratação</h2>
@@ -110,9 +119,8 @@ export default function Dashboard() {
           </div>
         </div>
 
-        {/* Grid de Funcionalidades */}
         <div className="grid grid-cols-2 gap-4">
-          {features.map((f) => (
+          {dashboardFeatures.map((f) => (
             <button 
               key={f.id} 
               onClick={() => (f.premium && !isPremium) ? setShowLockedModal(true) : window.location.href = createPageUrl(f.page)} 
