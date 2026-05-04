@@ -9,10 +9,11 @@ import RankCard from "@/components/dashboard/RankCard";
 import ColesterolTracker from "@/components/dashboard/ColesterolTracker";
 import { supabase } from "@/lib/supabaseClient";
 
-// 1. DEFINIÇÃO DAS FEATURES (Isso faltava e causava a tela branca)
+// 1. DEFINIÇÃO DAS FEATURES - Adicionado Hidratação aqui para o botão aparecer
 const dashboardFeatures = [
   { id: "diet", title: "Alimentação", desc: "Controle o que você come", icon: Salad, page: "Alimentacao", premium: false },
   { id: "exercise", title: "Exercícios", desc: "Treinos e atividades", icon: Dumbbell, page: "Exercicios", premium: false },
+  { id: "water", title: "Hidratação", desc: "Beba mais água", icon: Droplets, page: "Hidratacao", premium: false },
   { id: "ai", title: "Insights IA", desc: "Análise inteligente", icon: Bot, page: "IAInsights", premium: true },
   { id: "guide", title: "Guia Saúde", desc: "Dicas de colesterol", icon: BookOpen, page: "Guia", premium: false }
 ];
@@ -39,7 +40,6 @@ export default function Dashboard() {
         const { data: { session } } = await supabase.auth.getSession();
         if (!session) { window.location.href = createPageUrl("Login"); return; }
 
-        // REMOVIDO user_profiles que causava o erro 404
         const [subRes, profRes] = await Promise.all([
           supabase.from("subscriptions").select("*").eq("user_id", session.user.id).maybeSingle(),
           supabase.from("profiles").select("*").eq("id", session.user.id).maybeSingle()
@@ -47,7 +47,6 @@ export default function Dashboard() {
 
         if (!mounted) return;
         
-        // Agora usamos apenas os dados da tabela profiles
         const profileData = profRes.data || {};
         setProfile(profileData);
         
@@ -105,7 +104,11 @@ export default function Dashboard() {
         
         {isPremium && <ColesterolTracker records={colesterolRecords} onRecordAdded={() => window.location.reload()} />}
 
-        <div className="bg-white rounded-[2rem] p-6 mb-6 border border-slate-100 shadow-sm">
+        {/* Card de Hidratação - Agora clicável para abrir a página de detalhes */}
+        <div 
+          onClick={() => window.location.href = createPageUrl("Hidratacao")}
+          className="bg-white rounded-[2rem] p-6 mb-6 border border-slate-100 shadow-sm cursor-pointer hover:shadow-md transition-all active:scale-[0.98]"
+        >
           <div className="flex items-center justify-between mb-4">
             <h2 className="font-bold text-slate-900 flex items-center gap-2 text-sm"><Droplets className="text-blue-500 w-4 h-4" /> Hidratação</h2>
             <span className="text-[10px] font-bold text-slate-400 uppercase">Hoje</span>
