@@ -1,206 +1,290 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { 
-  CheckCircle2, 
-  Circle, 
-  Plus, 
-  Trophy, 
-  Target, 
-  Zap, 
-  ArrowLeft,
-  RefreshCcw,
-  PlusCircle,
-  Save,
-  Dumbbell,
-  X,
-  Trash2
+  CheckCircle2, Circle, Plus, Trophy, Target, Zap, ArrowLeft, 
+  RefreshCcw, PlusCircle, Save, Dumbbell, X, Trash2, LayoutGrid, Activity
 } from 'lucide-react';
 import { createClient } from '@supabase/supabase-js';
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Input } from "@/components/ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
-// --- Inicialização do Supabase ---
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
-const supabase = createClient(supabaseUrl, supabaseAnonKey);
-
-const SuccessEffect = () => (
-  <div className="fixed inset-0 pointer-events-none z-50 flex items-center justify-center">
-    <div className="animate-bounce bg-yellow-400 p-4 rounded-full shadow-2xl">
-      <Trophy className="w-12 h-12 text-white" />
-    </div>
-  </div>
+// --- Configuração do Supabase (Segura para Vercel) ---
+const supabase = createClient(
+  import.meta.env.VITE_SUPABASE_URL, 
+  import.meta.env.VITE_SUPABASE_ANON_KEY
 );
 
 export default function ExerciciosPage() {
-  // Estados de Interface
-  const [activeTab, setActiveTab] = useState('sugeridos');
+  // --- Estados de Controle ---
   const [loading, setLoading] = useState(false);
-  const [showSuccess, setShowSuccess] = useState(false);
   const [isAdding, setIsAdding] = useState(false);
-
-  // Estados de Dados
-  const [userProgress, setUserProgress] = useState({ points: 0, streak: 3, goal: 'weight_loss' });
-  const [suggestedExercises, setSuggestedExercises] = useState([
-    { id: 1, nome: "Caminhada Rápida", series: "1x", tempo: "30 min", concluido: false, calorias: 150, tipo: "cardio" },
-    { id: 2, nome: "Agachamentos", series: "3x15", tempo: "10 min", concluido: false, calorias: 80, tipo: "força" }
-  ]);
-  const [customExercises, setCustomExercises] = useState([]);
+  const [goal, setGoal] = useState('perda_peso'); // perda_peso, ganho_massa, saude_geral
   
-  // Estado do Formulário
-  const [newEx, setNewEx] = useState({ nome: '', series: '', calorias: '' });
+  // --- Banco de Dados de Exercícios por Objetivo ---
+  const exerciseLibrary = {
+    perda_peso: [
+      { id: 'pp1', nome: "HIIT Iniciante", series: "4x", tempo: "20 min", kcal: 250, tipo: "Cardio", icon: <Activity className="w-4 h-4 text-orange-500" /> },
+      { id: 'pp2', nome: "Polichinelos", series: "3x50", tempo: "10 min", kcal: 100, tipo: "Cardio", icon: <Zap className="w-4 h-4 text-yellow-500" /> },
+      { id: 'pp3', nome: "Burpees", series: "3x12", tempo: "15 min", kcal: 180, tipo: "Explosão", icon: <Activity className="w-4 h-4 text-red-500" /> }
+    ],
+    ganho_massa: [
+      { id: 'gm1', nome: "Agachamento Livre", series: "4x12", tempo: "15 min", kcal: 120, tipo: "Força", icon: <Dumbbell className="w-4 h-4 text-blue-500" /> },
+      { id: 'gm2', nome: "Supino Reto", series: "3x10", tempo: "15 min", kcal: 90, tipo: "Força", icon: <Dumbbell className="w-4 h-4 text-blue-500" /> },
+      { id: 'gm3', nome: "Levantamento Terra", series: "3x8", tempo: "20 min", kcal: 150, tipo: "Força", icon: <Dumbbell className="w-4 h-4 text-blue-500" /> }
+    ],
+    saude_geral: [
+      { id: 'sg1', nome: "Yoga Matinal", series: "1x", tempo: "30 min", kcal: 80, tipo: "Flexibilidade", icon: <Activity className="w-4 h-4 text-green-500" /> },
+      { id: 'sg2', nome: "Caminhada Leve", series: "1x", tempo: "40 min", kcal: 200, tipo: "Lazer", icon: <Activity className="w-4 h-4 text-emerald-500" /> }
+    ]
+  };
 
-  const progressPercent = Math.round(
-    ((suggestedExercises.filter(e => e.concluido).length + customExercises.filter(e => e.concluido).length) / 
-    (suggestedExercises.length + customExercises.length)) * 100
-  ) || 0;
+  // --- Estados de Exercícios Ativos ---
+  const [activeExercises, setActiveExercises] = useState([]);
+  const [customExercises, setCustomExercises] = useState([]);
+  const [newEx, setNewEx] = useState({ nome: '', series: '', kcal: '' });
 
-  // Lógica de Adição
+  // --- Lógica de Mudança de Objetivo ---
+  useEffect(() => {
+    // Ao mudar o objetivo, carregamos a biblioteca correspondente marcada como não concluída
+    const loaded = exerciseLibrary[goal].map(ex => ({ ...ex, concluido: false }));
+    setActiveExercises(loaded);
+  }, [goal]);
+
+  // --- Cálculos de Progresso ---
+  const stats = useMemo(() => {
+    const total = activeExercises.length + customExercises.length;
+    const completed = activeExercises.filter(e => e.concluido).length + customExercises.filter(e => e.concluido).length;
+    const xp = (completed * 15) + (completed === total && total > 0 ? 50 : 0);
+    return { percent: Math.round((completed / total) * 100) || 0, xp };
+  }, [activeExercises, customExercises]);
+
+  // --- Ações ---
+  const toggleExercise = (id, isCustom = false) => {
+    const setter = isCustom ? setCustomExercises : setActiveExercises;
+    setter(prev => prev.map(ex => ex.id === id ? { ...ex, concluido: !ex.concluido } : ex));
+  };
+
   const handleAddCustom = () => {
-    if (!newEx.nome) return alert("Digite o nome do exercício");
+    if (!newEx.nome) return;
     const newItem = {
-      id: Date.now(),
+      id: `custom-${Date.now()}`,
       nome: newEx.nome,
       series: newEx.series || "1x",
-      calorias: parseInt(newEx.calorias) || 0,
+      kcal: parseInt(newEx.kcal) || 0,
+      tipo: "Personalizado",
       concluido: false,
-      tipo: "custom"
+      icon: <PlusCircle className="w-4 h-4 text-indigo-500" />
     };
     setCustomExercises([...customExercises, newItem]);
-    setNewEx({ nome: '', series: '', calorias: '' });
+    setNewEx({ nome: '', series: '', kcal: '' });
     setIsAdding(false);
   };
 
-  const toggleExercise = (id, isCustom = false) => {
-    const setter = isCustom ? setCustomExercises : setSuggestedExercises;
-    setter(prev => prev.map(ex => {
-      if (ex.id === id) {
-        const newState = !ex.concluido;
-        setUserProgress(curr => ({ ...curr, points: newState ? curr.points + 10 : curr.points - 10 }));
-        return { ...ex, concluido: newState };
-      }
-      return ex;
-    }));
-  };
-
-  const removeCustom = (id) => {
-    setCustomExercises(customExercises.filter(ex => ex.id !== id));
+  const saveDailyProgress = async () => {
+    setLoading(true);
+    const { error } = await supabase.from('profiles').upsert({
+      last_goal: goal,
+      daily_xp: stats.xp,
+      custom_data: customExercises,
+      updated_at: new Date()
+    });
+    setLoading(false);
+    if (!error) alert("Progresso sincronizado!");
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 pb-24">
-      {showSuccess && <SuccessEffect />}
-
-      <header className="bg-white border-b sticky top-0 z-10 px-4 py-4 flex items-center justify-between">
-        <Button variant="ghost" size="icon" onClick={() => window.history.back()}><ArrowLeft className="w-5 h-5" /></Button>
-        <h1 className="font-bold text-lg">Exercícios</h1>
-        <Button variant="ghost" size="icon" disabled={loading}><Save className="w-5 h-5 text-blue-600" /></Button>
+    <div className="min-h-screen bg-slate-50 pb-28">
+      {/* Header Profissional */}
+      <header className="bg-white border-b sticky top-0 z-20 px-6 py-4 flex items-center justify-between">
+        <div className="flex items-center gap-4">
+          <Button variant="ghost" size="icon" onClick={() => window.history.back()} className="rounded-full">
+            <ArrowLeft className="w-5 h-5 text-slate-600" />
+          </Button>
+          <h1 className="font-extrabold text-xl tracking-tight text-slate-900 uppercase">Workout</h1>
+        </div>
+        <Button onClick={saveDailyProgress} disabled={loading} size="sm" className="bg-indigo-600 hover:bg-indigo-700 shadow-md transition-all">
+          {loading ? <RefreshCcw className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4 mr-2" />}
+          Salvar
+        </Button>
       </header>
 
-      <main className="p-4 space-y-6 max-w-md mx-auto">
-        {/* Status Card */}
-        <Card className="bg-gradient-to-br from-blue-600 to-indigo-700 text-white border-none shadow-lg">
-          <CardContent className="pt-6">
-            <div className="flex justify-between items-start mb-4">
-              <div><p className="text-blue-100 text-sm">Progresso Diário</p><h2 className="text-3xl font-bold">{progressPercent}%</h2></div>
-              <div className="text-right"><Badge className="bg-white/20 text-white border-none">{userProgress.points} XP</Badge></div>
+      <main className="p-4 space-y-6 max-w-2xl mx-auto">
+        {/* Dashboard de Progresso */}
+        <Card className="overflow-hidden border-none shadow-xl bg-slate-900 text-white">
+          <CardContent className="p-6 relative">
+            <div className="flex justify-between items-end mb-6">
+              <div className="space-y-1">
+                <p className="text-slate-400 text-xs font-bold uppercase tracking-widest">Status do Treino</p>
+                <div className="flex items-baseline gap-2">
+                  <span className="text-5xl font-black text-indigo-400">{stats.percent}%</span>
+                  <span className="text-slate-500 font-medium">completo</span>
+                </div>
+              </div>
+              <div className="text-right">
+                <Badge className="bg-indigo-500/20 text-indigo-300 border-indigo-500/30 mb-2">
+                  <Trophy className="w-3 h-3 mr-1" /> {stats.xp} XP acumulados
+                </Badge>
+                <p className="text-[10px] text-slate-500 font-mono">GOAL: {goal.replace('_', ' ')}</p>
+              </div>
             </div>
-            <Progress value={progressPercent} className="h-2 bg-white/20" />
+            <Progress value={stats.percent} className="h-3 bg-slate-800" />
           </CardContent>
         </Card>
 
+        {/* Seletor de Intenção do Usuário */}
+        <div className="space-y-2">
+          <label className="text-xs font-bold text-slate-500 uppercase ml-1">Foco do Dia</label>
+          <Select value={goal} onValueChange={setGoal}>
+            <SelectTrigger className="w-full bg-white border-slate-200 shadow-sm h-12">
+              <SelectValue placeholder="Selecione seu objetivo" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="perda_peso">Perda de Peso & Queima</SelectItem>
+              <SelectItem value="ganho_massa">Ganho de Massa & Força</SelectItem>
+              <SelectItem value="saude_geral">Manutenção & Bem-estar</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+
         <Tabs defaultValue="sugeridos" className="w-full">
-          <TabsList className="grid w-full grid-cols-2 mb-6">
-            <TabsTrigger value="sugeridos">Sugeridos</TabsTrigger>
-            <TabsTrigger value="custom">Personalizado</TabsTrigger>
+          <TabsList className="grid w-full grid-cols-2 h-12 bg-slate-200/50 p-1 rounded-xl">
+            <TabsTrigger value="sugeridos" className="rounded-lg data-[state=active]:bg-white data-[state=active]:shadow-sm">
+              <Activity className="w-4 h-4 mr-2" /> Inteligente
+            </TabsTrigger>
+            <TabsTrigger value="custom" className="rounded-lg data-[state=active]:bg-white data-[state=active]:shadow-sm">
+              <LayoutGrid className="w-4 h-4 mr-2" /> Personalizado
+            </TabsTrigger>
           </TabsList>
 
-          <TabsContent value="sugeridos" className="space-y-4">
-            {suggestedExercises.map((ex) => (
-              <Card key={ex.id} className={ex.concluido ? 'opacity-60 bg-slate-50' : 'bg-white'}>
-                <CardContent className="p-4 flex items-center gap-4">
-                  <button onClick={() => toggleExercise(ex.id, false)}>
-                    {ex.concluido ? <CheckCircle2 className="text-green-500 w-7 h-7" /> : <Circle className="text-slate-300 w-7 h-7" />}
-                  </button>
-                  <div className="flex-grow">
-                    <h3 className={`font-semibold ${ex.concluido ? 'line-through' : ''}`}>{ex.nome}</h3>
-                    <p className="text-xs text-slate-500">{ex.series} • {ex.calorias} kcal</p>
-                  </div>
-                </CardContent>
-              </Card>
+          {/* Conteúdo Inteligente */}
+          <TabsContent value="sugeridos" className="mt-6 space-y-4">
+            <div className="flex items-center justify-between px-1">
+              <h3 className="text-sm font-bold text-slate-700 uppercase">Sugestões Baseadas no Foco</h3>
+              <Badge variant="outline" className="text-[10px] uppercase font-bold text-slate-400">Total: {activeExercises.length}</Badge>
+            </div>
+            {activeExercises.map((ex) => (
+              <ExerciseCard key={ex.id} ex={ex} onToggle={() => toggleExercise(ex.id)} />
             ))}
           </TabsContent>
 
-          <TabsContent value="custom" className="space-y-4">
-            {/* Lista de Personalizados */}
+          {/* Conteúdo Personalizado */}
+          <TabsContent value="custom" className="mt-6 space-y-4">
+            <div className="flex items-center justify-between px-1">
+              <h3 className="text-sm font-bold text-slate-700 uppercase">Seu Plano Manual</h3>
+              <Button size="sm" variant="ghost" className="text-indigo-600 font-bold text-xs" onClick={() => setIsAdding(true)}>
+                <Plus className="w-4 h-4 mr-1" /> NOVO
+              </Button>
+            </div>
+
             {customExercises.map((ex) => (
-              <Card key={ex.id} className={ex.concluido ? 'opacity-60' : ''}>
-                <CardContent className="p-4 flex items-center gap-4">
-                  <button onClick={() => toggleExercise(ex.id, true)}>
-                    {ex.concluido ? <CheckCircle2 className="text-green-500 w-7 h-7" /> : <Circle className="text-slate-300 w-7 h-7" />}
-                  </button>
-                  <div className="flex-grow">
-                    <h3 className="font-semibold">{ex.nome}</h3>
-                    <p className="text-xs text-slate-500">{ex.series} • {ex.calorias} kcal</p>
-                  </div>
-                  <button onClick={() => removeCustom(ex.id)}><Trash2 className="w-4 h-4 text-red-300" /></button>
-                </CardContent>
-              </Card>
+              <ExerciseCard 
+                key={ex.id} 
+                ex={ex} 
+                onToggle={() => toggleExercise(ex.id, true)} 
+                onDelete={() => setCustomExercises(customExercises.filter(i => i.id !== ex.id))}
+              />
             ))}
 
-            {/* Interface de Adição */}
-            {!isAdding ? (
-              <Button 
-                variant="outline" 
-                className="w-full border-dashed py-8 flex-col gap-2 h-auto"
-                onClick={() => setIsAdding(true)}
-              >
-                <PlusCircle className="w-8 h-8 text-slate-400" />
-                <span className="text-slate-600">Adicionar Novo Exercício</span>
-              </Button>
-            ) : (
-              <Card className="border-2 border-blue-200">
-                <CardContent className="p-4 space-y-3">
-                  <div className="flex justify-between items-center mb-2">
-                    <h4 className="font-bold text-sm text-slate-700">Novo Exercício</h4>
-                    <button onClick={() => setIsAdding(false)}><X className="w-4 h-4" /></button>
+            {isAdding && (
+              <Card className="border-2 border-indigo-100 shadow-lg animate-in fade-in zoom-in duration-200">
+                <CardContent className="p-4 space-y-4">
+                  <div className="flex justify-between items-center">
+                    <span className="text-xs font-black text-indigo-600 uppercase">Novo Exercício</span>
+                    <Button variant="ghost" size="icon" onClick={() => setIsAdding(false)}><X className="w-4 h-4" /></Button>
                   </div>
-                  <Input 
-                    placeholder="Nome (ex: Flexões)" 
-                    value={newEx.nome} 
-                    onChange={e => setNewEx({...newEx, nome: e.target.value})}
-                  />
-                  <div className="grid grid-cols-2 gap-2">
-                    <Input 
-                      placeholder="Séries (ex: 3x10)" 
-                      value={newEx.series} 
-                      onChange={e => setNewEx({...newEx, series: e.target.value})}
-                    />
-                    <Input 
-                      placeholder="Kcal est." 
-                      type="number"
-                      value={newEx.calorias} 
-                      onChange={e => setNewEx({...newEx, calorias: e.target.value})}
-                    />
+                  <Input placeholder="Nome do exercício" value={newEx.nome} onChange={e => setNewEx({...newEx, nome: e.target.value})} className="h-12" />
+                  <div className="grid grid-cols-2 gap-3">
+                    <Input placeholder="Séries/Repet." value={newEx.series} onChange={e => setNewEx({...newEx, series: e.target.value})} />
+                    <Input placeholder="Kcal est." type="number" value={newEx.kcal} onChange={e => setNewEx({...newEx, kcal: e.target.value})} />
                   </div>
-                  <Button className="w-full bg-blue-600" onClick={handleAddCustom}>Confirmar</Button>
+                  <Button className="w-full bg-slate-900 text-white h-12 font-bold uppercase tracking-tight" onClick={handleAddCustom}>
+                    Adicionar ao Plano
+                  </Button>
                 </CardContent>
               </Card>
+            )}
+
+            {customExercises.length === 0 && !isAdding && (
+              <div className="text-center py-12 border-2 border-dashed border-slate-200 rounded-2xl">
+                <PlusCircle className="w-10 h-10 text-slate-300 mx-auto mb-3" />
+                <p className="text-slate-400 text-sm font-medium">Nenhum exercício personalizado ainda.</p>
+              </div>
             )}
           </TabsContent>
         </Tabs>
       </main>
 
-      <div className="fixed bottom-0 left-0 right-0 bg-white border-t p-4 flex justify-around items-center max-w-md mx-auto">
-        <div className="text-center font-bold">
-          <p className="text-[10px] text-slate-400 uppercase">Ganhos de Hoje</p>
-          <p className="text-blue-600">{userProgress.points} XP</p>
+      {/* Footer Flutuante de Resumo */}
+      <div className="fixed bottom-6 left-4 right-4 max-w-md mx-auto">
+        <div className="bg-white/80 backdrop-blur-md border border-slate-200 shadow-2xl rounded-2xl p-4 flex justify-between items-center">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-full bg-indigo-100 flex items-center justify-center">
+              <Zap className="w-5 h-5 text-indigo-600" />
+            </div>
+            <div>
+              <p className="text-[10px] font-bold text-slate-400 uppercase leading-none">Meta Diária</p>
+              <p className="text-sm font-black text-slate-800">Ganhar 200 XP</p>
+            </div>
+          </div>
+          <div className="flex flex-col items-end">
+             <div className="flex items-center gap-1">
+               <span className="text-xs font-bold text-slate-700">{stats.xp}</span>
+               <span className="text-[10px] font-bold text-slate-400">/ 200</span>
+             </div>
+             <div className="w-24 h-1.5 bg-slate-100 rounded-full mt-1 overflow-hidden">
+               <div className="h-full bg-indigo-500 transition-all duration-500" style={{ width: `${Math.min((stats.xp/200)*100, 100)}%` }}></div>
+             </div>
+          </div>
         </div>
-        <Button variant="ghost" onClick={() => window.location.reload()}><RefreshCcw className="w-4 h-4 mr-2" /> Reset</Button>
       </div>
     </div>
+  );
+}
+
+// --- Subcomponente de Card para Evitar Repetição de Código ---
+function ExerciseCard({ ex, onToggle, onDelete }) {
+  return (
+    <Card className={`transition-all duration-300 border-none shadow-sm ${ex.concluido ? 'bg-slate-100/80 shadow-none' : 'bg-white hover:shadow-md'}`}>
+      <CardContent className="p-4 flex items-center gap-4">
+        <button 
+          onClick={onToggle}
+          className={`group relative flex-shrink-0 transition-transform active:scale-90`}
+        >
+          {ex.concluido ? (
+            <div className="bg-green-500 rounded-full p-1.5 shadow-lg shadow-green-200">
+              <CheckCircle2 className="w-6 h-6 text-white" />
+            </div>
+          ) : (
+            <Circle className="w-9 h-9 text-slate-200 group-hover:text-indigo-400 transition-colors" />
+          )}
+        </button>
+        
+        <div className="flex-grow min-w-0">
+          <div className="flex items-center gap-2 mb-1">
+            <span className="p-1.5 bg-slate-50 rounded-lg">{ex.icon}</span>
+            <h3 className={`font-bold text-slate-800 truncate ${ex.concluido ? 'line-through text-slate-400 font-medium' : ''}`}>
+              {ex.nome}
+            </h3>
+          </div>
+          <div className="flex items-center gap-3">
+             <Badge variant="secondary" className="bg-slate-100 text-[9px] text-slate-600 font-bold border-none">
+               {ex.series}
+             </Badge>
+             <span className="text-[10px] font-bold text-slate-400 uppercase tracking-tighter">{ex.tempo}</span>
+             <span className="text-[10px] font-bold text-indigo-500/70">{ex.kcal} KCAL</span>
+          </div>
+        </div>
+
+        {onDelete && (
+          <Button variant="ghost" size="icon" onClick={onDelete} className="text-slate-300 hover:text-red-400">
+            <Trash2 className="w-4 h-4" />
+          </Button>
+        )}
+      </CardContent>
+    </Card>
   );
 }
